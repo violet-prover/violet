@@ -2,7 +2,4 @@
 
 (library
  (name gamma)
- (libraries
-   eio
-   yuujinchou
-   asai))
+ (libraries eio yuujinchou asai))

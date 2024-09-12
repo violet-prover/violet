@@ -15,9 +15,9 @@ let lex_cmd ~env =
   let info = Cmd.info "load" ~version ~doc ~man in
   Cmd.v info
     Term.(
-      const (fun filename -> 
-        let _ = Gamma.Parser.parse_file filename in 
-      ())
+      const (fun filename ->
+          let _ = Gamma.Parser.parse_file filename in
+          ())
       $ arg_file)
 
 let cmd ~env =
@@ -27,6 +27,4 @@ let cmd ~env =
   let info = Cmd.info "gamma" ~version ~doc ~man in
   Cmd.group info [ lex_cmd ~env ]
 
-let () = 
-  Eio_main.run @@ fun env ->
-  exit @@ Cmd.eval ~catch:false @@ cmd ~env
+let () = Eio_main.run @@ fun env -> exit @@ Cmd.eval ~catch:false @@ cmd ~env
