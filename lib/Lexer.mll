@@ -6,7 +6,6 @@ exception SyntaxError of string
 type token =
     COMMA
   | EOF
-  [@@deriving show]
 
 let next_line lexbuf =
   let pos = lexbuf.lex_curr_p in

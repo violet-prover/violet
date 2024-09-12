@@ -3,6 +3,7 @@ open Cmdliner
 let version = "0.1.0"
 
 let lex_cmd ~env =
+  let _ = env in
   let arg_file =
     let doc = "The program file to load." in
     Arg.required
@@ -14,7 +15,9 @@ let lex_cmd ~env =
   let info = Cmd.info "load" ~version ~doc ~man in
   Cmd.v info
     Term.(
-      const (fun filename -> Gamma.Parser.parse_file filename)
+      const (fun filename -> 
+        let _ = Gamma.Parser.parse_file filename in 
+      ())
       $ arg_file)
 
 let cmd ~env =
@@ -25,6 +28,5 @@ let cmd ~env =
   Cmd.group info [ lex_cmd ~env ]
 
 let () = 
-  let open Eio  in 
   Eio_main.run @@ fun env ->
   exit @@ Cmd.eval ~catch:false @@ cmd ~env
