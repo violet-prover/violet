@@ -19,11 +19,15 @@
  (name gamma)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune
-          eio_main
-          asai
-          algaeff
-          yuujinchou)
+ (depends
+    ocaml
+    dune
+    cmdliner
+    eio
+    eio_main
+    asai
+    algaeff
+    yuujinchou)
  (tags
   (topics "to describe" your project)))
 

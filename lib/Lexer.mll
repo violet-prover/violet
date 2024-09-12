@@ -4,7 +4,9 @@ open Lexing
 exception SyntaxError of string
 
 type token =
-  COMMA
+    COMMA
+  | EOF
+  [@@deriving show]
 
 let next_line lexbuf =
   let pos = lexbuf.lex_curr_p in
@@ -14,5 +16,20 @@ let next_line lexbuf =
     }
 }
 
-rule tokens = parse
+let digit = ['0'-'9']
+let alpha = ['a'-'z' 'A'-'Z']
+let ident = (alpha) (alpha|digit|'_'|'-')*
+let whitespace = [' ' '\t']+
+let newline = '\r' | '\n' | "\r\n"
+
+rule token =
+  parse
+  | "#" { comment lexbuf }
   | ',' { COMMA }
+  | eof { EOF }
+
+and comment =
+  parse
+  | newline { Lexing.new_line lexbuf; token lexbuf }
+  | eof { EOF }
+  | _ { comment lexbuf }
