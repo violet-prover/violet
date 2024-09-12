@@ -5,11 +5,11 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github dannypsnl/gamma))
 
-(authors "Author Name")
+(authors "Lin")
 
-(maintainers "Maintainer Name")
+(maintainers "Lin")
 
 (license LICENSE)
 
@@ -19,7 +19,11 @@
  (name gamma)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune)
+ (depends ocaml dune
+          eio_main
+          asai
+          algaeff
+          yuujinchou)
  (tags
   (topics "to describe" your project)))
 

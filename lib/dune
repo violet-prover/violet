@@ -1,2 +1,7 @@
+(ocamllex Lexer)
+
 (library
- (name gamma))
+ (name gamma)
+ (libraries
+   eio_main
+   asai))
