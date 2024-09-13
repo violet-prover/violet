@@ -22,6 +22,8 @@
  (depends
     ocaml
     dune
+    ppxlib
+    ppx_deriving
     cmdliner
     eio
     eio_main

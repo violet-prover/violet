@@ -3,7 +3,10 @@ open Lexing
 let rec parser (tokenizer : lexbuf -> Lexer.token) (lexbuf : lexbuf) :
     Lexer.token list =
   let tok = tokenizer lexbuf in
-  tok :: parser tokenizer lexbuf
+  Eio.traceln "%s" ([%show: Lexer.token] tok);
+  match tok with
+  | EOF -> []
+  | _ -> tok :: parser tokenizer lexbuf
 
 let catcher f lexbuf = f Lexer.token lexbuf
 (* try f Lexer.token lexbuf with

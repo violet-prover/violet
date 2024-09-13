@@ -1,18 +1,16 @@
 {
-open Lexing
-
 exception SyntaxError of string
 
 type token =
     COMMA
+  | DATA
+  | IDENT of string
   | EOF
-
-let next_line lexbuf =
-  let pos = lexbuf.lex_curr_p in
-  lexbuf.lex_curr_p <-
-    { pos with pos_bol = lexbuf.lex_curr_pos;
-               pos_lnum = pos.pos_lnum + 1
-    }
+  [@@deriving show]
+    
+    let ident str = IDENT str
+    let illegal str = raise @@ SyntaxError str
+    let return _lexbuf tok = tok
 }
 
 let digit = ['0'-'9']
@@ -24,8 +22,13 @@ let newline = '\r' | '\n' | "\r\n"
 rule token =
   parse
   | "#" { comment lexbuf }
-  | ',' { COMMA }
+  | "data" { return lexbuf @@ DATA }
+  | ',' { return lexbuf @@ COMMA }
+  | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
+  | whitespace { token lexbuf }
+  | newline { Lexing.new_line lexbuf; token lexbuf }
   | eof { EOF }
+  | _ { illegal @@ Lexing.lexeme lexbuf }
 
 and comment =
   parse

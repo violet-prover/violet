@@ -2,4 +2,6 @@
 
 (library
  (name gamma)
+ (preprocess
+  (pps ppx_deriving.show))
  (libraries eio yuujinchou asai))
