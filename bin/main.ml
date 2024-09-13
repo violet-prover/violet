@@ -1,4 +1,5 @@
 open Cmdliner
+module Tty = Asai.Tty.Make (Gamma.Reporter.Message)
 
 let version = "0.1.0"
 
@@ -27,4 +28,12 @@ let cmd ~env =
   let info = Cmd.info "gamma" ~version ~doc ~man in
   Cmd.group info [ lex_cmd ~env ]
 
-let () = Eio_main.run @@ fun env -> exit @@ Cmd.eval ~catch:false @@ cmd ~env
+let () = 
+let fatal diagnostics =
+  Tty.display diagnostics;
+  exit 1
+in
+Printexc.record_backtrace true;
+Eio_main.run @@ fun env -> 
+  Gamma.Reporter.run ~emit:Tty.display ~fatal @@ fun () ->
+  exit @@ Cmd.eval ~catch:false @@ cmd ~env

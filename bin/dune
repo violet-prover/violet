@@ -1,4 +1,4 @@
 (executable
  (public_name gamma)
  (name main)
- (libraries gamma cmdliner eio eio_main))
+ (libraries gamma cmdliner eio eio_main asai))
