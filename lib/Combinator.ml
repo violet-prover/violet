@@ -1,9 +1,10 @@
 open Effect
 open Effect.Deep
 
-type _ Effect.t += Next : Lexer.token Asai.Range.located Effect.t
-                 | Shift : Lexer.token Asai.Range.located list -> unit Effect.t
-                 | CurrentPosition :  Lexer.token Asai.Range.located list Effect.t
+type _ Effect.t +=
+  | Next : Lexer.token Asai.Range.located Effect.t
+  | Shift : Lexer.token Asai.Range.located list -> unit Effect.t
+  | CurrentPosition :  Lexer.token Asai.Range.located list Effect.t
 
 let next_token ()  = perform Next
 let shift pos = perform (Shift pos)
@@ -44,6 +45,5 @@ let rec many (p : unit -> 'a) : 'a list =
   with | _ -> shift pos; []
 let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
-  let x = (try p1 () with | _ ->
-    shift pos; p2 ()) in
-  x
+  try p1 () with | _ ->
+    shift pos; p2 ()
