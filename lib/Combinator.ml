@@ -36,17 +36,12 @@ let consume (predict : Lexer.token) : unit =
       ([%show: Lexer.token] predict)
       ([%show: Lexer.token] tok.value)
 
-let many (p : unit -> 'a) : 'a list =
-  let res = ref [] in
-  let quit_loop = ref false in
-  while not !quit_loop do
-    let pos = current_position () in
-    try
-      let x = p () in
-      res := x :: !res
-    with | _ -> shift pos; quit_loop := true
-  done;
-  List.rev !res
+let rec many (p : unit -> 'a) : 'a list =
+  let pos = current_position () in
+  try
+    let x = p () in
+    x :: many p
+  with | _ -> shift pos; []
 let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
   let x = (try p1 () with | _ ->
