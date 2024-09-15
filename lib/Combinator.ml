@@ -10,7 +10,7 @@ let shift pos = perform (Shift pos)
 let current_position () = perform CurrentPosition
 
 let run (init : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a = 
-  let internal  = ref init in
+  let internal = ref init in
   try_with f ()
   { effc = fun (type a) (eff: a t) ->
     match eff with
