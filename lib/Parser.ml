@@ -40,30 +40,39 @@ let p_let () : top =
   let open Combinator in
   consume Lexer.LET;
   let name = ident () in
-  let bindings = many ((bracket p_binding) <|> (parens p_binding)) in
+  let bindings = many ((bracket p_binding) <|> (parens p_binding)) () in
   consume Lexer.COLON;
   let ty = p_preterm () in
   consume Lexer.ASSIGN;
   let tm = p_preterm () in
   Let (name, bindings, ty, tm)
 
+let p_top : unit -> top =
+  p_let
+
+let p_all () : top list =
+  let x = Combinator.many p_top () in
+  Combinator.consume Lexer.EOF;
+  x
+
 let rec tokens filename lexbuf : Lexer.token Asai.Range.located list =
   let tok = Lexer.token lexbuf in
+  let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
   match tok with
-  | EOF -> []
+  | EOF ->
+    (Asai.Range.locate loc tok) :: []
   | tok ->
-    let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
-    let tok = Asai.Range.locate loc tok in
-    tok :: tokens filename lexbuf
+    (Asai.Range.locate loc tok) :: tokens filename lexbuf
 
 let parse_channel filename ch =
   Reporter.tracef "when parsing file `%s`" filename @@ fun () ->
   let lexbuf = Lexing.from_channel ch in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
   let stream = tokens filename lexbuf in
-  let top = Combinator.run stream (p_let) in
-  Eio.traceln "top level: %s" ([%show : top] top);
-  top
+  let tops = Combinator.run stream p_all in
+  List.iter (fun top ->
+    Eio.traceln "top: %s" ([%show : top] top))
+  tops
 
 let parse_file filename =
   let ch = open_in filename in

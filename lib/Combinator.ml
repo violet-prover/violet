@@ -1,3 +1,5 @@
+exception Impossible
+
 module Tokens = struct
   type t = Lexer.token Asai.Range.located list
 end
@@ -5,10 +7,11 @@ module TokenState = Algaeff.State.Make (Tokens)
 
 let next_token ()  =
   match TokenState.get () with
+  | [eof] -> eof
   | tok :: buf ->
     TokenState.set buf;
     tok
-  | _ -> Reporter.fatalf Parse_error "EOF"
+  | [] -> raise Impossible
 let shift pos = TokenState.set pos
 let current_position () = TokenState.get ()
 
@@ -25,11 +28,11 @@ let consume (predict : Lexer.token) : unit =
       ([%show: Lexer.token] predict)
       ([%show: Lexer.token] tok.value)
 
-let rec many (p : unit -> 'a) : 'a list =
+let rec many (p : unit -> 'a) () : 'a list =
   let pos = current_position () in
   try
     let x = p () in
-    x :: many p
+    x :: many p ()
   with | _ -> shift pos; []
 let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
