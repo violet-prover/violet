@@ -2,8 +2,15 @@
 exception SyntaxError of string
 
 type token =
-    COMMA
   | DATA
+  | LET
+  | ASSIGN
+  | COMMA
+  | COLON
+  | L_PAREN
+  | R_PAREN
+  | L_BRACKET
+  | R_BRACKET
   | IDENT of string
   | EOF
   [@@deriving show]
@@ -23,7 +30,14 @@ rule token =
   parse
   | "#" { comment lexbuf }
   | "data" { return lexbuf @@ DATA }
+  | "let" { return lexbuf @@ LET }
+  | ":=" { return lexbuf @@ ASSIGN }
+  | ':' { return lexbuf @@ COLON }
   | ',' { return lexbuf @@ COMMA }
+  | '(' { return lexbuf @@ L_PAREN }
+  | ')' { return lexbuf @@ R_PAREN }
+  | '{' { return lexbuf @@ L_BRACKET }
+  | '}' { return lexbuf @@ R_BRACKET }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
   | whitespace { token lexbuf }
   | newline { Lexing.new_line lexbuf; token lexbuf }
