@@ -43,11 +43,21 @@ let p_let () : top =
   let bindings = many ((bracket p_binding) <|> (parens p_binding)) in
   Let (name, bindings, Universe, Universe)
 
+let rec tokens filename lexbuf : Lexer.token Asai.Range.located list =
+  let tok = Lexer.token lexbuf in
+  match tok with
+  | EOF -> []
+  | tok ->
+    let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
+    let tok = Asai.Range.locate loc tok in
+    tok :: tokens filename lexbuf
+
 let parse_channel filename ch =
   Reporter.tracef "when parsing file `%s`" filename @@ fun () ->
   let lexbuf = Lexing.from_channel ch in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-  let top = Combinator.run filename lexbuf (p_let) in
+  let stream = tokens filename lexbuf in
+  let top = Combinator.run stream (p_let) in
   Eio.traceln "top level: %s" ([%show : top] top);
   top
 

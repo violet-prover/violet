@@ -2,24 +2,27 @@ open Effect
 open Effect.Deep
 
 type _ Effect.t += Next : Lexer.token Asai.Range.located Effect.t
-                 | Shift : Lexing.position -> unit Effect.t
-                 | CurrentPosition : Lexing.position Effect.t
+                 | Shift : Lexer.token Asai.Range.located list -> unit Effect.t
+                 | CurrentPosition :  Lexer.token Asai.Range.located list Effect.t
 
 let next_token ()  = perform Next
 let shift pos = perform (Shift pos)
-let current_position () : Lexing.position = perform CurrentPosition
+let current_position () = perform CurrentPosition
 
-let run (filename : string) (lexbuf : Lexing.lexbuf) (f : unit -> 'a) : 'a = 
+let run (buf : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a = 
+  let internal  = ref buf in
   try_with f ()
   { effc = fun (type a) (eff: a t) ->
     match eff with
     | Next -> Some (fun (k: (a,_) continuation) -> 
-      let tok = Lexer.token lexbuf in
-      let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
-      let tok = (Asai.Range.locate loc tok) in
-      continue k tok)
-    | Shift pos -> Some (fun k -> Lexing.set_position lexbuf pos; continue k ())
-    | CurrentPosition -> Some (fun k -> continue k lexbuf.lex_curr_p)
+      match !internal with
+      | tok :: buf ->
+        internal := buf;
+        continue k tok
+      | [] -> Reporter.fatalf Parse_error "EOF"
+      )
+    | Shift pos -> Some (fun k -> internal := pos; continue k ())
+    | CurrentPosition -> Some (fun k -> continue k !internal)
     | _ -> None
   }
 
