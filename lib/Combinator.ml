@@ -46,7 +46,7 @@ let many (p : unit -> 'a) : 'a list =
       res := x :: !res
     with | _ -> shift pos; quit_loop := true
   done;
-  !res
+  List.rev !res
 let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
   let x = (try p1 () with | _ ->
