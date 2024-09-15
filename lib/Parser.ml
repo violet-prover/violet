@@ -30,14 +30,17 @@ type top =
   | Let of string * binding list * pretype  * preterm
 [@@deriving show]
 
-let parse_let () : top =
-  Combinator.consume Lexer.LET;
+let ident () : string =
   let located_tok = Combinator.next_token () in
-  let name = (match located_tok.value with
+  match located_tok.value with
   | Lexer.IDENT name -> name
   | tok->
-    Reporter.fatalf Parse_error "expected <identifier>, but got `%s`"
-    ([%show: Lexer.token] tok)) in
+    let loc = Option.get located_tok.loc in
+    Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`" ([%show: Lexer.token] tok)
+
+let parse_let () : top =
+  Combinator.consume Lexer.LET;
+  let name = ident () in
   Let (name, [], Universe, Universe)
 
 let parse_channel filename ch =
