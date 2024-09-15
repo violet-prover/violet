@@ -9,7 +9,7 @@ let ident () : string =
     let loc = Option.get located_tok.loc in
     Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`" ([%show: Lexer.token] tok)
   
-let p_pretype () : pretype =
+let p_preterm () : preterm =
   let located_tok = Combinator.next_token () in
   match located_tok.value with
   | Lexer.UNIV -> Universe
@@ -33,7 +33,7 @@ let bracket (p : unit -> 'a) () : 'a =
 let p_binding () : binding =
   let name = ident () in
   Combinator.consume Lexer.COLON;
-  let typ = p_pretype ()  in
+  let typ = p_preterm ()  in
   (name, typ)
 
 let p_let () : top =
@@ -41,7 +41,11 @@ let p_let () : top =
   consume Lexer.LET;
   let name = ident () in
   let bindings = many ((bracket p_binding) <|> (parens p_binding)) in
-  Let (name, bindings, Universe, Universe)
+  consume Lexer.COLON;
+  let ty = p_preterm () in
+  consume Lexer.ASSIGN;
+  let tm = p_preterm () in
+  Let (name, bindings, ty, tm)
 
 let rec tokens filename lexbuf : Lexer.token Asai.Range.located list =
   let tok = Lexer.token lexbuf in
