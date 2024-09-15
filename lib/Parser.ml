@@ -51,6 +51,10 @@ let p_top : unit -> top =
   p_let
 
 let p_all () : top list =
+  (* FIXME: this is wrong, a top failed should get a reason
+    then seek next start token & continue parsing,
+    which is not many intend todo.
+   *)
   let x = Combinator.many p_top () in
   Combinator.consume Lexer.EOF;
   x
