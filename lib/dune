@@ -4,4 +4,4 @@
  (name gamma)
  (preprocess
   (pps ppx_deriving.show))
- (libraries eio yuujinchou asai))
+ (libraries eio yuujinchou asai algaeff))

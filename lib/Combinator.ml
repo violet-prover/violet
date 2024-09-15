@@ -1,31 +1,19 @@
-open Effect
-open Effect.Deep
+module Tokens = struct
+  type t = Lexer.token Asai.Range.located list
+end
+module TokenState = Algaeff.State.Make (Tokens)
 
-type _ Effect.t +=
-  | Next : Lexer.token Asai.Range.located Effect.t
-  | Shift : Lexer.token Asai.Range.located list -> unit Effect.t
-  | CurrentPosition :  Lexer.token Asai.Range.located list Effect.t
-
-let next_token ()  = perform Next
-let shift pos = perform (Shift pos)
-let current_position () = perform CurrentPosition
+let next_token ()  =
+  match TokenState.get () with
+  | tok :: buf ->
+    TokenState.set buf;
+    tok
+  | _ -> Reporter.fatalf Parse_error "EOF"
+let shift pos = TokenState.set pos
+let current_position () = TokenState.get ()
 
 let run (init : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a = 
-  let internal = ref init in
-  try_with f ()
-  { effc = fun (type a) (eff: a t) ->
-    match eff with
-    | Next -> Some (fun (k: (a,_) continuation) -> 
-      match !internal with
-      | tok :: buf ->
-        internal := buf;
-        continue k tok
-      | [] -> Reporter.fatalf Parse_error "EOF"
-      )
-    | Shift pos -> Some (fun k -> internal := pos; continue k ())
-    | CurrentPosition -> Some (fun k -> continue k !internal)
-    | _ -> None
-  }
+  TokenState.run ~init @@ fun () -> f ()
 
 let consume (predict : Lexer.token) : unit =
   let tok = next_token () in
