@@ -1,13 +1,13 @@
 open Lexing
 
-let rec parser filename (lexbuf : lexbuf) :
+let rec tokens filename (lexbuf : lexbuf) :
     Lexer.token Asai.Range.located list =
   let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
   let tok = Lexer.token lexbuf in
   Eio.traceln "%s" ([%show: Lexer.token] tok);
   match tok with
   | EOF -> []
-  | _ -> (Asai.Range.locate loc tok) :: parser filename lexbuf
+  | _ -> (Asai.Range.locate loc tok) :: tokens filename lexbuf
 
 let catcher f lexbuf =
   try f lexbuf with
@@ -20,11 +20,34 @@ let catcher f lexbuf =
        Reporter.fatalf ~loc Parse_error "unrecognized token `%s`"
        @@ String.escaped token
 
+type preterm =
+    | Universe
+and pretype = preterm
+and binding = string * pretype
+[@@deriving show]
+
+type top =
+  | Let of string * binding list * pretype  * preterm
+[@@deriving show]
+
+let parse_let () : top =
+  Combinator.consume Lexer.LET;
+  let located_tok = Combinator.next_token () in
+  let name = (match located_tok.value with
+  | Lexer.IDENT name -> name
+  | tok->
+    Reporter.fatalf Parse_error "expected <identifier>, but got `%s`"
+    ([%show: Lexer.token] tok)) in
+  Let (name, [], Universe, Universe)
+
 let parse_channel filename ch =
   Reporter.tracef "when parsing file `%s`" filename @@ fun () ->
   let lexbuf = Lexing.from_channel ch in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-  catcher (parser filename) lexbuf
+  (* catcher (tokens filename) lexbuf *)
+  let top = Combinator.run filename lexbuf (parse_let) in
+  Eio.traceln "top level: %s" ([%show : top] top);
+  top
 
 let parse_file filename =
   let ch = open_in filename in

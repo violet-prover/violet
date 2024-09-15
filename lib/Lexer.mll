@@ -13,11 +13,11 @@ type token =
   | R_BRACKET
   | IDENT of string
   | EOF
-  [@@deriving show]
+[@@deriving show]
     
-    let ident str = IDENT str
-    let illegal str = raise @@ SyntaxError str
-    let return _lexbuf tok = tok
+let ident str = IDENT str
+let illegal str = raise @@ SyntaxError str
+let return _lexbuf tok = tok
 }
 
 let digit = ['0'-'9']
