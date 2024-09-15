@@ -2,16 +2,16 @@
 exception SyntaxError of string
 
 type token =
-  | DATA
-  | LET
-  | ASSIGN
-  | COMMA
-  | COLON
-  | L_PAREN
-  | R_PAREN
-  | L_BRACKET
-  | R_BRACKET
-  | IDENT of string
+  | DATA [@printer fun fmt () -> fprintf fmt "data"]
+  | LET [@printer fun fmt () -> fprintf fmt "let"]
+  | UNIV [@printer fun fmt () -> fprintf fmt "U"]
+  | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
+  | COLON [@printer fun fmt () -> fprintf fmt ":"]
+  | L_PAREN [@printer fun fmt () -> fprintf fmt "("]
+  | R_PAREN [@printer fun fmt () -> fprintf fmt ")"]
+  | L_BRACKET [@printer fun fmt () -> fprintf fmt "{"]
+  | R_BRACKET [@printer fun fmt () -> fprintf fmt "}"]
+  | IDENT of string [@printer fun fmt name -> fprintf fmt "<identifier:%s>" name]
   | EOF
 [@@deriving show]
     
@@ -29,11 +29,11 @@ let newline = '\r' | '\n' | "\r\n"
 rule token =
   parse
   | "#" { comment lexbuf }
+  | "U" { return lexbuf @@ UNIV }
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
   | ":=" { return lexbuf @@ ASSIGN }
   | ':' { return lexbuf @@ COLON }
-  | ',' { return lexbuf @@ COMMA }
   | '(' { return lexbuf @@ L_PAREN }
   | ')' { return lexbuf @@ R_PAREN }
   | '{' { return lexbuf @@ L_BRACKET }

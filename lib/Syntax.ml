@@ -1,5 +1,6 @@
 type preterm =
-    | Universe
+  | Universe
+  | Var of string
 and pretype = preterm
 and binding = string * pretype
 [@@deriving show]

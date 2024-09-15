@@ -39,7 +39,20 @@ let run (filename : string) (lexbuf : lexbuf) (f : unit -> 'a) : 'a =
     | _ -> None
   }
 
-let (>>) (p1 : unit -> 'a) (p2 : 'a -> 'b) : 'b =
-  let a = p1 () in
-  p2 a
-
+let many (p : unit -> 'a) : 'a list =
+  let res = ref [] in
+  let quit_loop = ref false in
+  while not !quit_loop do
+    let pos = current_position () in
+    try
+      let x = p () in
+      res := x :: !res
+    with | _ -> shift pos; quit_loop := true
+  done;
+  !res
+let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
+  let pos = current_position () in
+  let x = (try p1 () with | _ ->
+    Eio.traceln "here";
+    shift pos; p2 ()) in
+  x
