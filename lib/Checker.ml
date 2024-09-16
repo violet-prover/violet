@@ -43,17 +43,17 @@ let check_module (file : Surface.t) : unit =
   List.iter (fun top ->
     match top with
     | Surface.Let (name, bindings, result_ty, body) ->
-      let typ : Surface.pretype = List.fold_left (fun return_ty binding ->
+      let typ : Surface.pretype = List.fold_right (fun binding return_ty ->
         Surface.Pi (binding, return_ty))
-        result_ty
-        bindings in
+        bindings
+        result_ty in
       let typ = check typ Universe in
       let typ = eval typ in
 
-      let term : Surface.preterm = List.fold_left
-        (fun body {name;implicit;bound=_} -> Surface.Lambda {name; bound=body; implicit})
-        body
-        bindings in
+      let term : Surface.preterm = List.fold_right
+        (fun {name;implicit;bound=_} body -> Surface.Lambda {name; bound=body; implicit})
+        bindings
+        body in
       let term = check term typ in
 
       Context.S.include_singleton ~context_visible:`Visible
