@@ -50,16 +50,16 @@ let p_let () : top =
 let p_top : unit -> top =
   p_let
 
-let p_all () : top list =
+let p_all (name : string) () : Syntax.t =
   (* FIXME: this is wrong, a top failed should get a reason
     then seek next start token & continue parsing,
     which is not many intend todo.
    *)
-  let x = Combinator.many p_top () in
+  let tops = Combinator.many p_top () in
   Combinator.consume Lexer.EOF;
-  x
+  { name; tops }
 
-let rec tokens filename lexbuf : Lexer.token Asai.Range.located list =
+let rec tokens filename lexbuf =
   let tok = Lexer.token lexbuf in
   let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
   match tok with
@@ -72,11 +72,7 @@ let parse_channel filename ch =
   Reporter.tracef "when parsing file `%s`" filename @@ fun () ->
   let lexbuf = Lexing.from_channel ch in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-  let stream = tokens filename lexbuf in
-  let tops = Combinator.run stream p_all in
-  List.iter (fun top ->
-    Eio.traceln "top: %s" ([%show : top] top))
-  tops
+  Combinator.run (tokens filename lexbuf) (p_all filename)
 
 let parse_file filename =
   let ch = open_in filename in

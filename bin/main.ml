@@ -17,8 +17,9 @@ let lex_cmd ~env =
   Cmd.v info
     Term.(
       const (fun filename ->
-          let _ = Gamma.Parser.parse_file filename in
-          ())
+        let m = Gamma.Parser.parse_file filename in
+        Eio.traceln "%s" ([%show: Gamma.Syntax.t] m) ;
+        ())
       $ arg_file)
 
 let cmd ~env =

@@ -8,3 +8,9 @@ and binding = string * pretype
 type top =
   | Let of string * binding list * pretype  * preterm
 [@@deriving show]
+
+type t = {
+  name : string;
+  tops : top list;
+}
+[@@deriving show]

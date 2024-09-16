@@ -1,4 +1,6 @@
 (executable
  (public_name gamma)
  (name main)
+ (preprocess
+  (pps ppx_deriving.show))
  (libraries gamma cmdliner eio eio_main asai))
