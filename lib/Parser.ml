@@ -10,7 +10,7 @@ let ident () : string =
       Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`"
         ([%show: Lexer.token] tok)
 
-let p_preterm () : Surface.preterm =
+let p_patom () : Surface.preterm =
   let located_tok = Combinator.next_token () in
   let tm : Surface.preterm = match located_tok.value with
     | Lexer.UNIV -> Universe
@@ -21,6 +21,14 @@ let p_preterm () : Surface.preterm =
         ([%show: Lexer.token] tok)
   in
   Located (Asai.Range.locate (Option.get located_tok.loc) tm)
+
+let p_preterm () : Surface.preterm =
+  let a = p_patom () in
+  let atoms = Combinator.many p_patom () in
+  List.fold_left
+    (fun a tm -> Surface.App (a, tm))
+    a
+    atoms
 
 let parens (p : unit -> 'a) () : 'a =
   Combinator.consume Lexer.L_PAREN;

@@ -14,6 +14,11 @@ module Surface = struct
         fprintf fmt "%s" (show_preterm value)]
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
+    | App of preterm * preterm
+      [@printer fun fmt (a,b) -> fprintf fmt "(%s %s)"
+        (show_preterm a)
+        (show_preterm b)
+      ]
     (* fun x => x *)
     | Lambda of preterm binder
       [@printer fun fmt bind ->

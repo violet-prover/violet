@@ -45,6 +45,7 @@ let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
     let tm, infer_typ = infer tm in
     unify expected_typ infer_typ;
     tm
+(* infer 的用途是，把已經裝飾過的 surface term 變成 core term，並且推導其型別，這個過程可以失敗 *)
 and infer : Surface.preterm -> Core.term * Core.value_ty = function
   | Located {loc; value} ->
     Reporter.merge_loc loc @@ fun () ->
