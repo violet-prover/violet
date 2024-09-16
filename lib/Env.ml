@@ -14,10 +14,11 @@ end
 module S = Scope.Make (ValueEnvironment)
 
 let lookup (x : string) : Core.value =
-  match S.resolve [x] with
+  match S.resolve [ x ] with
   | Some (v, _) -> v
-  | None -> Reporter.fatalf NoVar_error "cannot find `%s` in environment"
-    (String.concat "." [x])
+  | None ->
+      Reporter.fatalf NoVar_error "cannot find `%s` in environment"
+        (String.concat "." [ x ])
 
 (* Handle scoping effects *)
 module Handler = struct
@@ -33,7 +34,8 @@ module Handler = struct
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value] x)
     | x, `Local -> Format.fprintf fmt "%s (local)" ([%show: Core.value] x)
-    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
+    | x, `Constructor ->
+        Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
 
   let shadow context path x y =
     Eio.traceln "shadowing, Γ ⊢ %a : %a -> %a%a.@." pp_path path pp_item x

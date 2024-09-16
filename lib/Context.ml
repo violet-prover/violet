@@ -14,10 +14,11 @@ end
 module S = Scope.Make (TypeContext)
 
 let lookup (x : string) : Core.value_ty =
-  match S.resolve [x] with
+  match S.resolve [ x ] with
   | Some (v, _) -> v
-  | None -> Reporter.fatalf NoVar_error "cannot find type of `%s` in context"
-    (String.concat " " [x])
+  | None ->
+      Reporter.fatalf NoVar_error "cannot find type of `%s` in context"
+        (String.concat " " [ x ])
 
 (* Handle scoping effects *)
 module Handler = struct
@@ -31,9 +32,11 @@ module Handler = struct
     | None -> ()
 
   let pp_item fmt = function
-    | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
+    | x, `Imported ->
+        Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
     | x, `Local -> Format.fprintf fmt "%s (local)" ([%show: Core.value_ty] x)
-    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
+    | x, `Constructor ->
+        Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
 
   let shadow context path x y =
     Eio.traceln "shadowing, Γ ⊢ %a : %a -> %a%a.@." pp_path path pp_item x

@@ -22,35 +22,38 @@ let ident () : string =
       Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`"
         ([%show: Lexer.token] tok)
 
-
 let rec p_preterm () : Surface.preterm =
   let a = p_patom () in
   let args = Combinator.many p_arg () in
   List.fold_left
     (fun a (arg : Surface.as_arg) -> Surface.App (arg.implicit, a, arg.term))
-    a
-    args
+    a args
+
 and p_arg () : Surface.as_arg =
   let pos = Combinator.current_position () in
   let tok = Combinator.next_token () in
   match tok.value with
   | Lexer.L_BRACKET ->
-    let atom = p_patom() in
-    Combinator.consume Lexer.R_BRACKET;
-    { implicit = true; term = atom }
+      let atom = p_patom () in
+      Combinator.consume Lexer.R_BRACKET;
+      { implicit = true; term = atom }
   | _ ->
-    Combinator.shift pos;
-    let atom = p_patom () in
-    { implicit = false; term = atom }
+      Combinator.shift pos;
+      let atom = p_patom () in
+      { implicit = false; term = atom }
+
 and p_patom () : Surface.preterm =
   let pos = Combinator.current_position () in
   let tok = Combinator.next_token () in
   let loc = Option.get tok.loc in
-  let tm : Surface.preterm = match tok.value with
+  let tm : Surface.preterm =
+    match tok.value with
     | Lexer.UNIV -> Universe
     | Lexer.IDENT s -> Var s
     (* 用括號包住的 term 也能當成一種 atom 使用 *)
-    | _ -> Combinator.shift pos; (parens p_preterm) ()
+    | _ ->
+        Combinator.shift pos;
+        (parens p_preterm) ()
   in
   Located (Asai.Range.locate loc tm)
 
@@ -59,13 +62,15 @@ let p_binding (implicit : bool) () : Surface.preterm binder =
   let name = ident () in
   Combinator.consume Lexer.COLON;
   let tm = p_preterm () in
-  { name; bound=tm; implicit }
+  { name; bound = tm; implicit }
 
 let p_let () : Surface.top =
   let open Combinator in
   consume Lexer.LET;
   let name = ident () in
-  let bindings = many (bracket (p_binding true) <|> parens (p_binding false)) () in
+  let bindings =
+    many (bracket (p_binding true) <|> parens (p_binding false)) ()
+  in
   consume Lexer.COLON;
   let ty = p_preterm () in
   consume Lexer.ASSIGN;
