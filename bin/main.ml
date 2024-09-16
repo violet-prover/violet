@@ -18,7 +18,8 @@ let lex_cmd ~env =
     Term.(
       const (fun filename ->
           let m = Gamma.Parser.parse_file filename in
-          Eio.traceln "%s" ([%show: Gamma.Syntax.Surface.t] m);
+          (* Eio.traceln "%s" ([%show: Gamma.Syntax.Surface.t] m); *)
+          Gamma.Checker.check_module m;
           ())
       $ arg_file)
 
@@ -37,4 +38,8 @@ let () =
   Printexc.record_backtrace true;
   Eio_main.run @@ fun env ->
   Gamma.Reporter.run ~emit:Tty.display ~fatal @@ fun () ->
+  let open Gamma.Context.Handler in
+  Gamma.Context.S.run ~shadow ~not_found ~hook @@ fun () ->
+  let open Gamma.Env.Handler in
+  Gamma.Env.S.run ~shadow ~not_found ~hook @@ fun () ->
   exit @@ Cmd.eval ~catch:false @@ cmd ~env

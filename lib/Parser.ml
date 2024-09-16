@@ -32,12 +32,12 @@ let bracket (p : unit -> 'a) () : 'a =
   Combinator.consume Lexer.R_BRACKET;
   x
 
-(* name : pretype *)
-let p_binding (implicit : bool) () : Surface.binding =
+(* name : preterm *)
+let p_binding (implicit : bool) () : Surface.preterm binder =
   let name = ident () in
   Combinator.consume Lexer.COLON;
-  let typ = p_preterm () in
-  { name; typ; implicit }
+  let tm = p_preterm () in
+  { name; bound=tm; implicit }
 
 let p_let () : Surface.top =
   let open Combinator in

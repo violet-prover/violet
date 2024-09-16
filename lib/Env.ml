@@ -21,8 +21,6 @@ let lookup (x : string) : Core.value =
 
 (* Handle scoping effects *)
 module Handler = struct
-  open Syntax.Core
-
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
     | path -> Format.pp_print_string fmt @@ String.concat "." (Bwd.to_list path)
@@ -33,9 +31,9 @@ module Handler = struct
     | None -> ()
 
   let pp_item fmt = function
-    | x, `Imported -> Format.fprintf fmt "%s (imported)" (show_typ x)
-    | x, `Local -> Format.fprintf fmt "%s (local)" (show_typ x)
-    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" (show_typ x)
+    | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value] x)
+    | x, `Local -> Format.fprintf fmt "%s (local)" ([%show: Core.value] x)
+    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
 
   let shadow context path x y =
     Eio.traceln "shadowing, Γ ⊢ %a : %a -> %a%a.@." pp_path path pp_item x
