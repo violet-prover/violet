@@ -3,25 +3,26 @@ exception Impossible
 module Tokens = struct
   type t = Lexer.token Asai.Range.located list
 end
+
 module TokenState = Algaeff.State.Make (Tokens)
 
-let next_token ()  =
+let next_token () =
   match TokenState.get () with
-  | [eof] -> eof
+  | [ eof ] -> eof
   | tok :: buf ->
-    TokenState.set buf;
-    tok
+      TokenState.set buf;
+      tok
   | [] -> raise Impossible
+
 let shift pos = TokenState.set pos
 let current_position () = TokenState.get ()
 
-let run (init : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a = 
+let run (init : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a =
   TokenState.run ~init @@ fun () -> f ()
 
 let consume (predict : Lexer.token) : unit =
   let tok = next_token () in
-  if tok.value == predict then
-    ()
+  if tok.value == predict then ()
   else
     let loc = Option.get tok.loc in
     Reporter.fatalf ~loc Parse_error "expected `%s`, but got `%s`"
@@ -33,8 +34,13 @@ let rec many (p : unit -> 'a) () : 'a list =
   try
     let x = p () in
     x :: many p ()
-  with | _ -> shift pos; []
-let (<|>) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
+  with _ ->
+    shift pos;
+    []
+
+let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
-  try p1 () with | _ ->
-    shift pos; p2 ()
+  try p1 ()
+  with _ ->
+    shift pos;
+    p2 ()

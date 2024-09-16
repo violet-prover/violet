@@ -17,9 +17,9 @@ let lex_cmd ~env =
   Cmd.v info
     Term.(
       const (fun filename ->
-        let m = Gamma.Parser.parse_file filename in
-        Eio.traceln "%s" ([%show: Gamma.Syntax.t] m) ;
-        ())
+          let m = Gamma.Parser.parse_file filename in
+          Eio.traceln "%s" ([%show: Gamma.Syntax.Surface.t] m);
+          ())
       $ arg_file)
 
 let cmd ~env =
@@ -29,12 +29,12 @@ let cmd ~env =
   let info = Cmd.info "gamma" ~version ~doc ~man in
   Cmd.group info [ lex_cmd ~env ]
 
-let () = 
-let fatal diagnostics =
-  Tty.display diagnostics;
-  exit 1
-in
-Printexc.record_backtrace true;
-Eio_main.run @@ fun env -> 
+let () =
+  let fatal diagnostics =
+    Tty.display diagnostics;
+    exit 1
+  in
+  Printexc.record_backtrace true;
+  Eio_main.run @@ fun env ->
   Gamma.Reporter.run ~emit:Tty.display ~fatal @@ fun () ->
   exit @@ Cmd.eval ~catch:false @@ cmd ~env

@@ -12,6 +12,7 @@ bug-reports: "https://github.com/dannypsnl/gamma/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.15"}
+  "ocamlformat"
   "ppxlib"
   "ppx_deriving"
   "cmdliner"
@@ -20,6 +21,7 @@ depends: [
   "asai"
   "algaeff"
   "yuujinchou"
+  "bwd"
   "odoc" {with-doc}
 ]
 build: [

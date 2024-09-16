@@ -1,2 +1,3 @@
-let check_module (_t : Syntax.t) : unit =
-  ()
+open Syntax
+
+let check_module (_t : Surface.t) : unit = ()

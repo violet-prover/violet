@@ -22,6 +22,7 @@
  (depends
     ocaml
     dune
+    ocamlformat
     ppxlib
     ppx_deriving
     cmdliner
@@ -29,7 +30,8 @@
     eio_main
     asai
     algaeff
-    yuujinchou)
+    yuujinchou
+    bwd)
  (tags
   (topics "to describe" your project)))
 
