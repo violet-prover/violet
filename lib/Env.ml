@@ -1,16 +1,23 @@
 open Yuujinchou
 open Bwd
+open Syntax
 
 type modifier_cmd = Trace
 
 module ValueEnvironment = struct
-  type data = Syntax.Core.value
+  type data = Core.value
   type tag = [ `Imported | `Local | `Constructor ]
   type hook = modifier_cmd
   type context = [ `Visible | `Export ]
 end
 
 module S = Scope.Make (ValueEnvironment)
+
+let lookup (x : string) : Core.value =
+  match S.resolve [x] with
+  | Some (v, _) -> v
+  | None -> Reporter.fatalf NoVar_error "cannot find `%s` in environment"
+    (String.concat " " [x])
 
 (* Handle scoping effects *)
 module Handler = struct

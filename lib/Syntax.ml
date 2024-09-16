@@ -1,19 +1,21 @@
 open Bwd
 
+type 't binding = {
+  name: string; typ: 't; implicit: bool
+}
+[@@deriving show]
+
 module Surface = struct
   type preterm = 
     | Universe
     | Var of string
     (* fun x => x *)
     | Lambda of string * preterm
-    | Pi of binding * pretype
+    | Pi of pretype binding * pretype
   and pretype = preterm
-  and binding = {
-    name: string; typ: pretype; implicit: bool
-  }
   [@@deriving show]
 
-  type top = Let of string * binding list * pretype * preterm
+  type top = Let of string * pretype binding list * pretype * preterm
   [@@deriving show]
 
   type t = { name : string; tops : top list }
@@ -26,6 +28,7 @@ module Core = struct
   type term =
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
+    | Pi of typ binding * typ
     | Meta of metavar
     (* TODO: 還沒有用到，還需要 bounds 紀錄當 meta 被插入時有哪些變數可以使用 *)
     | InsertedMeta of metavar
@@ -50,7 +53,7 @@ module Core = struct
               fprintf fmt "%s %s" head
                 (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
     | Lambda of (value -> value) [@printer fun fmt _ -> fprintf fmt "<closure>"]
-    | Pi of string * value_ty
+    | VPi of value_ty binding * value_ty
     | Universe
   [@@deriving show]
   and value_ty = value

@@ -1,16 +1,23 @@
 open Yuujinchou
 open Bwd
+open Syntax
 
 type modifier_cmd = Trace
 
 module TypeContext = struct
-  type data = Syntax.Core.value_ty
+  type data = Core.value_ty
   type tag = [ `Imported | `Local | `Constructor ]
   type hook = modifier_cmd
   type context = [ `Visible | `Export ]
 end
 
 module S = Scope.Make (TypeContext)
+
+let lookup (x : string) : Core.value_ty =
+  match S.resolve [x] with
+  | Some (v, _) -> v
+  | None -> Reporter.fatalf NoVar_error "cannot find type of `%s` in context"
+    (String.concat " " [x])
 
 (* Handle scoping effects *)
 module Handler = struct
