@@ -1,35 +1,6 @@
 open Lexing
 open Syntax
 
-let ident () : string =
-  let located_tok = Combinator.next_token () in
-  match located_tok.value with
-  | Lexer.IDENT name -> name
-  | tok ->
-      let loc = Option.get located_tok.loc in
-      Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`"
-        ([%show: Lexer.token] tok)
-
-let p_patom () : Surface.preterm =
-  let located_tok = Combinator.next_token () in
-  let tm : Surface.preterm = match located_tok.value with
-    | Lexer.UNIV -> Universe
-    | Lexer.IDENT s -> Var s
-    | tok ->
-      let loc = Option.get located_tok.loc in
-      Reporter.fatalf ~loc Parse_error "expected <type>, but got `%s`"
-        ([%show: Lexer.token] tok)
-  in
-  Located (Asai.Range.locate (Option.get located_tok.loc) tm)
-
-let p_preterm () : Surface.preterm =
-  let a = p_patom () in
-  let atoms = Combinator.many p_patom () in
-  List.fold_left
-    (fun a tm -> Surface.App (a, tm))
-    a
-    atoms
-
 let parens (p : unit -> 'a) () : 'a =
   Combinator.consume Lexer.L_PAREN;
   let x = p () in
@@ -41,6 +12,47 @@ let bracket (p : unit -> 'a) () : 'a =
   let x = p () in
   Combinator.consume Lexer.R_BRACKET;
   x
+
+let ident () : string =
+  let located_tok = Combinator.next_token () in
+  match located_tok.value with
+  | Lexer.IDENT name -> name
+  | tok ->
+      let loc = Option.get located_tok.loc in
+      Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`"
+        ([%show: Lexer.token] tok)
+
+
+let rec p_preterm () : Surface.preterm =
+  let a = p_patom () in
+  let args = Combinator.many p_arg () in
+  List.fold_left
+    (fun a (arg : Surface.as_arg) -> Surface.App (arg.implicit, a, arg.term))
+    a
+    args
+and p_arg () : Surface.as_arg =
+  let pos = Combinator.current_position () in
+  let tok = Combinator.next_token () in
+  match tok.value with
+  | Lexer.L_BRACKET ->
+    let atom = p_patom() in
+    Combinator.consume Lexer.R_BRACKET;
+    { implicit = true; term = atom }
+  | _ ->
+    Combinator.shift pos;
+    let atom = p_patom () in
+    { implicit = false; term = atom }
+and p_patom () : Surface.preterm =
+  let pos = Combinator.current_position () in
+  let tok = Combinator.next_token () in
+  let loc = Option.get tok.loc in
+  let tm : Surface.preterm = match tok.value with
+    | Lexer.UNIV -> Universe
+    | Lexer.IDENT s -> Var s
+    (* 用括號包住的 term 也能當成一種 atom 使用 *)
+    | _ -> Combinator.shift pos; (parens p_preterm) ()
+  in
+  Located (Asai.Range.locate loc tm)
 
 (* name : preterm *)
 let p_binding (implicit : bool) () : Surface.preterm binder =

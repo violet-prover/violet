@@ -14,8 +14,8 @@ module Surface = struct
         fprintf fmt "%s" (show_preterm value)]
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
-    | App of preterm * preterm
-      [@printer fun fmt (a,b) -> fprintf fmt "(%s %s)"
+    | App of bool * preterm * preterm
+      [@printer fun fmt (_, a,b) -> fprintf fmt "(%s %s)"
         (show_preterm a)
         (show_preterm b)
       ]
@@ -45,6 +45,8 @@ module Surface = struct
   and pretype = preterm
   [@@deriving show]
 
+  type as_arg = { term: preterm; implicit: bool }
+
   type top = Let of string * pretype binder list * pretype * preterm
   [@@deriving show]
 
@@ -58,6 +60,7 @@ module Core = struct
   type term =
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
+    | App of term * term
     | Lambda of term binder
     | Pi of typ binder * typ
     | Meta of metavar

@@ -1,3 +1,3 @@
 # whatever
 let id {A : U} (x : A) : A := x
-let id2 {B : U} (x : B) : B := id x
+let id2 {B : U} (x : B) : B := id {B} x
