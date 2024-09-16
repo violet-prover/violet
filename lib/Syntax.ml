@@ -1,9 +1,16 @@
 open Bwd
 
 module Surface = struct
-  type preterm = Universe | Var of string
+  type preterm = 
+    | Universe
+    | Var of string
+    (* fun x => x *)
+    | Lambda of string * preterm
+    | Pi of binding * pretype
   and pretype = preterm
-  and binding = string * pretype
+  and binding = {
+    name: string; typ: pretype; implicit: bool
+  }
   [@@deriving show]
 
   type top = Let of string * binding list * pretype * preterm
