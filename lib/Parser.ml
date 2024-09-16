@@ -12,13 +12,15 @@ let ident () : string =
 
 let p_preterm () : Surface.preterm =
   let located_tok = Combinator.next_token () in
-  match located_tok.value with
-  | Lexer.UNIV -> Universe
-  | Lexer.IDENT s -> Var s
-  | tok ->
+  let tm : Surface.preterm = match located_tok.value with
+    | Lexer.UNIV -> Universe
+    | Lexer.IDENT s -> Var s
+    | tok ->
       let loc = Option.get located_tok.loc in
       Reporter.fatalf ~loc Parse_error "expected <type>, but got `%s`"
         ([%show: Lexer.token] tok)
+  in
+  Located (Asai.Range.locate (Option.get located_tok.loc) tm)
 
 let parens (p : unit -> 'a) () : 'a =
   Combinator.consume Lexer.L_PAREN;

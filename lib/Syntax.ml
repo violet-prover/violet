@@ -6,9 +6,14 @@ type 't binder = {
 [@@deriving show]
 
 module Surface = struct
-  type preterm = 
-    | Universe
-    | Var of string
+  open Asai.Range
+
+  type preterm =
+    | Located of preterm located
+      [@printer fun fmt {loc=_; value} ->
+        fprintf fmt "%s" (show_preterm value)]
+    | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
+    | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     (* fun x => x *)
     | Lambda of preterm binder
       [@printer fun fmt bind ->
@@ -21,6 +26,17 @@ module Surface = struct
             bind.name
             (show_preterm bind.bound)]
     | Pi of pretype binder * pretype
+    [@printer fun fmt (bind, b) ->
+      if bind.implicit then
+        fprintf fmt "Π{%s : %s} -> %s"
+          bind.name
+          (show_pretype bind.bound)
+          (show_pretype b)
+      else
+        fprintf fmt "Π(%s : %s) -> %s"
+          bind.name
+          (show_pretype bind.bound)
+          (show_pretype b)]
   and pretype = preterm
   [@@deriving show]
 
@@ -63,8 +79,8 @@ module Core = struct
               fprintf fmt "%s %s" head
                 (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
     | VLambda of (value -> value) [@printer fun fmt _ -> fprintf fmt "<closure>"]
-    | VPi of value_ty binder * value_ty
-    | Universe
+    | VPi of value_ty binder * (value -> value)
+    | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
   [@@deriving show]
   and value_ty = value
 end

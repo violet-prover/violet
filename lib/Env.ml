@@ -17,7 +17,7 @@ let lookup (x : string) : Core.value =
   match S.resolve [x] with
   | Some (v, _) -> v
   | None -> Reporter.fatalf NoVar_error "cannot find `%s` in environment"
-    (String.concat " " [x])
+    (String.concat "." [x])
 
 (* Handle scoping effects *)
 module Handler = struct
