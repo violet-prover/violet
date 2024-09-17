@@ -18,10 +18,9 @@ module PartialRenaming = struct
           let ren = go rest in
           match Evaluation.force t with
           | Rigid (x, Emp) ->
-            (* TODO: ensure x is not a member of ren *)
-            (* then do `IM.insert x dom ren` *)
-            Hashtbl.add ren x v;
-            ren
+            (match Hashtbl.find_opt ren x with
+            | Some _ -> Reporter.fatalf Elab_error "bad"
+            | None -> Hashtbl.add ren x v; ren)            
           | _ ->
             Reporter.fatalf Elab_error "invert failed"
     in
@@ -59,6 +58,7 @@ module PartialRenaming = struct
     let dom = Bwd.map (fun _ -> (Format.sprintf "<!%d>" (Random.int 1000))) sp in
     let renaming = invert dom sp in
     let rhs  = rename m renaming rhs in
+    Eio.traceln "solution: %s" ([%show: term] rhs);
     let solution = Evaluation.eval @@ lams dom rhs in
     solution
 end
@@ -68,5 +68,4 @@ let solve (m : metavar) (sp : value bwd) (rhs : value) : unit =
   Bwd.iter (fun v -> Eio.traceln "%s" ([%show: value] v)) sp;
 
   let solution = PartialRenaming.run m sp rhs in
-  Eio.traceln "solution: %s" ([%show: value] solution);
   Evaluation.insert_meta m solution

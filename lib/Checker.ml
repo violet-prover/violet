@@ -6,7 +6,7 @@ exception TODO
 
 let rec unify (a : Core.value) (b : Core.value) : unit =
   Eio.traceln "%s ?= %s" ([%show: Core.value] a) ([%show: Core.value] b);
-  match (a, b) with
+  match (force a, force b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
     unify_spine sp1 sp2
