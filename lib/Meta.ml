@@ -18,3 +18,7 @@ let eval (mvar : metavar) : value =
   match lookupMeta mvar with
   | Solved t -> t
   | Unsolved -> Flex (mvar, Emp)
+
+let solve (m : metavar) (_sp : value bwd) (t : value) : unit =
+  Eio.traceln "%s ?= %s" ([%show: metavar] m) ([%show: value] t);
+  ()

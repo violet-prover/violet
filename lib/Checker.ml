@@ -39,12 +39,9 @@ let unify (a : Core.value) (b : Core.value) : unit =
   match (a, b) with
   | Universe, Universe -> ()
   (* FIXME: should invoke solver here to update our cute meta context *)
-  | t, Flex (m, _) ->
-    Eio.traceln "%s ?= %s" ([%show: Core.metavar] m) ([%show: Core.value] t);
-    ()
-  | Flex (m, _), t ->
-    Eio.traceln "%s ?= %s" ([%show: Core.metavar] m) ([%show: Core.value] t);
-    ()
+  | t, Flex (m, sp)
+  | Flex (m, sp), t ->
+    Meta.solve m sp t
   | expected, actual ->
       Reporter.fatalf Type_error "cannot unify `%s` and `%s`"
         ([%show: Core.value] expected)
