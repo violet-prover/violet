@@ -15,10 +15,7 @@ module PartialRenaming = struct
     rename : (string, string) Hashtbl.t;
   }
 
-  let invert (codomain : string bwd) (sp : value bwd) : t =
-    let domain =
-      Bwd.map (fun _ -> Format.sprintf "<@%d>" (Random.int 1000)) sp
-    in
+  let invert (domain : string bwd) (sp : value bwd) : t =
     let rec go = function
       | Emp -> Hashtbl.create ~random:true 1000
       | Snoc (rest, (t, v)) -> (
@@ -32,7 +29,7 @@ module PartialRenaming = struct
                   ren)
           | _ -> Reporter.fatalf Elab_error "invert failed")
     in
-    { domain; codomain; rename = go @@ Bwd.combine sp domain }
+    { domain; codomain=domain; rename = go @@ Bwd.combine sp domain }
 
   let rec rename (m : metavar) (renaming : t) (rhs : value) : term =
     match rhs with
@@ -44,19 +41,20 @@ module PartialRenaming = struct
     | Rigid (x, sp) -> (
         match Hashtbl.find_opt renaming.rename x with
         | None -> Reporter.fatalf Elab_error "cannot complete partial renaming"
-        | Some x' -> rename_sp m renaming (Var x') sp)
+        | Some x' ->
+          rename_sp m renaming (Var x') sp)
     | VLambda t ->
         Lambda
           {
-            name = "<x>";
+            name = Bwd.nth renaming.domain 0;
             bound =
-              rename m renaming (t @@ Rigid (Bwd.nth renaming.codomain 1, Emp));
+              rename m renaming (t @@ Rigid (Bwd.nth renaming.domain 0, Emp));
             implicit = false;
           }
     | VPi ({ name; bound = a; implicit }, b) ->
         Pi
           ( { name; bound = rename m renaming a; implicit },
-            rename m renaming (b (Rigid (Bwd.nth renaming.codomain 1, Emp))) )
+            rename m renaming (b (Rigid (Bwd.nth renaming.domain 0, Emp))) )
 
   and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term
       =
@@ -64,23 +62,28 @@ module PartialRenaming = struct
     | Emp -> t
     | Snoc (sp, u) -> App (rename_sp m renaming t sp, rename m renaming u)
 
-  let rec lams (dom : string bwd) (tm : term) : term =
+  let rec lams (dom : string list) (tm : term) : term =
     match dom with
-    | Emp -> tm
-    | Snoc (dom, name) -> Lambda { name; bound = lams dom tm; implicit = false }
+    | [] -> tm
+    | name :: dom -> Lambda { name; bound = lams dom tm; implicit = false }
 
   let run m sp rhs =
-    let dom = Bwd.map (fun _ -> Format.sprintf "<!%d>" (Random.int 1000)) sp in
+    let dom = Bwd.map (fun _ -> Format.sprintf "<%d>" (Random.int 1000)) sp in
     let renaming = invert dom sp in
     let rhs = rename m renaming rhs in
-    Eio.traceln "solution: %s" ([%show: term] rhs);
-    let solution = Evaluation.eval @@ lams dom rhs in
-    solution
+    Env.S.section [] @@ fun () ->
+    Bwd.iter
+      (fun (x, v) ->
+        Eio.traceln "%s := %s" x (show_value v);
+        Env.S.include_singleton ([x], (v, `Local)))
+    (Bwd.combine dom sp);
+    let solution = lams (Bwd.to_list dom) rhs in
+    Eio.traceln "solution: %s" ([%show: term] solution);
+    Evaluation.eval solution
 end
 
 let solve (m : metavar) (sp : value bwd) (rhs : value) : unit =
-  Eio.traceln "spine:";
-  Bwd.iter (fun v -> Eio.traceln "%s" ([%show: value] v)) sp;
+  Eio.traceln "spine: %s" @@ String.concat " " @@ List.map (fun v -> ([%show: value] v)) (Bwd.to_list sp);
 
   let solution = PartialRenaming.run m sp rhs in
   Evaluation.insert_meta m solution

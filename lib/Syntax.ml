@@ -56,6 +56,11 @@ module Core = struct
         [@printer
           fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
     | Lambda of term binder
+        [@printer
+          fun fmt bind ->
+            if bind.implicit then
+              fprintf fmt "fun {%s} => %s" bind.name (show_term bind.bound)
+            else fprintf fmt "fun %s => %s" bind.name (show_term bind.bound)]
     | Pi of typ binder * typ
     (* Meta 是使用者自己明確寫下來的那些 *)
     | Meta of metavar
