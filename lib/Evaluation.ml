@@ -55,4 +55,8 @@ let rec eval (tm : term) : value =
           Env.S.include_singleton ([ name ], (v, `Local));
           eval bound)
   | Meta m -> eval_meta m
-  | InsertedMeta _ -> raise TODO
+  | InsertedMeta (m, bounds) -> vapp_bounds (eval_meta m) bounds
+and vapp_bounds (v : value) (bounds : string bwd) =
+  match bounds with
+  | Emp -> v
+  | Snoc (bounds, x) -> vapp (vapp_bounds v bounds) (eval (Var x))

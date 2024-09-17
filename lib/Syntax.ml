@@ -57,9 +57,12 @@ module Core = struct
           fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
     | Lambda of term binder
     | Pi of typ binder * typ
+    (* Meta 是使用者自己明確寫下來的那些 *)
     | Meta of metavar
-    (* TODO: 還沒有用到，還需要 bounds 紀錄當 meta 被插入時有哪些變數可以使用 *)
-    | InsertedMeta of metavar
+    (* InsertedMeta 是 elaborator 自動塞進去的部分，所以需要紀錄 context 中的變數 *)
+    | InsertedMeta of metavar * string bwd
+      [@printer
+       fun fmt (m, vars) -> fprintf fmt "%s %s" (show_metavar m) (String.concat " " (Bwd.to_list vars)) ]
 
   and typ = term [@@deriving show]
 

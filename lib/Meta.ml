@@ -3,8 +3,8 @@ open Bwd
 
 let count = ref 0
 
-let fresh () : term =
-  let r = Meta (MetaVar !count) in
+let fresh (vars : string bwd) : term =
+  let r = InsertedMeta ((MetaVar !count), vars) in
   count := !count + 1;
   r
 

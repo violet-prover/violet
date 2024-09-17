@@ -4,6 +4,11 @@ open Evaluation
 
 exception TODO
 
+module Bound = struct
+  type t = string bwd
+end
+module BoundState = Algaeff.State.Make (Bound)
+
 let rec unify (a : Core.value) (b : Core.value) : unit =
   Eio.traceln "%s ?= %s" ([%show: Core.value] a) ([%show: Core.value] b);
   match (force a, force b) with
@@ -36,7 +41,7 @@ let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
         Context.S.import_singleton ([ x ], (a, `Local));
         let body = check body (b (Rigid (x, Emp))) in
         Core.Lambda { name = x; bound = body; implicit = lambda_mode }
-  | Hole, _ -> Meta.fresh ()
+  | Hole, _ -> Meta.fresh (BoundState.get ())
   | tm, expected_typ ->
       let tm, infer_typ = infer tm in
       unify expected_typ infer_typ;
@@ -76,16 +81,18 @@ and infer : Surface.preterm -> Core.term * Core.value_ty = function
             "cannot apply a value to something with type `%s`"
             ([%show: Core.value_ty] ty))
   | Hole ->
-      let ty = eval @@ Meta.fresh () in
-      let t = Meta.fresh () in
+      let ty = eval @@ Meta.fresh (BoundState.get ()) in
+      let t = Meta.fresh (BoundState.get ()) in
       (t, ty)
   | _ -> raise TODO
 
 let check_module (file : Surface.t) : unit =
+  BoundState.run ~init:Emp @@ fun () ->
   List.iter
     (fun top ->
       match top with
       | Surface.Let (name, bindings, result_ty, body) ->
+BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
           let typ : Surface.pretype =
             List.fold_right
               (fun binding return_ty -> Surface.Pi (binding, return_ty))
