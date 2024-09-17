@@ -2,8 +2,6 @@ open Syntax.Core
 open Bwd
 open Bwd.Infix
 
-exception TODO
-
 let rec vapp (t : value) (u : value) : value =
   match t with
   | VLambda f -> f u

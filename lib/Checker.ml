@@ -2,8 +2,6 @@ open Syntax
 open Bwd
 open Evaluation
 
-exception TODO
-
 module Bound = struct
   type t = string bwd
 end
@@ -84,7 +82,7 @@ and infer : Surface.preterm -> Core.term * Core.value_ty = function
       let ty = eval @@ Meta.fresh (BoundState.get ()) in
       let t = Meta.fresh (BoundState.get ()) in
       (t, ty)
-  | _ -> raise TODO
+  | Lambda _ -> Reporter.fatalf Elab_error "cannot infer lambda term"
 
 let check_module (file : Surface.t) : unit =
   BoundState.run ~init:Emp @@ fun () ->
