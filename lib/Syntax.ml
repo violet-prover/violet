@@ -10,7 +10,7 @@ module Surface = struct
     | Located of preterm located
         [@printer
           fun fmt { loc = _; value } -> fprintf fmt "%s" (show_preterm value)]
-    | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
+    | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
     | Hole [@printer fun fmt _ -> fprintf fmt "_"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of bool * preterm * preterm
@@ -49,7 +49,7 @@ module Core = struct
   [@@deriving show]
 
   type term =
-    | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
+    | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of term * term
       [@printer fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
@@ -80,7 +80,7 @@ module Core = struct
     | VLambda of (value -> value)
         [@printer fun fmt _ -> fprintf fmt "<closure>"]
     | VPi of value_ty binder * (value -> value)
-    | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
+    | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
   [@@deriving show]
 
   and value_ty = value
