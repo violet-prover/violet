@@ -13,12 +13,17 @@ let next_token () =
       TokenState.set buf;
       tok
   | [] -> raise Impossible
-
 let shift pos = TokenState.set pos
 let current_position () = TokenState.get ()
 
 let run (init : Lexer.token Asai.Range.located list) (f : unit -> 'a) : 'a =
   TokenState.run ~init @@ fun () -> f ()
+
+let current_loc () : Asai.Range.t option =
+  let pos = current_position () in
+  let tok = next_token () in
+  shift pos;
+  tok.loc
 
 let consume (predict : Lexer.token) : unit =
   let tok = next_token () in

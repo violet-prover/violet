@@ -41,7 +41,7 @@ module Surface = struct
   type top = Let of string * pretype binder list * pretype * preterm
   [@@deriving show]
 
-  type t = { name : string; tops : top list } [@@deriving show]
+  type t = { name : string; tops : top Asai.Range.located list }
 end
 
 module Core = struct

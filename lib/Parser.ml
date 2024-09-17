@@ -77,7 +77,10 @@ let p_let () : Surface.top =
   let tm = p_preterm () in
   Let (name, bindings, ty, tm)
 
-let p_top : unit -> Surface.top = p_let
+let p_top () : Surface.top Asai.Range.located =
+  let loc = Combinator.current_loc () in
+  let value = p_let () in
+  { loc; value }
 
 let p_all (name : string) () : Surface.t =
   (* FIXME: this is wrong, a top failed should get a reason
