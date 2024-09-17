@@ -34,7 +34,7 @@ let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
       else
         Context.S.section [] @@ fun () ->
         Context.S.import_singleton ([ x ], (a, `Local));
-        let body = check body (b a) in
+        let body = check body (b (Rigid (x, Emp))) in
         Core.Lambda { name = x; bound = body; implicit = lambda_mode }
   | Hole, _ -> Meta.fresh ()
   | tm, expected_typ ->
@@ -44,13 +44,14 @@ let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
 
 (* infer 的用途是，把已經裝飾過的 surface term 變成 core term，並且推導其型別，這個過程可以失敗 *)
 and infer : Surface.preterm -> Core.term * Core.value_ty = function
-  | Located { loc; value } -> Reporter.merge_loc loc @@ fun () -> infer value
+  | Located { loc; value } -> Reporter.with_loc loc @@ fun () -> infer value
   | Universe -> (Universe, Universe)
   | Var x -> (Var x, Context.lookup x)
   | Pi ({ name; bound = a; implicit }, b) ->
       let a = check a Universe in
       (* 引入一層 x = x 的 environment *)
       Env.S.section [] @@ fun () ->
+      Eio.traceln "applied %s" ([%show: Core.value] (Rigid (name, Bwd.Emp)));
       Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local));
       (* 引入新的一層 context 並引入 name : A，檢查 B : U *)
       Context.S.section [] @@ fun () ->
@@ -90,9 +91,9 @@ let check_module (file : Surface.t) : unit =
               (fun binding return_ty -> Surface.Pi (binding, return_ty))
               bindings result_ty
           in
-          Eio.traceln "%s" ([%show: Surface.pretype] typ);
-          let typ = check typ Universe in
-          let typ = eval typ in
+          Eio.traceln "top let %s : %s" name ([%show: Surface.pretype] typ);
+          let typ = Context.S.section [] @@ fun () -> check typ Universe in
+          let typ = Env.S.section [] @@ fun () -> eval typ in
 
           let term : Surface.preterm =
             List.fold_right
@@ -100,8 +101,8 @@ let check_module (file : Surface.t) : unit =
                 Surface.Lambda { name; bound = body; implicit })
               bindings body
           in
-          Eio.traceln "%s" ([%show: Surface.pretype] term);
-          let term = check term typ in
+          Eio.traceln "top let %s = %s" name ([%show: Surface.pretype] term);
+          let term = Context.S.section [] @@ fun () -> check term typ in
 
           Context.S.include_singleton ~context_visible:`Visible
             ~context_export:`Export
@@ -109,7 +110,7 @@ let check_module (file : Surface.t) : unit =
 
           Env.S.include_singleton ~context_visible:`Visible
             ~context_export:`Export
-            ([ name ], (eval term, `Local));
+            ([ name ], (Env.S.section [] @@ fun () -> eval term, `Local));
 
           ())
     file.tops
