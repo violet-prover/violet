@@ -31,12 +31,16 @@ let consume (predict : Lexer.token) : unit =
 
 let rec many (p : unit -> 'a) () : 'a list =
   let pos = current_position () in
-  try
-    let x = p () in
-    x :: many p ()
-  with _ ->
-    shift pos;
-    []
+  let x = Reporter.try_with
+    ~fatal:(fun d ->
+      match d.message with
+      | Parse_error -> shift pos; None
+      | _ -> Reporter.fatal_diagnostic d)
+    (fun () -> Some (p ()))
+  in
+  match x with
+  | None -> []
+  | Some x -> x :: many p ()
 
 let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   let pos = current_position () in
