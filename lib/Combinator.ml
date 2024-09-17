@@ -29,22 +29,22 @@ let consume (predict : Lexer.token) : unit =
       ([%show: Lexer.token] predict)
       ([%show: Lexer.token] tok.value)
 
-let rec many (p : unit -> 'a) () : 'a list =
+let catch_parse_error (p : unit -> 'a) : 'a option =
   let pos = current_position () in
-  let x = Reporter.try_with
+  Reporter.try_with
     ~fatal:(fun d ->
       match d.message with
       | Parse_error -> shift pos; None
       | _ -> Reporter.fatal_diagnostic d)
     (fun () -> Some (p ()))
-  in
+
+let rec many (p : unit -> 'a) () : 'a list =
+  let x = catch_parse_error p in
   match x with
   | None -> []
   | Some x -> x :: many p ()
 
 let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
-  let pos = current_position () in
-  try p1 ()
-  with _ ->
-    shift pos;
-    p2 ()
+  match catch_parse_error p1 with
+  | None -> p2 ()
+  | Some x -> x
