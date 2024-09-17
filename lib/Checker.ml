@@ -38,7 +38,7 @@ let rec eval (tm : Core.term) : Core.value =
 let rec unify (a : Core.value) (b : Core.value) : unit =
   match (a, b) with
   | Universe, Universe -> ()
-  | Rigid (h1, sp1), Rigid (h2, sp2) when h1 = h2 ->
+  | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
     unify_spine sp1 sp2
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 ->
     unify_spine sp1 sp2
