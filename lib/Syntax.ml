@@ -45,14 +45,16 @@ module Surface = struct
 end
 
 module Core = struct
-  type metavar = MetaVar of int [@printer fun fmt idx -> fprintf fmt "?%d" idx]
+  type metavar =
+    | MetaVar of int [@printer fun fmt idx -> fprintf fmt "?%d" idx]
   [@@deriving show]
 
   type term =
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of term * term
-      [@printer fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
+        [@printer
+          fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
     | Lambda of term binder
     | Pi of typ binder * typ
     | Meta of metavar

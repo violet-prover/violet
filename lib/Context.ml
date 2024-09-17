@@ -39,12 +39,8 @@ module Handler = struct
         Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
 
   let shadow context path x y =
-    Eio.traceln "shadowing, Γ, %a : %a ~> Γ, %a : %a%a.@."
-      pp_path path
-      pp_item x
-      pp_path path
-      pp_item y
-      pp_context context;
+    Eio.traceln "shadowing, Γ, %a : %a ~> Γ, %a : %a%a.@." pp_path path pp_item
+      x pp_path path pp_item y pp_context context;
     y
 
   let not_found context prefix =

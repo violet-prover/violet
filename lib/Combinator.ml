@@ -34,17 +34,15 @@ let catch_parse_error (p : unit -> 'a) : 'a option =
   Reporter.try_with
     ~fatal:(fun d ->
       match d.message with
-      | Parse_error -> shift pos; None
+      | Parse_error ->
+          shift pos;
+          None
       | _ -> Reporter.fatal_diagnostic d)
     (fun () -> Some (p ()))
 
 let rec many (p : unit -> 'a) () : 'a list =
   let x = catch_parse_error p in
-  match x with
-  | None -> []
-  | Some x -> x :: many p ()
+  match x with None -> [] | Some x -> x :: many p ()
 
 let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
-  match catch_parse_error p1 with
-  | None -> p2 ()
-  | Some x -> x
+  match catch_parse_error p1 with None -> p2 () | Some x -> x
