@@ -5,6 +5,7 @@ open Evaluation
 exception TODO
 
 let rec unify (a : Core.value) (b : Core.value) : unit =
+  Eio.traceln "%s ?= %s" ([%show: Core.value] a) ([%show: Core.value] b);
   match (a, b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
@@ -24,7 +25,7 @@ and unify_spine (xs : Core.value bwd) (ys : Core.value bwd) : unit =
   | Snoc (xs, x), Snoc (ys, y) ->
      unify_spine xs ys;
      unify x y
-  | _, _ -> Reporter.fatalf Elab_error "cannot unify spine"
+  | _, _ -> Reporter.fatalf Elab_error "cannot unify, spine mismatched"
 
 let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
   match (term, typ) with
