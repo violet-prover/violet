@@ -35,10 +35,13 @@ let rec eval (tm : Core.term) : Core.value =
   | Meta m -> Meta.eval m
   | InsertedMeta _ -> raise TODO
 
-let unify (a : Core.value) (b : Core.value) : unit =
+let rec unify (a : Core.value) (b : Core.value) : unit =
   match (a, b) with
   | Universe, Universe -> ()
-  (* FIXME: should invoke solver here to update our cute meta context *)
+  | Rigid (h1, sp1), Rigid (h2, sp2) when h1 = h2 ->
+    unify_spine sp1 sp2
+  | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 ->
+    unify_spine sp1 sp2
   | t, Flex (m, sp)
   | Flex (m, sp), t ->
     Meta.solve m sp t
@@ -46,6 +49,13 @@ let unify (a : Core.value) (b : Core.value) : unit =
       Reporter.fatalf Type_error "cannot unify `%s` and `%s`"
         ([%show: Core.value] expected)
         ([%show: Core.value] actual)
+and unify_spine (xs : Core.value bwd) (ys : Core.value bwd) : unit =
+  match xs, ys with
+  | Emp, Emp -> ()
+  | Snoc (xs, x), Snoc (ys, y) ->
+     unify_spine xs ys;
+     unify x y
+  | _, _ -> Reporter.fatalf Elab_error "cannot unify spine"
 
 let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
   match (term, typ) with
