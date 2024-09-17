@@ -52,6 +52,7 @@ module Core = struct
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of term * term
+      [@printer fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
     | Lambda of term binder
     | Pi of typ binder * typ
     | Meta of metavar
