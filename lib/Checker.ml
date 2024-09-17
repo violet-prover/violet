@@ -32,12 +32,15 @@ let rec eval (tm : Core.term) : Core.value =
           Env.S.section [] @@ fun () ->
           Env.S.include_singleton ([ name ], (v, `Local));
           eval bound)
-  | Meta _ -> raise TODO
+  | Meta m -> Meta.eval m
   | InsertedMeta _ -> raise TODO
 
 let unify (a : Core.value) (b : Core.value) : unit =
   match (a, b) with
   | Universe, Universe -> ()
+  (* FIXME: should invoke solver here to update our cute meta context *)
+  | _, Flex (_, _) -> ()
+  | Flex (_, _), _ -> ()
   | expected, actual ->
       Reporter.fatalf Type_error "cannot unify `%s` and `%s`"
         ([%show: Core.value] expected)
@@ -81,7 +84,8 @@ and infer : Surface.preterm -> Core.term * Core.value_ty = function
           if is_implicit == implicit then
             let arg' = check arg a in
             (App (f', arg'), b @@ eval arg')
-          else if implicit then raise TODO
+          else if implicit then
+            infer @@ App (false, (App (implicit, f, Hole)), arg)
           else
             Reporter.fatalf Elab_error "Bad apply %s %s"
               ([%show: Surface.preterm] f)
@@ -90,6 +94,11 @@ and infer : Surface.preterm -> Core.term * Core.value_ty = function
           Reporter.fatalf Type_error
             "cannot apply a value to something with type `%s`"
             ([%show: Core.value_ty] ty))
+  | Hole ->
+    let meta = Meta.fresh () in
+    let ty = eval meta in
+    let t = Meta.fresh () in
+    (t, ty)
   | _ -> raise TODO
 
 let check_module (file : Surface.t) : unit =

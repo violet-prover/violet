@@ -11,6 +11,7 @@ module Surface = struct
         [@printer
           fun fmt { loc = _; value } -> fprintf fmt "%s" (show_preterm value)]
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
+    | Hole [@printer fun fmt _ -> fprintf fmt "_"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of bool * preterm * preterm
         [@printer
@@ -44,7 +45,8 @@ module Surface = struct
 end
 
 module Core = struct
-  type metavar = MetaVar of int [@@deriving show]
+  type metavar = MetaVar of int [@printer fun fmt idx -> fprintf fmt "?%d" idx]
+  [@@deriving show]
 
   type term =
     | Universe [@printer fun fmt _ -> fprintf fmt "⋆"]
