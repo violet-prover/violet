@@ -39,8 +39,12 @@ let unify (a : Core.value) (b : Core.value) : unit =
   match (a, b) with
   | Universe, Universe -> ()
   (* FIXME: should invoke solver here to update our cute meta context *)
-  | _, Flex (_, _) -> ()
-  | Flex (_, _), _ -> ()
+  | t, Flex (m, _) ->
+    Eio.traceln "%s ?= %s" ([%show: Core.metavar] m) ([%show: Core.value] t);
+    ()
+  | Flex (m, _), t ->
+    Eio.traceln "%s ?= %s" ([%show: Core.metavar] m) ([%show: Core.value] t);
+    ()
   | expected, actual ->
       Reporter.fatalf Type_error "cannot unify `%s` and `%s`"
         ([%show: Core.value] expected)
@@ -57,6 +61,8 @@ let rec check (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
         Context.S.import_singleton ([ x ], (a, `Local));
         let body = check body (b a) in
         Core.Lambda { name = x; bound = body; implicit = lambda_mode }
+  | Hole, _ ->
+      Meta.fresh ()
   | tm, expected_typ ->
       let tm, infer_typ = infer tm in
       unify expected_typ infer_typ;
@@ -95,8 +101,7 @@ and infer : Surface.preterm -> Core.term * Core.value_ty = function
             "cannot apply a value to something with type `%s`"
             ([%show: Core.value_ty] ty))
   | Hole ->
-    let meta = Meta.fresh () in
-    let ty = eval meta in
+    let ty = eval @@ Meta.fresh () in
     let t = Meta.fresh () in
     (t, ty)
   | _ -> raise TODO
