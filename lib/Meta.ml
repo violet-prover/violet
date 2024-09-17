@@ -71,12 +71,6 @@ module PartialRenaming = struct
     let dom = Bwd.map (fun _ -> Format.sprintf "<%d>" (Random.int 1000)) sp in
     let renaming = invert dom sp in
     let rhs = rename m renaming rhs in
-    Env.S.section [] @@ fun () ->
-    Bwd.iter
-      (fun (x, v) ->
-        Eio.traceln "%s := %s" x (show_value v);
-        Env.S.include_singleton ([x], (v, `Local)))
-    (Bwd.combine dom sp);
     let solution = lams (Bwd.to_list dom) rhs in
     Eio.traceln "solution: %s" ([%show: term] solution);
     Evaluation.eval solution
