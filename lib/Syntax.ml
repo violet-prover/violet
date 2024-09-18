@@ -87,7 +87,7 @@ module Core = struct
             else
               fprintf fmt "%s %s" head
                 (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
-    | VLambda of (value -> value)
+    | VLambda of (value -> value) binder
         [@printer fun fmt _ -> fprintf fmt "<closure>"]
     | VPi of value_ty binder * (value -> value)
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]

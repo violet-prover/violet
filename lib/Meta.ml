@@ -43,17 +43,17 @@ module PartialRenaming = struct
         | None -> Reporter.fatalf Elab_error "cannot complete partial renaming"
         | Some x' ->
           rename_sp m renaming (Var x') sp)
-    | VLambda t ->
+    | VLambda { implicit; name; bound=clos } ->
         Lambda
           {
-            name = Bwd.nth renaming.domain 0;
+            implicit;
+            name;
             bound =
-              rename m renaming (t @@ Rigid (Bwd.nth renaming.domain 0, Emp));
-            implicit = false;
+              rename m renaming (clos @@ Rigid (Bwd.nth renaming.domain 0, Emp));
           }
-    | VPi ({ name; bound = a; implicit }, b) ->
+    | VPi ({ implicit; name; bound = a }, b) ->
         Pi
-          ( { name; bound = rename m renaming a; implicit },
+          ( { implicit; name; bound = rename m renaming a },
             rename m renaming (b (Rigid (Bwd.nth renaming.domain 0, Emp))) )
 
   and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term

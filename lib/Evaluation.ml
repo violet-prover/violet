@@ -4,7 +4,7 @@ open Bwd.Infix
 
 let rec vapp (t : value) (u : value) : value =
   match t with
-  | VLambda f -> f u
+  | VLambda {bound=f; _} -> f u
   | Flex (m, t) -> Flex (m, t <: u)
   | Rigid (h, t) -> Rigid (h, t <: u)
   | v -> Reporter.fatalf Elab_error "cannot apply on %s" ([%show: value] v)
@@ -46,12 +46,15 @@ let rec eval (tm : term) : value =
             Env.S.section [] @@ fun () ->
             Env.S.include_singleton ([ name ], (v, `Local));
             eval b )
-  | Lambda { name; bound; implicit = _ } ->
-      VLambda
-        (fun v ->
+  | Lambda { name; bound; implicit } ->
+      VLambda {
+        name;
+        implicit;
+        bound=fun v ->
           Env.S.section [] @@ fun () ->
           Env.S.include_singleton ([ name ], (v, `Local));
-          eval bound)
+          eval bound
+      }
   | Meta m -> eval_meta m
   | InsertedMeta (m, bounds) -> vapp_bounds (eval_meta m) bounds
 and vapp_bounds (v : value) (bounds : string bwd) =
