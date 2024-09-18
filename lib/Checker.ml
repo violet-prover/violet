@@ -8,8 +8,9 @@ end
 module BoundState = Algaeff.State.Make (Bound)
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
+  let a, b = force a, force b in
   Eio.traceln "%s ?= %s" ([%show: Core.value] a) ([%show: Core.value] b);
-  match (force a, force b) with
+  match (a, b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
       unify_spine ~loc sp1 sp2
