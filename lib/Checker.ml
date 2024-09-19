@@ -7,13 +7,22 @@ module Bound = struct
 end
 module BoundState = Algaeff.State.Make (Bound)
 
+let count = ref 0
+
+let fresh_variable () : Core.value =
+  let r = Format.sprintf "*%d" !count in
+  count := !count + 1;
+  Rigid (r, Emp)
+
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   let a, b = force a, force b in
-  Eio.traceln "%s ?= %s" ([%show: Core.value] a) ([%show: Core.value] b);
   match (a, b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
       unify_spine ~loc sp1 sp2
+  | VLambda {bound=bound1; _}, VLambda {bound=bound2; _} ->
+    let x = fresh_variable () in
+    unify ~loc (bound1 x) (bound2 x)
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
   | expected, actual ->
@@ -56,7 +65,6 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
       let a = check ~loc a Universe in
       (* 引入一層 x = x 的 environment *)
       Env.S.section [] @@ fun () ->
-      Eio.traceln "applied %s" ([%show: Core.value] (Rigid (name, Bwd.Emp)));
       Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local));
       (* 引入新的一層 context 並引入 name : A，檢查 B : U *)
       Context.S.section [] @@ fun () ->
