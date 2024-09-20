@@ -24,6 +24,9 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   | VLambda { bound = bound1; _ }, VLambda { bound = bound2; _ } ->
       let x = fresh_variable () in
       unify ~loc (bound1 x) (bound2 x)
+  | VPi (_, b1), VPi (_, b2) ->
+      let x = fresh_variable () in
+      unify ~loc (b1 x) (b2 x)
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
   | expected, actual ->
