@@ -66,8 +66,10 @@ module Core = struct
     | Meta of metavar
     (* InsertedMeta 是 elaborator 自動塞進去的部分，所以需要紀錄 context 中的變數 *)
     | InsertedMeta of metavar * string bwd
-      [@printer
-       fun fmt (m, vars) -> fprintf fmt "%s %s" (show_metavar m) (String.concat " " (Bwd.to_list vars)) ]
+        [@printer
+          fun fmt (m, vars) ->
+            fprintf fmt "%s %s" (show_metavar m)
+              (String.concat " " (Bwd.to_list vars))]
 
   and typ = term [@@deriving show]
 

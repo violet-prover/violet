@@ -13,6 +13,7 @@ let next_token () =
       TokenState.set buf;
       tok
   | [] -> raise Impossible
+
 let shift pos = TokenState.set pos
 let current_position () = TokenState.get ()
 

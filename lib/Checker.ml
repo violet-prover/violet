@@ -5,6 +5,7 @@ open Evaluation
 module Bound = struct
   type t = string bwd
 end
+
 module BoundState = Algaeff.State.Make (Bound)
 
 let count = ref 0
@@ -15,14 +16,14 @@ let fresh_variable () : Core.value =
   Rigid (r, Emp)
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
-  let a, b = force a, force b in
+  let a, b = (force a, force b) in
   match (a, b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
       unify_spine ~loc sp1 sp2
-  | VLambda {bound=bound1; _}, VLambda {bound=bound2; _} ->
-    let x = fresh_variable () in
-    unify ~loc (bound1 x) (bound2 x)
+  | VLambda { bound = bound1; _ }, VLambda { bound = bound2; _ } ->
+      let x = fresh_variable () in
+      unify ~loc (bound1 x) (bound2 x)
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
   | expected, actual ->
@@ -57,8 +58,7 @@ let rec check ~loc (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
 
 (* infer 的用途是，把已經裝飾過的 surface term 變成 core term，並且推導其型別，這個過程可以失敗 *)
 and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
-  | Located { loc; value } ->
-    infer ~loc:(Option.get loc) value
+  | Located { loc; value } -> infer ~loc:(Option.get loc) value
   | Universe -> (Universe, Universe)
   | Var x -> (Var x, Context.lookup x)
   | Pi ({ name; bound = a; implicit }, b) ->
@@ -101,7 +101,7 @@ let check_module (file : Surface.t) : unit =
       let loc = Option.get top.loc in
       match top.value with
       | Surface.Let (name, bindings, result_ty, body) ->
-BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
+          BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
           let typ : Surface.pretype =
             List.fold_right
               (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -126,7 +126,7 @@ BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
 
           Env.S.include_singleton ~context_visible:`Visible
             ~context_export:`Export
-            ([ name ], (Env.S.section [] @@ fun () -> eval term, `Local));
+            ([ name ], Env.S.section [] @@ fun () -> (eval term, `Local));
 
           ())
     file.tops

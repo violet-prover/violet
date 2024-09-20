@@ -78,7 +78,8 @@ let p_let () : Surface.top =
   Let (name, bindings, ty, tm)
 
 let p_top () : Surface.top Asai.Range.located =
-  let loc = Combinator.current_loc () in
+  let open Combinator in
+  let loc = current_loc () in
   let value = p_let () in
   { loc; value }
 

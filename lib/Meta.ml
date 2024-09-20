@@ -4,7 +4,7 @@ open Bwd
 let count = ref 0
 
 let fresh (vars : string bwd) : term =
-  let r = InsertedMeta ((MetaVar !count), vars) in
+  let r = InsertedMeta (MetaVar !count, vars) in
   count := !count + 1;
   r
 
@@ -29,27 +29,26 @@ module PartialRenaming = struct
                   ren)
           | _ -> Reporter.fatalf Elab_error "invert failed")
     in
-    { domain; codomain=domain; rename = go @@ Bwd.combine sp domain }
+    { domain; codomain = domain; rename = go @@ Bwd.combine sp domain }
 
   let rec rename (m : metavar) (renaming : t) (rhs : value) : term =
     match rhs with
     | Universe -> Universe
     | Flex (m', sp) ->
         if m = m' then
-          Reporter.fatalf Elab_error "meta variable %s itself occurs in rhs" ([%show: metavar] m)
+          Reporter.fatalf Elab_error "meta variable %s itself occurs in rhs"
+            ([%show: metavar] m)
         else rename_sp m renaming (Meta m') sp
     | Rigid (x, sp) -> (
         match Hashtbl.find_opt renaming.rename x with
         | None -> Reporter.fatalf Elab_error "cannot complete partial renaming"
-        | Some x' ->
-          rename_sp m renaming (Var x') sp)
-    | VLambda { implicit; name; bound=clos } ->
+        | Some x' -> rename_sp m renaming (Var x') sp)
+    | VLambda { implicit; name; bound = clos } ->
         Lambda
           {
             implicit;
             name;
-            bound =
-              rename m renaming (clos @@ Rigid (name, Emp));
+            bound = rename m renaming (clos @@ Rigid (name, Emp));
           }
     | VPi ({ implicit; name; bound = a }, b) ->
         Pi
@@ -77,7 +76,8 @@ module PartialRenaming = struct
 end
 
 let solve (m : metavar) (sp : value bwd) (rhs : value) : unit =
-  Eio.traceln "spine: %s" @@ String.concat " " @@ List.map (fun v -> ([%show: value] v)) (Bwd.to_list sp);
+  Eio.traceln "spine: %s" @@ String.concat " "
+  @@ List.map (fun v -> [%show: value] v) (Bwd.to_list sp);
 
   let solution = PartialRenaming.run m sp rhs in
   Evaluation.insert_meta m solution
