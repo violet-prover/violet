@@ -77,10 +77,18 @@ let p_let () : Surface.top =
   let tm = p_preterm () in
   Let (name, bindings, ty, tm)
 
+let p_inductive () : Surface.top =
+  let open Combinator in
+  consume Lexer.DATA;
+  let name = ident () in
+  consume Lexer.COLON;
+  let ind_ty = p_preterm () in
+  Data { name; ind_ty }
+
 let p_top () : Surface.top Asai.Range.located =
   let open Combinator in
   let loc = current_loc () in
-  let value = p_let () in
+  let value = (p_let <|> p_inductive) () in
   { loc; value }
 
 let p_all (name : string) () : Surface.t =

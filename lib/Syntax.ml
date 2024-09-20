@@ -38,7 +38,9 @@ module Surface = struct
 
   type as_arg = { term : preterm; implicit : bool }
 
-  type top = Let of string * pretype binder list * pretype * preterm
+  type top =
+    | Let of string * pretype binder list * pretype * preterm
+    | Data of { name : string; ind_ty : pretype }
   [@@deriving show]
 
   type t = { name : string; tops : top Asai.Range.located list }

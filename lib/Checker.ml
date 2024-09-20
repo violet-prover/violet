@@ -94,39 +94,43 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
       (t, ty)
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 
+let check_top ~loc top =
+  match top with
+  | Surface.Data _ ->
+      Reporter.fatalf ~loc TODO "inductive type"
+  | Surface.Let (name, bindings, result_ty, body) ->
+      BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
+      let typ : Surface.pretype =
+        List.fold_right
+          (fun binding return_ty -> Surface.Pi (binding, return_ty))
+          bindings result_ty
+      in
+      Eio.traceln "top let %s : %s" name ([%show: Surface.pretype] typ);
+      let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
+      let typ = Env.S.section [] @@ fun () -> eval typ in
+
+      let term : Surface.preterm =
+        List.fold_right
+          (fun { name; implicit; bound = _ } body ->
+            Surface.Lambda { name; bound = body; implicit })
+          bindings body
+      in
+      Eio.traceln "top let %s = %s" name ([%show: Surface.pretype] term);
+      let term = Context.S.section [] @@ fun () -> check ~loc term typ in
+
+      Context.S.include_singleton ~context_visible:`Visible
+        ~context_export:`Export
+        ([ name ], (typ, `Local));
+
+      Env.S.include_singleton ~context_visible:`Visible ~context_export:`Export
+        ([ name ], Env.S.section [] @@ fun () -> (eval term, `Local));
+
+      ()
+
 let check_module (file : Surface.t) : unit =
   BoundState.run ~init:Emp @@ fun () ->
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
       let loc = Option.get top.loc in
-      match top.value with
-      | Surface.Let (name, bindings, result_ty, body) ->
-          BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
-          let typ : Surface.pretype =
-            List.fold_right
-              (fun binding return_ty -> Surface.Pi (binding, return_ty))
-              bindings result_ty
-          in
-          Eio.traceln "top let %s : %s" name ([%show: Surface.pretype] typ);
-          let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
-          let typ = Env.S.section [] @@ fun () -> eval typ in
-
-          let term : Surface.preterm =
-            List.fold_right
-              (fun { name; implicit; bound = _ } body ->
-                Surface.Lambda { name; bound = body; implicit })
-              bindings body
-          in
-          Eio.traceln "top let %s = %s" name ([%show: Surface.pretype] term);
-          let term = Context.S.section [] @@ fun () -> check ~loc term typ in
-
-          Context.S.include_singleton ~context_visible:`Visible
-            ~context_export:`Export
-            ([ name ], (typ, `Local));
-
-          Env.S.include_singleton ~context_visible:`Visible
-            ~context_export:`Export
-            ([ name ], Env.S.section [] @@ fun () -> (eval term, `Local));
-
-          ())
+      check_top ~loc top.value)
     file.tops

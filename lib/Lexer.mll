@@ -14,7 +14,7 @@ type token =
   | IDENT of string [@printer fun fmt name -> fprintf fmt "<identifier:%s>" name]
   | EOF
 [@@deriving show]
-    
+
 let ident str = IDENT str
 let illegal str = raise @@ SyntaxError str
 let return _lexbuf tok = tok
