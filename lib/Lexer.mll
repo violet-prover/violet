@@ -6,7 +6,9 @@ type token =
   | LET [@printer fun fmt () -> fprintf fmt "let"]
   | UNIV [@printer fun fmt () -> fprintf fmt "U"]
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
+  | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
+  | VERT [@printer fun fmt () -> fprintf fmt "|"]
   | L_PAREN [@printer fun fmt () -> fprintf fmt "("]
   | R_PAREN [@printer fun fmt () -> fprintf fmt ")"]
   | L_BRACKET [@printer fun fmt () -> fprintf fmt "{"]
@@ -33,7 +35,9 @@ rule token =
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
   | ":=" { return lexbuf @@ ASSIGN }
+  | "->" { return lexbuf @@ ARROW }
   | ':' { return lexbuf @@ COLON }
+  | '|' { return lexbuf @@ VERT }
   | '(' { return lexbuf @@ L_PAREN }
   | ')' { return lexbuf @@ R_PAREN }
   | '{' { return lexbuf @@ L_BRACKET }

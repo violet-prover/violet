@@ -43,22 +43,34 @@ and p_arg () : Surface.as_arg =
       { implicit = false; term = atom }
 
 and p_patom () : Surface.preterm =
-  let pos = Combinator.current_position () in
-  let tok = Combinator.next_token () in
+  let open Combinator in
+  let pos = current_position () in
+  let tok = next_token () in
   let loc = Option.get tok.loc in
   let tm : Surface.preterm =
     match tok.value with
     | Lexer.UNIV -> Universe
     | Lexer.IDENT s -> Var s
+    | Lexer.L_PAREN ->
+        begin
+        match catch_parse_error (p_binding false) with
+        | Some binder -> (* good, we got a binding, now parse the rest *)
+            consume Lexer.R_PAREN;
+            consume Lexer.ARROW;
+            let rhs = p_preterm () in
+            Pi (binder, rhs)
+        | None ->
+          shift pos;
+          (parens p_preterm) ()
+        end
     (* 用括號包住的 term 也能當成一種 atom 使用 *)
-    | _ ->
-        Combinator.shift pos;
-        (parens p_preterm) ()
+    | tok ->
+        Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
   in
   Located (Asai.Range.locate loc tm)
 
 (* name : preterm *)
-let p_binding (implicit : bool) () : Surface.preterm binder =
+and p_binding (implicit : bool) () : Surface.preterm binder =
   let name = ident () in
   Combinator.consume Lexer.COLON;
   let tm = p_preterm () in
@@ -77,13 +89,21 @@ let p_let () : Surface.top =
   let tm = p_preterm () in
   Let (name, bindings, ty, tm)
 
+let p_ind_clause () : Surface.pretype binder =
+  Combinator.consume Lexer.VERT;
+  let name = ident () in
+  Combinator.consume Lexer.COLON;
+  let ty = p_preterm () in
+  { implicit=false; name; bound=ty }
+
 let p_inductive () : Surface.top =
   let open Combinator in
   consume Lexer.DATA;
   let name = ident () in
   consume Lexer.COLON;
   let ind_ty = p_preterm () in
-  Data { name; ind_ty }
+  let clauses = many p_ind_clause () in
+  Data { name; ind_ty; clauses }
 
 let p_top () : Surface.top Asai.Range.located =
   let open Combinator in
