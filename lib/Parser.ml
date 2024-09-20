@@ -23,6 +23,14 @@ let ident () : string =
         ([%show: Lexer.token] tok)
 
 let rec p_preterm () : Surface.preterm =
+  Combinator.infix partial_arrow spine ()
+
+and partial_arrow () : Surface.preterm -> Surface.preterm -> Surface.preterm =
+  Combinator.consume Lexer.ARROW;
+  fun (a : Surface.preterm) (b : Surface.preterm) ->
+    Pi ({name="_"; bound=a; implicit=false}, b)
+
+and spine () : Surface.preterm  =
   let a = p_patom () in
   let args = Combinator.many p_arg () in
   List.fold_left
