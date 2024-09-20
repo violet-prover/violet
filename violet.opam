@@ -2,8 +2,8 @@
 opam-version: "2.0"
 synopsis: "A short synopsis"
 description: "A longer description"
-maintainer: ["Lin"]
-authors: ["Lin"]
+maintainer: ["Lîm Tsú-thuàn"]
+authors: ["Lîm Tsú-thuàn"]
 license: "LICENSE"
 tags: ["topics" "to describe" "your" "project"]
 homepage: "https://sr.ht/~dannypsnl/violet"
