@@ -1,11 +1,11 @@
 (lang dune 3.15)
 
-(name gamma)
+(name violet)
 
 (generate_opam_files true)
 
 (source
- (github dannypsnl/gamma))
+ (sourcehut dannypsnl/violet))
 
 (authors "Lin")
 
@@ -16,7 +16,7 @@
 (documentation https://url/to/documentation)
 
 (package
- (name gamma)
+ (name violet)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends

@@ -1,6 +1,6 @@
 (executable
- (public_name gamma)
+ (public_name violet)
  (name main)
  (preprocess
   (pps ppx_deriving.show))
- (libraries gamma cmdliner eio eio_main asai))
+ (libraries violet cmdliner eio eio_main asai))

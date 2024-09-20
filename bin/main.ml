@@ -1,5 +1,5 @@
 open Cmdliner
-module Tty = Asai.Tty.Make (Gamma.Reporter.Message)
+module Tty = Asai.Tty.Make (Violet.Reporter.Message)
 
 let version = "0.1.0"
 
@@ -17,17 +17,16 @@ let lex_cmd ~env =
   Cmd.v info
     Term.(
       const (fun filename ->
-          let m = Gamma.Parser.parse_file filename in
-          (* Eio.traceln "%s" ([%show: Gamma.Syntax.Surface.t] m); *)
-          Gamma.Checker.check_module m;
+          let m = Violet.Parser.parse_file filename in
+          Violet.Checker.check_module m;
           ())
       $ arg_file)
 
 let cmd ~env =
-  let doc = "gamma" in
+  let doc = "violet" in
   let man = [ `S Manpage.s_bugs; `S Manpage.s_authors; `P "Lîm Tsú-thuàn" ] in
 
-  let info = Cmd.info "gamma" ~version ~doc ~man in
+  let info = Cmd.info "violet" ~version ~doc ~man in
   Cmd.group info [ lex_cmd ~env ]
 
 let () =
@@ -37,9 +36,9 @@ let () =
   in
   Printexc.record_backtrace true;
   Eio_main.run @@ fun env ->
-  Gamma.Reporter.run ~emit:Tty.display ~fatal @@ fun () ->
-  let open Gamma.Context.Handler in
-  Gamma.Context.S.run ~shadow ~not_found ~hook @@ fun () ->
-  let open Gamma.Env.Handler in
-  Gamma.Env.S.run ~shadow ~not_found ~hook @@ fun () ->
+  Violet.Reporter.run ~emit:Tty.display ~fatal @@ fun () ->
+  let open Violet.Context.Handler in
+  Violet.Context.S.run ~shadow ~not_found ~hook @@ fun () ->
+  let open Violet.Env.Handler in
+  Violet.Env.S.run ~shadow ~not_found ~hook @@ fun () ->
   exit @@ Cmd.eval ~catch:false @@ cmd ~env

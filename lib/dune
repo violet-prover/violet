@@ -1,7 +1,7 @@
 (ocamllex Lexer)
 
 (library
- (name gamma)
+ (name violet)
  (preprocess
   (pps ppx_deriving.show))
  (libraries eio yuujinchou bwd asai algaeff))

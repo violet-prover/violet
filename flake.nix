@@ -7,7 +7,7 @@
     opam-nix.url = "github:tweag/opam-nix";
   };
   outputs = { self, flake-utils, opam-nix, nixpkgs, opam-repository }@inputs:
-    let package = "gamma";
+    let package = "violet";
     in flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
