@@ -7,9 +7,9 @@
 (source
  (sourcehut dannypsnl/violet))
 
-(authors "Lin")
+(authors "Lîm Tsú-thuàn")
 
-(maintainers "Lin")
+(maintainers "Lîm Tsú-thuàn")
 
 (license LICENSE)
 
