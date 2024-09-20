@@ -71,13 +71,13 @@ module PartialRenaming = struct
     let renaming = invert dom sp in
     let rhs = rename m renaming rhs in
     let solution = lams (Bwd.to_list dom) rhs in
-    Eio.traceln "solution: %s" ([%show: term] solution);
+    Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () ->
     Evaluation.eval solution
 end
 
 let solve (m : metavar) (sp : value bwd) (rhs : value) : unit =
-  Eio.traceln "spine: %s" @@ String.concat " "
-  @@ List.map (fun v -> [%show: value] v) (Bwd.to_list sp);
+  let spine_str = String.concat " " @@ List.map (fun v -> [%show: value] v) (Bwd.to_list sp) in
+  Reporter.tracef "spine: %s" spine_str @@ fun () ->
 
   let solution = PartialRenaming.run m sp rhs in
   Evaluation.insert_meta m solution

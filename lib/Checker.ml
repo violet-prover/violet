@@ -16,8 +16,7 @@ let fresh_variable () : Core.value =
   Rigid (r, Emp)
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
-  let a, b = (force a, force b) in
-  match (a, b) with
+  match (force a, force b) with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 ->
       unify_spine ~loc sp1 sp2
@@ -30,9 +29,11 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
   | expected, actual ->
-      Reporter.fatalf ~loc Type_error "cannot unify `%s` and `%s`"
+      Reporter.fatalf ~loc Type_error "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
         ([%show: Core.value] expected)
         ([%show: Core.value] actual)
+        ([%show: Core.value] a)
+        ([%show: Core.value] b)
 
 and unify_spine ~loc (xs : Core.value bwd) (ys : Core.value bwd) : unit =
   match (xs, ys) with
@@ -99,7 +100,9 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
 
 let check_top ~loc top =
   match top with
-  | Surface.Data _ -> Reporter.fatalf ~loc TODO "inductive type"
+  | Surface.Data {name; _} ->
+      Reporter.tracef ~loc "checking an inductive data type %s" name @@ fun () ->
+      Reporter.fatalf ~loc TODO "todo"
   | Surface.Let (name, bindings, result_ty, body) ->
       BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
       let typ : Surface.pretype =
@@ -107,7 +110,7 @@ let check_top ~loc top =
           (fun binding return_ty -> Surface.Pi (binding, return_ty))
           bindings result_ty
       in
-      Eio.traceln "top let %s : %s" name ([%show: Surface.pretype] typ);
+      Reporter.tracef ~loc "while checking a top let %s : %s" name ([%show: Surface.pretype] typ) @@ fun () ->
       let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
       let typ = Env.S.section [] @@ fun () -> eval typ in
 
@@ -117,7 +120,6 @@ let check_top ~loc top =
             Surface.Lambda { name; bound = body; implicit })
           bindings body
       in
-      Eio.traceln "top let %s = %s" name ([%show: Surface.pretype] term);
       let term = Context.S.section [] @@ fun () -> check ~loc term typ in
 
       Context.S.include_singleton ~context_visible:`Visible
