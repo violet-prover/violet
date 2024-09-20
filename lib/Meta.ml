@@ -36,7 +36,7 @@ module PartialRenaming = struct
     | Universe -> Universe
     | Flex (m', sp) ->
         if m = m' then
-          Reporter.fatalf Elab_error "%s occurs in rhs" ([%show: metavar] m)
+          Reporter.fatalf Elab_error "meta variable %s itself occurs in rhs" ([%show: metavar] m)
         else rename_sp m renaming (Meta m') sp
     | Rigid (x, sp) -> (
         match Hashtbl.find_opt renaming.rename x with
@@ -49,12 +49,12 @@ module PartialRenaming = struct
             implicit;
             name;
             bound =
-              rename m renaming (clos @@ Rigid (Bwd.nth renaming.domain 0, Emp));
+              rename m renaming (clos @@ Rigid (name, Emp));
           }
     | VPi ({ implicit; name; bound = a }, b) ->
         Pi
           ( { implicit; name; bound = rename m renaming a },
-            rename m renaming (b (Rigid (Bwd.nth renaming.domain 0, Emp))) )
+            rename m renaming (b (Rigid (name, Emp))) )
 
   and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term
       =
