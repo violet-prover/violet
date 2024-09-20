@@ -96,8 +96,7 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
 
 let check_top ~loc top =
   match top with
-  | Surface.Data _ ->
-      Reporter.fatalf ~loc TODO "inductive type"
+  | Surface.Data _ -> Reporter.fatalf ~loc TODO "inductive type"
   | Surface.Let (name, bindings, result_ty, body) ->
       BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
       let typ : Surface.pretype =

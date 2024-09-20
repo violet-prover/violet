@@ -22,15 +22,14 @@ let ident () : string =
       Reporter.fatalf ~loc Parse_error "expected <identifier>, but got `%s`"
         ([%show: Lexer.token] tok)
 
-let rec p_preterm () : Surface.preterm =
-  Combinator.infix partial_arrow spine ()
+let rec p_preterm () : Surface.preterm = Combinator.infix partial_arrow spine ()
 
 and partial_arrow () : Surface.preterm -> Surface.preterm -> Surface.preterm =
   Combinator.consume Lexer.ARROW;
   fun (a : Surface.preterm) (b : Surface.preterm) ->
-    Pi ({name="_"; bound=a; implicit=false}, b)
+    Pi ({ name = "_"; bound = a; implicit = false }, b)
 
-and spine () : Surface.preterm  =
+and spine () : Surface.preterm =
   let a = p_patom () in
   let args = Combinator.many p_arg () in
   List.fold_left
@@ -59,21 +58,27 @@ and p_patom () : Surface.preterm =
     match tok.value with
     | Lexer.UNIV -> Universe
     | Lexer.IDENT s -> Var s
-    | Lexer.L_PAREN ->
-        begin
+    | Lexer.L_PAREN -> (
         match catch_parse_error (p_binding false) with
-        | Some binder -> (* good, we got a binding, now parse the rest *)
+        | Some binder ->
+            (* good, we got a binding, now parse the rest *)
             consume Lexer.R_PAREN;
             consume Lexer.ARROW;
             let rhs = p_preterm () in
             Pi (binder, rhs)
         | None ->
-          shift pos;
-          (parens p_preterm) ()
-        end
-    (* 用括號包住的 term 也能當成一種 atom 使用 *)
+            (* 用括號包住的 term 也能當成一種 atom 使用 *)
+            shift pos;
+            (parens p_preterm) ())
+    | Lexer.L_BRACKET ->
+        shift pos;
+        let binder = bracket (p_binding true) () in
+        consume Lexer.ARROW;
+        let rhs = p_preterm () in
+        Pi (binder, rhs)
     | tok ->
-        Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
+        Reporter.fatalf ~loc Parse_error "unexpected token %s"
+          ([%show: Lexer.token] tok)
   in
   Located (Asai.Range.locate loc tm)
 
@@ -102,7 +107,7 @@ let p_ind_clause () : Surface.pretype binder =
   let name = ident () in
   Combinator.consume Lexer.COLON;
   let ty = p_preterm () in
-  { implicit=false; name; bound=ty }
+  { implicit = false; name; bound = ty }
 
 let p_inductive () : Surface.top =
   let open Combinator in

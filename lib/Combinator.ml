@@ -53,10 +53,10 @@ let rec many (p : unit -> 'a) () : 'a list =
 let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   match catch_parse_error p1 with None -> p2 () | Some x -> x
 
-let rec infix (op : unit -> ('a -> 'a -> 'a)) (tm : unit -> 'a) () : 'a =
+let rec infix (op : unit -> 'a -> 'a -> 'a) (tm : unit -> 'a) () : 'a =
   let lhs = tm () in
   match catch_parse_error op with
   | Some bin ->
-     let rhs = infix op tm () in
-     bin lhs rhs
+      let rhs = infix op tm () in
+      bin lhs rhs
   | None -> lhs
