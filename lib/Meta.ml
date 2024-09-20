@@ -76,8 +76,9 @@ module PartialRenaming = struct
 end
 
 let solve (m : metavar) (sp : value bwd) (rhs : value) : unit =
-  let spine_str = String.concat " " @@ List.map (fun v -> [%show: value] v) (Bwd.to_list sp) in
+  let spine_str =
+    String.concat " " @@ List.map (fun v -> [%show: value] v) (Bwd.to_list sp)
+  in
   Reporter.tracef "spine: %s" spine_str @@ fun () ->
-
   let solution = PartialRenaming.run m sp rhs in
   Evaluation.insert_meta m solution

@@ -29,7 +29,8 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
   | expected, actual ->
-      Reporter.fatalf ~loc Type_error "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
+      Reporter.fatalf ~loc Type_error
+        "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
         ([%show: Core.value] expected)
         ([%show: Core.value] actual)
         ([%show: Core.value] a)
@@ -100,9 +101,9 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
 
 let check_top ~loc top =
   match top with
-  | Surface.Data {name; _} ->
-      Reporter.tracef ~loc "checking an inductive data type %s" name @@ fun () ->
-      Reporter.fatalf ~loc TODO "todo"
+  | Surface.Data { name; _ } ->
+      Reporter.tracef ~loc "checking an inductive data type %s" name
+      @@ fun () -> Reporter.fatalf ~loc TODO "todo"
   | Surface.Let (name, bindings, result_ty, body) ->
       BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
       let typ : Surface.pretype =
@@ -110,7 +111,9 @@ let check_top ~loc top =
           (fun binding return_ty -> Surface.Pi (binding, return_ty))
           bindings result_ty
       in
-      Reporter.tracef ~loc "while checking a top let %s : %s" name ([%show: Surface.pretype] typ) @@ fun () ->
+      Reporter.tracef ~loc "while checking a top let %s : %s" name
+        ([%show: Surface.pretype] typ)
+      @@ fun () ->
       let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
       let typ = Env.S.section [] @@ fun () -> eval typ in
 
