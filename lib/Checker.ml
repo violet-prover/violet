@@ -23,6 +23,9 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   | VLambda { bound = bound1; _ }, VLambda { bound = bound2; _ } ->
       let x = fresh_variable () in
       unify ~loc (bound1 x) (bound2 x)
+  | VLambda { bound; _ }, t | t, VLambda { bound; _ } ->
+      let x = fresh_variable () in
+      unify ~loc (bound x) (vapp t x)
   | VPi (_, b1), VPi (_, b2) ->
       let x = fresh_variable () in
       unify ~loc (b1 x) (b2 x)

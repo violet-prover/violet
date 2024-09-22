@@ -41,7 +41,11 @@ module PartialRenaming = struct
         else rename_sp m renaming (Meta m') sp
     | Rigid (x, sp) -> (
         match Hashtbl.find_opt renaming.rename x with
-        | None -> Reporter.fatalf Elab_error "cannot complete partial renaming, there has no variable %s in context" x
+        | None ->
+            Reporter.fatalf Elab_error
+              "cannot complete partial renaming, there has no variable %s in \
+               context"
+              x
         | Some x' -> rename_sp m renaming (Var x') sp)
     | VLambda { implicit; name; bound = clos } ->
         Lambda
