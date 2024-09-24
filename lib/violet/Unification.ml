@@ -2,6 +2,88 @@ open Syntax
 open Bwd
 open Evaluation
 
+module PartialRenaming = struct
+  open Core
+
+  type t = {
+    domain : string bwd;
+    codomain : string bwd;
+    rename : (string, string) Hashtbl.t;
+  }
+
+  let invert (domain : string bwd) (sp : value bwd) : t =
+    let rec go = function
+      | Emp -> Hashtbl.create ~random:true 1000
+      | Snoc (rest, (t, v)) -> (
+          let ren = go rest in
+          match force t with
+          | Rigid (x, Emp) -> (
+              match Hashtbl.find_opt ren x with
+              | Some _ -> Reporter.fatalf Elab_error "bad"
+              | None ->
+                  Hashtbl.add ren x v;
+                  ren)
+          | _ -> Reporter.fatalf Elab_error "invert failed")
+    in
+    { domain; codomain = domain; rename = go @@ Bwd.combine sp domain }
+
+  let rec rename (m : metavar) (renaming : t) (rhs : value) : term =
+    match rhs with
+    | Universe -> Universe
+    | Flex (m', sp) ->
+        if m = m' then
+          Reporter.fatalf Elab_error "meta variable %s itself occurs in rhs"
+            ([%show: metavar] m)
+        else rename_sp m renaming (Meta m') sp
+    | Rigid (x, sp) -> (
+        match Hashtbl.find_opt renaming.rename x with
+        | None ->
+            Reporter.fatalf Elab_error
+              "cannot complete partial renaming, there has no variable %s in \
+               context"
+              x
+        | Some x' -> rename_sp m renaming (Var x') sp)
+    | VLambda { implicit; name; bound = clos } ->
+        Lambda
+          {
+            implicit;
+            name;
+            bound = rename m renaming (clos @@ Rigid (name, Emp));
+          }
+    | VPi ({ implicit; name; bound = a }, b) ->
+        Pi
+          ( { implicit; name; bound = rename m renaming a },
+            rename m renaming (b (Rigid (name, Emp))) )
+
+  and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term
+      =
+    match sp with
+    | Emp -> t
+    | Snoc (sp, u) -> App (rename_sp m renaming t sp, rename m renaming u)
+
+  let rec lams (dom : string list) (tm : term) : term =
+    match dom with
+    | [] -> tm
+    | name :: dom -> Lambda { name; bound = lams dom tm; implicit = false }
+
+  let run m sp rhs =
+    let dom = Bwd.map (fun _ -> Format.sprintf "<%d>" (Random.int 1000)) sp in
+    let renaming = invert dom sp in
+    let rhs = rename m renaming rhs in
+    let solution = lams (Bwd.to_list dom) rhs in
+    Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () ->
+    eval solution
+end
+
+let solve (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.value) : unit =
+  let spine_str =
+    String.concat " "
+    @@ List.map (fun v -> [%show: Core.value] v) (Bwd.to_list sp)
+  in
+  Reporter.tracef "spine: %s" spine_str @@ fun () ->
+  let solution = PartialRenaming.run m sp rhs in
+  Meta.insert_meta m solution
+
 let count = ref 0
 
 let fresh_variable () : Core.value =
@@ -24,7 +106,7 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
       let x = fresh_variable () in
       unify ~loc (b1 x) (b2 x)
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
-  | t, Flex (m, sp) | Flex (m, sp), t -> Meta.solve m sp t
+  | t, Flex (m, sp) | Flex (m, sp), t -> solve m sp t
   | expected, actual ->
       Reporter.fatalf ~loc Type_error
         "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
