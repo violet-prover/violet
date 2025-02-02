@@ -57,3 +57,8 @@ and vapp_bounds (v : value) (bounds : string bwd) =
   | Emp -> v
   | Snoc (bounds, x) -> vapp (vapp_bounds v bounds) (eval (Var x))
 ;;
+
+let%expect_test "test" =
+  print_string @@ [%show: value] (eval Universe);
+  [%expect {| 𝓤 |}]
+;;
