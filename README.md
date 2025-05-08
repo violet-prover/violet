@@ -1,17 +1,16 @@
 # violet
 
-This project redevelop violet but using nameful context (library Yuujinchou).
+This project develop violet using nameful context (library Yuujinchou).
 
 - core unification and meta solving: elaboration-zoo
-- (TODO) term
+- term
   - local let
   - (?) first class sigma v.s. record based sigma
-  - (?) elaborator operations
-- (TODO) top level
-  - open statement
-  - export keyword for top let
-- (TODO) inductive types
-  - strictly positive check
+- top level
+  - (TODO) open statement
+  - (TODO) export keyword for top let
+- inductive types
+  - (TODO) strictly positive check
   - (?) sized type for termination checker
-- (TODO) universe polymorphism: library mugen
 - (TODO) pattern matching
+- (TODO) universe polymorphism: library mugen
