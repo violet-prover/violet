@@ -5,4 +5,4 @@
  (inline_tests)
  (preprocess
   (pps ppx_deriving.show ppx_expect))
- (libraries eio yuujinchou bwd asai algaeff))
+ (libraries eio mugen yuujinchou bwd asai algaeff))

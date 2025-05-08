@@ -20,18 +20,19 @@
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends
-    ocaml
-    dune
-    ocamlformat
-    ppxlib
-    ppx_deriving
-    cmdliner
-    eio
-    eio_main
-    asai
-    algaeff
-    yuujinchou
-    bwd)
+  ocaml
+  dune
+  ocamlformat
+  ppxlib
+  ppx_deriving
+  cmdliner
+  eio
+  eio_main
+  asai
+  mugen
+  algaeff
+  yuujinchou
+  bwd)
  (tags
   (topics "to describe" your project)))
 
