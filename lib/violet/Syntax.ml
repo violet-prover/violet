@@ -63,6 +63,8 @@ module Surface = struct
         ; ind_ty : pretype
         ; clauses : pretype binder list
         }
+      (* import a library *)
+    | Import of string
   [@@deriving show]
 
   type t =

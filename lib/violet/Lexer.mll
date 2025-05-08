@@ -4,6 +4,7 @@ exception SyntaxError of string
 type token =
   | DATA [@printer fun fmt () -> fprintf fmt "data"]
   | LET [@printer fun fmt () -> fprintf fmt "let"]
+  | IMPORT [@printer fun fmt () -> fprintf fmt "import"]
   | UNIV [@printer fun fmt () -> fprintf fmt "U"]
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
@@ -34,6 +35,7 @@ rule token =
   | "U" { return lexbuf @@ UNIV }
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
+  | "import" { return lexbuf @@ IMPORT }
   | ":=" { return lexbuf @@ ASSIGN }
   | "->" { return lexbuf @@ ARROW }
   | ':' { return lexbuf @@ COLON }

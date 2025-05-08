@@ -82,6 +82,11 @@ let bind_constructor ~loc ({ name; bound; _ } : Surface.pretype binder) : unit =
 
 let check_top ~loc top =
   match top with
+  | Surface.Import _library ->
+    let m : Context.modifier_cmd Yuujinchou.Language.t = Yuujinchou.Language.all in
+    let t = Yuujinchou.Trie.Untagged.of_seq (List.to_seq []) in
+    let t = Yuujinchou.Trie.Untagged.tag `Imported t in
+    Context.S.import_subtree ~modifier:m ([], t)
   | Surface.Data { name; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->

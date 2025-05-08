@@ -1,6 +1,4 @@
-data Nat : U
-  | zero : Nat
-  | suc : Nat -> Nat
+import nat
 
 let z : Nat := zero
 let one : Nat := suc zero
