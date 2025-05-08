@@ -112,7 +112,7 @@ let p_import () : Surface.top =
   let open Combinator in
   consume Lexer.IMPORT;
   let name = ident () in
-  Import name
+  Import [ name ]
 ;;
 
 let p_ind_clause () : Surface.pretype binder =

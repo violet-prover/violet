@@ -74,24 +74,41 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
 ;;
 
 let bind_constructor ~loc ({ name; bound; _ } : Surface.pretype binder) : unit =
-  let ctor_ty = Context.S.section [] @@ fun () -> check ~loc bound Universe in
-  let ctor_ty = Env.S.section [] @@ fun () -> eval ctor_ty in
+  let ctor_ty = check ~loc bound Universe in
+  let ctor_ty = eval ctor_ty in
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
   Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
 ;;
 
-let check_top ~loc top =
+
+let rec check_module (file : Surface.t) : unit =
+  let module_name =
+    Filename.chop_extension @@ Filename.basename file.name
+  in
+  Eio.traceln "checking [module] %s" module_name;
+  Context.S.section [ module_name ] @@ fun () ->
+  Env.S.section [ module_name ] @@ fun () ->
+  BoundState.run ~init:Emp @@ fun () ->
+  List.iter
+    (fun (top : Surface.top Asai.Range.located) ->
+       let loc = Option.get top.loc in
+       check_top ~loc top.value)
+    file.tops
+
+and check_top ~loc top =
   match top with
-  | Surface.Import _library ->
-    let m : Context.modifier_cmd Yuujinchou.Language.t = Yuujinchou.Language.all in
-    let t = Yuujinchou.Trie.Untagged.of_seq (List.to_seq []) in
-    let t = Yuujinchou.Trie.Untagged.tag `Imported t in
-    Context.S.import_subtree ~modifier:m ([], t)
+  | Surface.Import library ->
+    (* TODO: this hardcoded `example` shuold be removed in the future *)
+    let filepath = "example/" ^ (String.concat "/" library) ^ ".vt" in
+    let m = Parser.parse_file filepath in
+    check_module m;
+    Context.S.modify_visible @@ Yuujinchou.Language.(union [all; renaming library []]) ;
+    Env.S.modify_visible @@ Yuujinchou.Language.(union [all; renaming library []]) 
   | Surface.Data { name; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->
-    let ind_ty = Context.S.section [] @@ fun () -> check ~loc ind_ty Universe in
-    let ind_ty = Env.S.section [] @@ fun () -> eval ind_ty in
+    let ind_ty = check ~loc ind_ty Universe in
+    let ind_ty = eval ind_ty in
     Context.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
@@ -111,8 +128,8 @@ let check_top ~loc top =
     in
     Reporter.tracef ~loc "checking [top let] %s : %s" name ([%show: Surface.pretype] typ)
     @@ fun () ->
-    let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
-    let typ = Env.S.section [] @@ fun () -> eval typ in
+    let typ = check ~loc typ Universe in
+    let typ = eval typ in
     let term : Surface.preterm =
       List.fold_right
         (fun { name; implicit; bound = _ } body ->
@@ -120,7 +137,7 @@ let check_top ~loc top =
         bindings
         body
     in
-    let term = Context.S.section [] @@ fun () -> check ~loc term typ in
+    let term = check ~loc term typ in
     Context.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
@@ -130,14 +147,4 @@ let check_top ~loc top =
       ~context_export:`Export
       ([ name ], Env.S.section [] @@ fun () -> eval term, `Local);
     ()
-;;
-
-let check_module (file : Surface.t) : unit =
-  BoundState.run ~init:Emp
-  @@ fun () ->
-  List.iter
-    (fun (top : Surface.top Asai.Range.located) ->
-       let loc = Option.get top.loc in
-       check_top ~loc top.value)
-    file.tops
 ;;

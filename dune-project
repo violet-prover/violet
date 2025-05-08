@@ -25,6 +25,8 @@
   ocamlformat
   ppxlib
   ppx_deriving
+  ppx_inline_test
+  ppx_expect
   cmdliner
   eio
   eio_main

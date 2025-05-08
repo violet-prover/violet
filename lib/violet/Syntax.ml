@@ -1,4 +1,5 @@
 open Bwd
+open Yuujinchou
 
 type 't binder =
   { name : string
@@ -64,7 +65,11 @@ module Surface = struct
         ; clauses : pretype binder list
         }
       (* import a library *)
-    | Import of string
+    | Import of Trie.path
+    [@printer
+      fun fmt path ->
+        fprintf fmt "import %s" (String.concat "." path)
+    ]
   [@@deriving show]
 
   type t =
