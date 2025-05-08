@@ -54,6 +54,10 @@ module Surface = struct
 
   type top =
     | Let of string * pretype binder list * pretype * preterm
+    (*
+       data <name> : <ind_ty> where
+         <clauses>
+    *)
     | Data of
         { name : string
         ; ind_ty : pretype

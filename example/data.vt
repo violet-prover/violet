@@ -1,3 +1,7 @@
 data Nat : U
   | zero : Nat
   | suc : Nat -> Nat
+
+let z : Nat := zero
+let one : Nat := suc zero
+let s : Nat -> Nat := suc

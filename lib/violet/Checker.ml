@@ -73,11 +73,29 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 ;;
 
+let bind_constructor ~loc ({ name; bound; _ } : Surface.pretype binder) : unit =
+  let ctor_ty = Context.S.section [] @@ fun () -> check ~loc bound Universe in
+  let ctor_ty = Env.S.section [] @@ fun () -> eval ctor_ty in
+  Context.S.include_singleton ([ name ], (ctor_ty, `Local));
+  Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
+;;
+
 let check_top ~loc top =
   match top with
-  | Surface.Data { name; _ } ->
-    Reporter.tracef ~loc "checking an inductive data type %s" name
-    @@ fun () -> Reporter.fatalf ~loc TODO "todo"
+  | Surface.Data { name; ind_ty; clauses } ->
+    Reporter.tracef ~loc "checking [inductive data type] %s" name
+    @@ fun () ->
+    let ind_ty = Context.S.section [] @@ fun () -> check ~loc ind_ty Universe in
+    let ind_ty = Env.S.section [] @@ fun () -> eval ind_ty in
+    Context.S.include_singleton
+      ~context_visible:`Visible
+      ~context_export:`Export
+      ([ name ], (ind_ty, `Local));
+    Env.S.include_singleton
+      ~context_visible:`Visible
+      ~context_export:`Export
+      ([ name ], (Rigid (name, Bwd.Emp), `Local));
+    List.iter (bind_constructor ~loc) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
     BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
     let typ : Surface.pretype =
@@ -86,18 +104,14 @@ let check_top ~loc top =
         bindings
         result_ty
     in
-    Reporter.tracef
-      ~loc
-      "while checking a top let %s : %s"
-      name
-      ([%show: Surface.pretype] typ)
+    Reporter.tracef ~loc "checking [top let] %s : %s" name ([%show: Surface.pretype] typ)
     @@ fun () ->
     let typ = Context.S.section [] @@ fun () -> check ~loc typ Universe in
     let typ = Env.S.section [] @@ fun () -> eval typ in
     let term : Surface.preterm =
       List.fold_right
         (fun { name; implicit; bound = _ } body ->
-          Surface.Lambda { name; bound = body; implicit })
+           Surface.Lambda { name; bound = body; implicit })
         bindings
         body
     in
@@ -118,7 +132,7 @@ let check_module (file : Surface.t) : unit =
   @@ fun () ->
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
-      let loc = Option.get top.loc in
-      check_top ~loc top.value)
+       let loc = Option.get top.loc in
+       check_top ~loc top.value)
     file.tops
 ;;

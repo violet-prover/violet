@@ -3,7 +3,7 @@ module Tty = Asai.Tty.Make (Violet.Reporter.Message)
 
 let version = "0.1.0"
 
-let lex_cmd ~env =
+let load_cmd ~env =
   let _ = env in
   let arg_file =
     let doc = "The program file to load." in
@@ -26,7 +26,7 @@ let cmd ~env =
   let doc = "violet" in
   let man = [ `S Manpage.s_bugs; `S Manpage.s_authors; `P "Lîm Tsú-thuàn" ] in
   let info = Cmd.info "violet" ~version ~doc ~man in
-  Cmd.group info [ lex_cmd ~env ]
+  Cmd.group info [ load_cmd ~env ]
 ;;
 
 let () =
