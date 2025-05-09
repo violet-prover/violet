@@ -66,10 +66,7 @@ module Surface = struct
         }
       (* import a library *)
     | Import of Trie.path
-    [@printer
-      fun fmt path ->
-        fprintf fmt "import %s" (String.concat "." path)
-    ]
+    [@printer fun fmt path -> fprintf fmt "import %s" (String.concat "." path)]
   [@@deriving show]
 
   type t =

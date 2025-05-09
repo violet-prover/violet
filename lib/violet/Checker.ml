@@ -80,15 +80,15 @@ let bind_constructor ~loc ({ name; bound; _ } : Surface.pretype binder) : unit =
   Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
 ;;
 
-
 let rec check_module (file : Surface.t) : unit =
-  let module_name =
-    Filename.chop_extension @@ Filename.basename file.name
-  in
-  Eio.traceln "checking [module] %s" module_name;
-  Context.S.section [ module_name ] @@ fun () ->
-  Env.S.section [ module_name ] @@ fun () ->
-  BoundState.run ~init:Emp @@ fun () ->
+  let module_name = Filename.chop_extension @@ Filename.basename file.name in
+  Eio.traceln "checking [module] %s (%s)" module_name file.name;
+  Context.S.section [ module_name ]
+  @@ fun () ->
+  Env.S.section [ module_name ]
+  @@ fun () ->
+  BoundState.run ~init:Emp
+  @@ fun () ->
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
        let loc = Option.get top.loc in
@@ -99,11 +99,11 @@ and check_top ~loc top =
   match top with
   | Surface.Import library ->
     (* TODO: this hardcoded `example` shuold be removed in the future *)
-    let filepath = "example/" ^ (String.concat "/" library) ^ ".vt" in
+    let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
     let m = Parser.parse_file filepath in
     check_module m;
-    Context.S.modify_visible @@ Yuujinchou.Language.(union [all; renaming library []]) ;
-    Env.S.modify_visible @@ Yuujinchou.Language.(union [all; renaming library []]) 
+    (Context.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
+    Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ])
   | Surface.Data { name; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->
