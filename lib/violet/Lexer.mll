@@ -9,6 +9,7 @@ type token =
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
+  | DOT [@printer fun fmt () -> fprintf fmt "."]
   | VERT [@printer fun fmt () -> fprintf fmt "|"]
   | L_PAREN [@printer fun fmt () -> fprintf fmt "("]
   | R_PAREN [@printer fun fmt () -> fprintf fmt ")"]
@@ -39,6 +40,7 @@ rule token =
   | ":=" { return lexbuf @@ ASSIGN }
   | "->" { return lexbuf @@ ARROW }
   | ':' { return lexbuf @@ COLON }
+  | '.' { return lexbuf @@ DOT }
   | '|' { return lexbuf @@ VERT }
   | '(' { return lexbuf @@ L_PAREN }
   | ')' { return lexbuf @@ R_PAREN }

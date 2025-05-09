@@ -1,5 +1,6 @@
 open Lexing
 open Syntax
+open Yuujinchou
 
 let parens (p : unit -> 'a) () : 'a =
   Combinator.consume Lexer.L_PAREN;
@@ -108,11 +109,23 @@ let p_let () : Surface.top =
   Let (name, bindings, ty, tm)
 ;;
 
+let p_path () : Trie.path =
+  let first = ident () in
+  let rest =
+    Combinator.many
+      (fun () ->
+         Combinator.consume Lexer.DOT;
+         ident ())
+      ()
+  in
+  first :: rest
+;;
+
 let p_import () : Surface.top =
   let open Combinator in
   consume Lexer.IMPORT;
-  let name = ident () in
-  Import [ name ]
+  let path = p_path () in
+  Import path
 ;;
 
 let p_ind_clause () : Surface.pretype binder =
