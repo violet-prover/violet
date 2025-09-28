@@ -156,7 +156,7 @@ let p_top () : Surface.top Asai.Range.located =
 let p_all (name : string) () : Surface.t =
   (* FIXME: this is wrong, a top failed should get a reason
      then seek next start token & continue parsing,
-     which is not many intend todo.
+     which is not `many` intend todo.
   *)
   let tops = Combinator.many p_top () in
   Combinator.consume Lexer.EOF;
