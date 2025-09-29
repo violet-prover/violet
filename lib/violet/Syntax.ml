@@ -105,15 +105,15 @@ module Core = struct
   type value =
     | Flex of metavar * value bwd
     [@printer
-      fun fmt (mhead, spine) ->
-        if Bwd.is_empty spine
+      fun fmt (mhead, locals) ->
+        if Bwd.is_empty locals
         then fprintf fmt "%s" (show_metavar mhead)
         else
           fprintf
             fmt
-            "%s %s"
+            "%s(%s)"
             (show_metavar mhead)
-            (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
+            (String.concat ", " (List.map show_value @@ Bwd.to_list locals))]
     (* rigid 是一種 neutral value，是一個 bound variable applied 到 0..N 個引數後的產品 *)
     | Rigid of string * value bwd
     [@printer
@@ -129,7 +129,7 @@ module Core = struct
                " "
                (List.map (fun v ->
                   match v with
-                  | Flex (_, sp) | Rigid (_, sp) ->
+                  | Rigid (_, sp) ->
                     if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
                   | _ -> show_value v)
                 @@ Bwd.to_list spine))]

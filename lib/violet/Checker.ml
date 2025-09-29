@@ -2,12 +2,6 @@ open Syntax
 open Bwd
 open Evaluation
 
-module Bound = struct
-  type t = string bwd
-end
-
-module BoundState = Algaeff.State.Make (Bound)
-
 let rec check ~loc (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
   match term, typ with
   | ( Lambda { name = x; bound = body; implicit = lambda_mode }
@@ -20,7 +14,7 @@ let rec check ~loc (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
       Context.S.import_singleton ([ x ], (a, `Local));
       let body = check ~loc body (b (Rigid (x, Emp))) in
       Core.Lambda { name = x; bound = body; implicit = lambda_mode }
-  | Hole, _ -> Meta.fresh (BoundState.get ())
+  | Hole, _ -> Meta.meta_fresh ()
   | tm, expected_typ ->
     let tm, infer_typ = infer ~loc tm in
     Unification.unify ~loc expected_typ infer_typ;
@@ -67,8 +61,8 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
          "cannot apply a value to something with type `%s`"
          ([%show: Core.value_ty] ty))
   | Hole ->
-    let ty = eval @@ Meta.fresh (BoundState.get ()) in
-    let t = Meta.fresh (BoundState.get ()) in
+    let ty = eval @@ Meta.meta_fresh () in
+    let t = Meta.meta_fresh () in
     t, ty
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 ;;
@@ -83,6 +77,7 @@ let bind_constructor ~loc params ({ name; bound; _ } : Surface.pretype binder) :
   in
   let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
+  Meta.GlobalState.set (Meta.GlobalDefs.add name @@ Meta.GlobalState.get ());
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
   Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
 ;;
@@ -94,7 +89,7 @@ let rec check_module (file : Surface.t) : unit =
   @@ fun () ->
   Env.S.section [ module_name ]
   @@ fun () ->
-  BoundState.run ~init:Emp
+  Meta.BoundState.run ~init:Emp
   @@ fun () ->
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
@@ -122,6 +117,7 @@ and check_top ~loc top =
     in
     let typ = check ~loc typ Universe in
     let typ = eval typ in
+    Meta.GlobalState.set (Meta.GlobalDefs.add name @@ Meta.GlobalState.get ());
     Context.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
@@ -132,7 +128,7 @@ and check_top ~loc top =
       ([ name ], (Rigid (name, Bwd.Emp), `Local));
     List.iter (bind_constructor ~loc params) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
-    BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
+    Meta.BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))

@@ -1,7 +1,12 @@
 import nat
 
-data Eq (A : U) (x : A) (y : A) : U
+data Eq (A : U) (x : A) : A -> U
   | refl : Eq A x x
 
+let add1 (x : Nat) : Nat := suc x
+
 let eq_0 : Eq Nat zero zero :=
+  refl
+
+let eq_1 : Eq Nat (add1 zero) (suc zero) :=
   refl
