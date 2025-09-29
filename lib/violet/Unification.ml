@@ -5,11 +5,7 @@ open Evaluation
 module PartialRenaming = struct
   open Core
 
-  type t =
-    { domain : string bwd
-    ; codomain : string bwd
-    ; rename : (string, string) Hashtbl.t
-    }
+  type t = (string, string) Hashtbl.t
 
   let invert (domain : string bwd) (sp : value bwd) : t =
     let rec go = function
@@ -25,10 +21,10 @@ module PartialRenaming = struct
               ren)
          | _ -> Reporter.fatalf Elab_error "invert failed")
     in
-    { domain; codomain = domain; rename = go @@ Bwd.combine sp domain }
+    go @@ Bwd.combine sp domain
   ;;
 
-  let rec rename (m : metavar) (renaming : t) (rhs : value) : term =
+  let rec rename (m : metavar) (renaming_map : t) (rhs : value) : term =
     match rhs with
     | Universe -> Universe
     | Flex (m', sp) ->
@@ -38,21 +34,21 @@ module PartialRenaming = struct
           Elab_error
           "meta variable %s itself occurs in rhs"
           ([%show: metavar] m)
-      else rename_sp m renaming (Meta m') sp
+      else rename_sp m renaming_map (Meta m') sp
     | Rigid (x, sp) ->
-      (match Hashtbl.find_opt renaming.rename x with
+      (match Hashtbl.find_opt renaming_map x with
        | None ->
          Reporter.fatalf
            Elab_error
            "cannot complete partial renaming, there has no variable %s in context"
            x
-       | Some x' -> rename_sp m renaming (Var x') sp)
+       | Some x' -> rename_sp m renaming_map (Var x') sp)
     | VLambda { implicit; name; bound = clos } ->
-      Lambda { implicit; name; bound = rename m renaming (clos @@ Rigid (name, Emp)) }
+      Lambda { implicit; name; bound = rename m renaming_map (clos @@ Rigid (name, Emp)) }
     | VPi ({ implicit; name; bound = a }, b) ->
       Pi
-        ( { implicit; name; bound = rename m renaming a }
-        , rename m renaming (b (Rigid (name, Emp))) )
+        ( { implicit; name; bound = rename m renaming_map a }
+        , rename m renaming_map (b (Rigid (name, Emp))) )
 
   and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term =
     match sp with
@@ -68,8 +64,8 @@ module PartialRenaming = struct
 
   let run m sp rhs =
     let dom = Bwd.map (fun _ -> Format.sprintf "<%d>" (Random.int 1000)) sp in
-    let renaming = invert dom sp in
-    let rhs = rename m renaming rhs in
+    let renaming_map = invert dom sp in
+    let rhs = rename m renaming_map rhs in
     let solution = lams (Bwd.to_list dom) rhs in
     Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () -> eval solution
   ;;
