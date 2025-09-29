@@ -65,13 +65,11 @@ module Surface = struct
         ; ind_ty : pretype
         ; clauses : pretype binder list
         }
-      (* import a library *)
-    | Import of Trie.path
-    [@printer fun fmt path -> fprintf fmt "import %s" (String.concat "." path)]
   [@@deriving show]
 
   type t =
     { name : string
+    ; imports : Trie.path list (* import libraries *)
     ; tops : top Asai.Range.located list
     }
 end

@@ -121,13 +121,6 @@ let p_path () : Trie.path =
   first :: rest
 ;;
 
-let p_import () : Surface.top =
-  let open Combinator in
-  consume Lexer.IMPORT;
-  let path = p_path () in
-  Import path
-;;
-
 let p_ind_clause () : Surface.pretype binder =
   Combinator.consume Lexer.VERT;
   let name = ident () in
@@ -150,18 +143,25 @@ let p_inductive () : Surface.top =
 let p_top () : Surface.top Asai.Range.located =
   let open Combinator in
   let loc = current_loc () in
-  let value = (p_let <|> p_inductive <|> p_import) () in
+  let value = (p_let <|> p_inductive) () in
   { loc; value }
 ;;
 
+let p_import () : Trie.path =
+  let open Combinator in
+  consume Lexer.IMPORT;
+  p_path ()
+;;
+
 let p_all (name : string) () : Surface.t =
+  let imports = Combinator.many p_import () in
   (* FIXME: this is wrong, a top failed should get a reason
      then seek next start token & continue parsing,
      which is not `many` intend todo.
   *)
   let tops = Combinator.many p_top () in
   Combinator.consume Lexer.EOF;
-  { name; tops }
+  { name; imports; tops }
 ;;
 
 let rec tokens filename lexbuf =

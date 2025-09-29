@@ -91,6 +91,16 @@ let rec check_module (file : Surface.t) : unit =
   Meta.BoundState.run ~init:Emp
   @@ fun () ->
   List.iter
+    (fun library ->
+       (* TODO: this hardcoded `example` shuold be removed in the future *)
+       let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
+       let m = Parser.parse_file filepath in
+       check_module m;
+       (Context.S.modify_visible
+        @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
+       Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]))
+    file.imports;
+  List.iter
     (fun (top : Surface.top Asai.Range.located) ->
        let loc = Option.get top.loc in
        check_top ~loc top.value)
@@ -98,13 +108,6 @@ let rec check_module (file : Surface.t) : unit =
 
 and check_top ~loc top =
   match top with
-  | Surface.Import library ->
-    (* TODO: this hardcoded `example` shuold be removed in the future *)
-    let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
-    let m = Parser.parse_file filepath in
-    check_module m;
-    (Context.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
-    Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ])
   | Surface.Data { name; params; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->
