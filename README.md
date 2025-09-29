@@ -6,7 +6,7 @@ This project develop violet using nameful context (library Yuujinchou).
 - top level
   - let definition
   - import statement
-  - inductive types
+  - inductive types (view nat, list, vec in `example/`)
     - (TODO) strictly positive check
     - (TODO) pattern matching
     - (?) sized type for termination checker
