@@ -1,5 +1,6 @@
 open Syntax.Core
 open Bwd
+open Bwd.Infix
 
 let count = ref 0
 
@@ -40,7 +41,7 @@ end
 module BoundState = Algaeff.State.Make (Bound)
 
 let meta_fresh () =
-  let globals = Bwd.of_list @@ List.rev @@ GlobalDefs.elements (GlobalState.get ()) in
-  let locals = BoundState.get () in
-  if Bwd.is_empty locals then fresh globals else fresh locals
+  let globals = List.rev @@ GlobalDefs.elements (GlobalState.get ()) in
+  let locals : string bwd = BoundState.get () in
+  fresh (locals <@ globals)
 ;;
