@@ -1,6 +1,28 @@
 open Cmdliner
 module Tty = Asai.Tty.Make (Violet.Reporter.Message)
 
+let module_name filename = Filename.chop_extension @@ Filename.basename filename
+
+type dependencies = (string, string list) Hashtbl.t
+type modules = (string, Violet.Syntax.Surface.t) Hashtbl.t
+
+let rec add_entry (mods : modules) (deps : dependencies) (m : Violet.Syntax.Surface.t) =
+  let key = module_name m.name in
+  Hashtbl.add mods key m;
+  let values = List.map (fun path -> String.concat "." path) m.imports in
+  match Hashtbl.find_opt deps key with
+  | Some _ -> ()
+  | None ->
+    Hashtbl.add deps key values;
+    List.iter
+      (fun library ->
+         (* TODO: this hardcoded `example` should be removed in the future *)
+         let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
+         let m = Violet.Parser.parse_file filepath in
+         add_entry mods deps m)
+      m.imports
+;;
+
 let version = "0.1.0"
 
 let load_cmd ~env =
@@ -16,8 +38,21 @@ let load_cmd ~env =
     info
     Term.(
       const (fun filename ->
+        let deps = Hashtbl.create ~random:true 1000 in
+        let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet.Parser.parse_file filename in
-        Violet.Checker.check_module m;
+        add_entry mods deps m;
+        (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
+         | Sorted r ->
+           List.iter
+             (fun mod_name ->
+                let m = Hashtbl.find mods mod_name in
+                Violet.Checker.check_module m)
+             r
+         | ErrorCycle err_list ->
+           Violet.Reporter.fatalf Parse_error "Cycle import %s"
+           @@ String.concat ", " err_list);
+        (* TODO: load module into a REPL *)
         ())
       $ arg_file)
 ;;
@@ -35,9 +70,20 @@ let check_cmd ~env =
     info
     Term.(
       const (fun filename ->
+        let deps = Hashtbl.create ~random:true 1000 in
+        let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet.Parser.parse_file filename in
-        Violet.Checker.check_module m;
-        ())
+        add_entry mods deps m;
+        match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
+        | Sorted r ->
+          List.iter
+            (fun mod_name ->
+               let m = Hashtbl.find mods mod_name in
+               Violet.Checker.check_module m)
+            r
+        | ErrorCycle err_list ->
+          Violet.Reporter.fatalf Parse_error "Cycle import %s"
+          @@ String.concat ", " err_list)
       $ arg_file)
 ;;
 

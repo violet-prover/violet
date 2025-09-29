@@ -3,4 +3,4 @@
  (name main)
  (preprocess
   (pps ppx_deriving.show))
- (libraries violet cmdliner eio eio_main asai))
+ (libraries violet cmdliner tsort eio eio_main asai))

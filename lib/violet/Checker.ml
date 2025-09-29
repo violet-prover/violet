@@ -92,10 +92,6 @@ let rec check_module (file : Surface.t) : unit =
   @@ fun () ->
   List.iter
     (fun library ->
-       (* TODO: this hardcoded `example` shuold be removed in the future *)
-       let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
-       let m = Parser.parse_file filepath in
-       check_module m;
        (Context.S.modify_visible
         @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
        Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]))

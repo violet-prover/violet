@@ -28,6 +28,7 @@
   ppx_inline_test
   ppx_expect
   cmdliner
+  tsort
   eio
   eio_main
   asai
