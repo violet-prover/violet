@@ -77,7 +77,6 @@ let bind_constructor ~loc params ({ name; bound; _ } : Surface.pretype binder) :
   in
   let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
-  Meta.GlobalState.set (Meta.GlobalDefs.add name @@ Meta.GlobalState.get ());
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
   Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
 ;;
@@ -117,7 +116,6 @@ and check_top ~loc top =
     in
     let typ = check ~loc typ Universe in
     let typ = eval typ in
-    Meta.GlobalState.set (Meta.GlobalDefs.add name @@ Meta.GlobalState.get ());
     Context.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export

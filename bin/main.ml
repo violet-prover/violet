@@ -17,8 +17,6 @@ let load_cmd ~env =
     Term.(
       const (fun filename ->
         let m = Violet.Parser.parse_file filename in
-        Violet.Meta.GlobalState.run ~init:Violet.Meta.GlobalDefs.empty
-        @@ fun () ->
         Violet.Checker.check_module m;
         ())
       $ arg_file)

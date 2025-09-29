@@ -1,6 +1,5 @@
 open Syntax.Core
 open Bwd
-open Bwd.Infix
 
 let count = ref 0
 
@@ -23,17 +22,6 @@ let eval (mvar : metavar) : value =
   | None -> Flex (mvar, Emp)
 ;;
 
-module GlobalDefs = Set.Make (String)
-
-module Defs = struct
-  type t = GlobalDefs.t
-end
-
-(* GlobalState tracks name of global definitions,
-  this helps we understand if a name is already bound when we are solving metas
-*)
-module GlobalState = Algaeff.State.Make (Defs)
-
 module Bound = struct
   type t = string bwd
 end
@@ -41,7 +29,6 @@ end
 module BoundState = Algaeff.State.Make (Bound)
 
 let meta_fresh () =
-  let globals = List.rev @@ GlobalDefs.elements (GlobalState.get ()) in
   let locals : string bwd = BoundState.get () in
-  fresh (locals <@ globals)
+  fresh locals
 ;;

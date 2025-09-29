@@ -38,10 +38,15 @@ module PartialRenaming = struct
     | Rigid (x, sp) ->
       (match Hashtbl.find_opt renaming_map x with
        | None ->
-         Reporter.fatalf
-           Elab_error
-           "cannot complete partial renaming, there has no variable %s in context"
-           x
+         if Context.has x
+         then (
+           let ts = Bwd.map (fun x -> rename m renaming_map x) sp in
+           List.fold_left (fun acc k -> App (acc, k)) (Var x) @@ Bwd.to_list ts)
+         else
+           Reporter.fatalf
+             Elab_error
+             "cannot complete partial renaming, there has no variable %s in context"
+             x
        | Some x' -> rename_sp m renaming_map (Var x') sp)
     | VLambda { implicit; name; bound = clos } ->
       Lambda { implicit; name; bound = rename m renaming_map (clos @@ Rigid (name, Emp)) }
