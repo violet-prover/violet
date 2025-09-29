@@ -7,6 +7,7 @@ type dependencies = (string, string list) Hashtbl.t
 type modules = (string, Violet.Syntax.Surface.t) Hashtbl.t
 
 let rec prepare_dependencies
+          (root : string)
           (mods : modules)
           (deps : dependencies)
           (m : Violet.Syntax.Surface.t)
@@ -20,10 +21,9 @@ let rec prepare_dependencies
     Hashtbl.add deps key values;
     List.iter
       (fun library ->
-         (* TODO: this hardcoded `example` should be removed in the future *)
-         let filepath = "example/" ^ String.concat "/" library ^ ".vt" in
+         let filepath = root ^ "/" ^ String.concat "/" library ^ ".vt" in
          let m = Violet.Parser.parse_file filepath in
-         prepare_dependencies mods deps m)
+         prepare_dependencies root mods deps m)
       m.imports
 ;;
 
@@ -45,7 +45,7 @@ let load_cmd ~env =
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet.Parser.parse_file filename in
-        prepare_dependencies mods deps m;
+        prepare_dependencies (Filename.dirname m.name) mods deps m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
@@ -77,7 +77,7 @@ let check_cmd ~env =
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet.Parser.parse_file filename in
-        prepare_dependencies mods deps m;
+        prepare_dependencies (Filename.dirname m.name) mods deps m;
         match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
         | Sorted r ->
           List.iter
