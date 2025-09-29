@@ -42,10 +42,14 @@ module PartialRenaming = struct
     | Rigid (x, sp) ->
       (match Hashtbl.find_opt renaming.rename x with
        | None ->
-         Reporter.fatalf
-           Elab_error
-           "cannot complete partial renaming, there has no variable %s in context"
-           x
+         (* If `x` is a global binding, we no need to find it from local context *)
+         if Context.has x
+         then Var x
+         else
+           Reporter.fatalf
+             Elab_error
+             "cannot complete partial renaming, there has no variable %s in context"
+             x
        | Some x' -> rename_sp m renaming (Var x') sp)
     | VLambda { implicit; name; bound = clos } ->
       Lambda { implicit; name; bound = rename m renaming (clos @@ Rigid (name, Emp)) }
@@ -93,7 +97,19 @@ let fresh_variable () : Core.value =
   Rigid (r, Emp)
 ;;
 
+let fresh_meta () : Core.value =
+  let r : Core.value = Flex (MetaVar !count, Emp) in
+  count := !count + 1;
+  r
+;;
+
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
+  Reporter.tracef
+    ~loc
+    "unify `%s` and `%s`"
+    ([%show: Core.value] a)
+    ([%show: Core.value] b)
+  @@ fun () ->
   match force a, force b with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc sp1 sp2
@@ -106,6 +122,9 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   | VPi (_, b1), VPi (_, b2) ->
     let x = fresh_variable () in
     unify ~loc (b1 x) (b2 x)
+  | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
+    let x = fresh_meta () in
+    unify ~loc (b x) t
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> solve m sp t
   | expected, actual ->

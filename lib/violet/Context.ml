@@ -23,6 +23,12 @@ end
 
 module S = Scope.Make (TypeContext)
 
+let has (x : string) : bool =
+  match S.resolve [ x ] with
+  | Some _ -> true
+  | _ -> false
+;;
+
 let lookup (x : string) : Core.value_ty =
   match S.resolve [ x ] with
   | Some (v, _) -> v

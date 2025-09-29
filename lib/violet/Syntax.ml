@@ -61,6 +61,7 @@ module Surface = struct
     *)
     | Data of
         { name : string
+        ; params : pretype binder list
         ; ind_ty : pretype
         ; clauses : pretype binder list
         }
@@ -127,6 +128,12 @@ module Core = struct
             (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
     | VLambda of (value -> value) binder [@printer fun fmt _ -> fprintf fmt "<closure>"]
     | VPi of value_ty binder * (value -> value)
+    [@printer
+      fun fmt ({ name; bound; implicit }, closure) ->
+        let result = closure (Rigid (name, Bwd.Emp)) in
+        if implicit
+        then fprintf fmt "{%s : %s} -> %s" name (show_value bound) (show_value result)
+        else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
   [@@deriving show]
 

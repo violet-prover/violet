@@ -140,10 +140,11 @@ let p_inductive () : Surface.top =
   let open Combinator in
   consume Lexer.DATA;
   let name = ident () in
+  let params = many (bracket (p_binding true) <|> parens (p_binding false)) () in
   consume Lexer.COLON;
   let ind_ty = p_preterm () in
   let clauses = many p_ind_clause () in
-  Data { name; ind_ty; clauses }
+  Data { name; params; ind_ty; clauses }
 ;;
 
 let p_top () : Surface.top Asai.Range.located =

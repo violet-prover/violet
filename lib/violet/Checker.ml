@@ -73,8 +73,15 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 ;;
 
-let bind_constructor ~loc ({ name; bound; _ } : Surface.pretype binder) : unit =
-  let ctor_ty = check ~loc bound Universe in
+let bind_constructor ~loc params ({ name; bound; _ } : Surface.pretype binder) : unit =
+  let typ : Surface.pretype =
+    List.fold_right
+      (fun { name; bound; _ } return_ty ->
+         Surface.Pi ({ name; bound; implicit = true }, return_ty))
+      params
+      bound
+  in
+  let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
   Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
@@ -104,20 +111,26 @@ and check_top ~loc top =
     check_module m;
     (Context.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
     Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ])
-  | Surface.Data { name; ind_ty; clauses } ->
+  | Surface.Data { name; params; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->
-    let ind_ty = check ~loc ind_ty Universe in
-    let ind_ty = eval ind_ty in
+    let typ : Surface.pretype =
+      List.fold_right
+        (fun binding return_ty -> Surface.Pi (binding, return_ty))
+        params
+        ind_ty
+    in
+    let typ = check ~loc typ Universe in
+    let typ = eval typ in
     Context.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
-      ([ name ], (ind_ty, `Local));
+      ([ name ], (typ, `Local));
     Env.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
       ([ name ], (Rigid (name, Bwd.Emp), `Local));
-    List.iter (bind_constructor ~loc) clauses
+    List.iter (bind_constructor ~loc params) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
     BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
     let typ : Surface.pretype =
