@@ -125,7 +125,14 @@ module Core = struct
             fmt
             "%s %s"
             head
-            (String.concat " " (List.map show_value @@ Bwd.to_list spine))]
+            (String.concat
+               " "
+               (List.map (fun v ->
+                  match v with
+                  | Flex (_, sp) | Rigid (_, sp) ->
+                    if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
+                  | _ -> show_value v)
+                @@ Bwd.to_list spine))]
     | VLambda of (value -> value) binder [@printer fun fmt _ -> fprintf fmt "<closure>"]
     | VPi of value_ty binder * (value -> value)
     [@printer
