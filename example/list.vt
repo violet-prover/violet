@@ -5,3 +5,4 @@ data List (A : U) : U
   | cons : A -> List A -> List A
 
 let n : List Nat := nil
+let c : List Nat := cons zero nil
