@@ -1,0 +1,7 @@
+import nat
+
+data Eq (A : U) (x : A) (y : A) : U
+  | refl : Eq A x x
+
+let eq_0 : Eq Nat zero zero :=
+  refl
