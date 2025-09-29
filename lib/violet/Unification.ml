@@ -81,7 +81,7 @@ end
 
 let solve (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.value) : unit =
   let spine_str =
-    String.concat " " @@ List.map (fun v -> [%show: Core.value] v) (Bwd.to_list sp)
+    String.concat " <: " @@ List.map (fun v -> [%show: Core.value] v) (Bwd.to_list sp)
   in
   Reporter.tracef "spine: %s" spine_str
   @@ fun () ->
@@ -100,9 +100,11 @@ let fresh_variable () : Core.value =
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   Reporter.tracef
     ~loc
-    "unify `%s` and `%s`"
+    "unify `%s` and `%s` (or verbose `%s ?= %s`)"
     ([%show: Core.value] a)
     ([%show: Core.value] b)
+    ([%show: Core.value] (force a))
+    ([%show: Core.value] (force b))
   @@ fun () ->
   match force a, force b with
   | Universe, Universe -> ()
@@ -137,5 +139,13 @@ and unify_spine ~loc (xs : Core.value bwd) (ys : Core.value bwd) : unit =
   | Snoc (xs, x), Snoc (ys, y) ->
     unify_spine ~loc xs ys;
     unify ~loc x y
-  | _, _ -> Reporter.fatalf ~loc Elab_error "cannot unify, spine mismatched"
+  | _, _ ->
+    let left = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value xs in
+    let right = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value ys in
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "cannot unify spine `%s` and `%s`, spine mismatched"
+      left
+      right
 ;;
