@@ -97,12 +97,6 @@ let fresh_variable () : Core.value =
   Rigid (r, Emp)
 ;;
 
-let fresh_meta () : Core.value =
-  let r : Core.value = Flex (MetaVar !count, Emp) in
-  count := !count + 1;
-  r
-;;
-
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   Reporter.tracef
     ~loc
@@ -123,7 +117,7 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
     let x = fresh_variable () in
     unify ~loc (b1 x) (b2 x)
   | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
-    let x = fresh_meta () in
+    let x = eval @@ Meta.fresh Emp in
     unify ~loc (b x) t
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> solve m sp t
