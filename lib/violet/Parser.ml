@@ -67,41 +67,60 @@ and p_patom () : Surface.preterm =
     | Lexer.UNIV -> Universe
     | Lexer.IDENT s -> Var s
     | Lexer.L_PAREN ->
-      (match catch_parse_error (p_binding false) with
-       | Some binder ->
-         (* good, we got a binding, now parse the rest *)
+      (match catch_parse_error (p_multi_bindings false) with
+       | Some binders ->
+         (* good, we got bindings, now parse the rest *)
          consume Lexer.R_PAREN;
          consume Lexer.ARROW;
          let rhs = p_preterm () in
-         Pi (binder, rhs)
+         (* Expand multiple binders into nested Pi types *)
+         List.fold_right (fun binder acc -> Surface.Pi (binder, acc)) binders rhs
        | None ->
          (* 用括號包住的 term 也能當成一種 atom 使用 *)
          shift pos;
          (parens p_preterm) ())
     | Lexer.L_BRACKET ->
       shift pos;
-      let binder = bracket (p_binding true) () in
+      let binders = bracket (p_multi_bindings true) () in
       consume Lexer.ARROW;
       let rhs = p_preterm () in
-      Pi (binder, rhs)
+      (* Expand multiple binders into nested Pi types *)
+      List.fold_right (fun binder acc -> Surface.Pi (binder, acc)) binders rhs
     | tok ->
       Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
   in
   Located (Asai.Range.locate loc tm)
 
-(* name : preterm *)
-and p_binding (implicit : bool) () : Surface.preterm binder =
-  let name = ident () in
+(* name1 name2 ... : preterm *)
+and p_multi_bindings (implicit : bool) () : Surface.preterm binder list =
+  let rec collect_names acc =
+    let pos = Combinator.current_position () in
+    let tok = Combinator.next_token () in
+    match tok.value with
+    | Lexer.IDENT name -> collect_names (name :: acc)
+    | Lexer.COLON ->
+      Combinator.shift pos;
+      List.rev acc
+    | _ ->
+      Combinator.shift pos;
+      List.rev acc
+  in
+  let first_name = ident () in
+  let rest_names = collect_names [] in
   Combinator.consume Lexer.COLON;
   let tm = p_preterm () in
-  { name; bound = tm; implicit }
+  let names = first_name :: rest_names in
+  List.map (fun name -> { name; bound = tm; implicit }) names
 ;;
 
 let p_let () : Surface.top =
   let open Combinator in
   consume Lexer.LET;
   let name = ident () in
-  let bindings = many (bracket (p_binding true) <|> parens (p_binding false)) () in
+  let bindings_lists =
+    many (bracket (p_multi_bindings true) <|> parens (p_multi_bindings false)) ()
+  in
+  let bindings = List.concat bindings_lists in
   consume Lexer.COLON;
   let ty = p_preterm () in
   consume Lexer.ASSIGN;
@@ -133,7 +152,10 @@ let p_inductive () : Surface.top =
   let open Combinator in
   consume Lexer.DATA;
   let name = ident () in
-  let params = many (bracket (p_binding true) <|> parens (p_binding false)) () in
+  let params_lists =
+    many (bracket (p_multi_bindings true) <|> parens (p_multi_bindings false)) ()
+  in
+  let params = List.concat params_lists in
   consume Lexer.COLON;
   let ind_ty = p_preterm () in
   let clauses = many p_ind_clause () in

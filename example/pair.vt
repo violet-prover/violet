@@ -1,0 +1,2 @@
+data Pair (A B : U) : U
+  | pair : A -> B -> Pair A B

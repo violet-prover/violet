@@ -9,3 +9,6 @@ let eq-0 : Eq zero zero := refl
 let eq-0-implicit : Eq {Nat} zero zero := refl
 
 let eq-1 : Eq (add1 zero) (suc zero) := refl
+
+let fst (a b : Nat) : Nat := a
+let eq-fst : Eq (fst zero (suc zero)) zero := refl
