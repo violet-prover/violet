@@ -1,3 +1,0 @@
-let id {A : U} (x : A) : A := x
-
-let idU : U -> U := id {U}
