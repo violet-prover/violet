@@ -1,7 +1,7 @@
 import nat
 import pair
 
-data Eq {A : U} (x : A) : A -> U
+data Eq {A : U} (x y : A) : U
   | refl : Eq {A} x x
 
 let add1 (x : Nat) : Nat := suc x
