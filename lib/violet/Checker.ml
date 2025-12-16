@@ -78,7 +78,7 @@ let bind_constructor ~loc params ({ name; bound; _ } : Surface.pretype binder) :
   let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
-  Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local))
+  Env.S.include_singleton ([ name ], (Label (name, Bwd.Emp), `Local))
 ;;
 
 let rec check_module (file : Surface.t) : unit =
@@ -122,7 +122,7 @@ and check_top ~loc top =
     Env.S.include_singleton
       ~context_visible:`Visible
       ~context_export:`Export
-      ([ name ], (Rigid (name, Bwd.Emp), `Local));
+      ([ name ], (Label (name, Bwd.Emp), `Local));
     List.iter (bind_constructor ~loc params) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
     let typ : Surface.pretype =

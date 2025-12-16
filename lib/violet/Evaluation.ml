@@ -7,6 +7,8 @@ let rec vapp (t : value) (u : value) : value =
   | VLambda { bound = f; _ } -> f u
   | Flex (m, t) -> Flex (m, t <: u)
   | Rigid (h, t) -> Rigid (h, t <: u)
+  (* 這邊假設 type check 正確，可以套上值 *)
+  | Label (h, t) -> Label (h, t <: u)
   | v -> Reporter.fatalf Elab_error "cannot apply on %s" ([%show: value] v)
 
 and vapp_spine (t : value) : value bwd -> value = function

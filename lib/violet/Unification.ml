@@ -48,6 +48,8 @@ module PartialRenaming = struct
              "cannot complete partial renaming, there has no variable %s in context"
              x
        | Some x' -> rename_sp m renaming_map (Var x') sp)
+      (* 把 constructor 這些東西 quote 回 variable 也沒差，還是會執行成 label *)
+    | Label (x, sp) -> rename_sp m renaming_map (Var x) sp
     | VLambda { implicit; name; bound = clos } ->
       Lambda { implicit; name; bound = rename m renaming_map (clos @@ Rigid (name, Emp)) }
     | VPi ({ implicit; name; bound = a }, b) ->
@@ -106,6 +108,7 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
   match force a, force b with
   | Universe, Universe -> ()
   | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc sp1 sp2
+  | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc sp1 sp2
   | VLambda { bound = bound1; _ }, VLambda { bound = bound2; _ } ->
     let x = fresh_variable () in
     unify ~loc (bound1 x) (bound2 x)
