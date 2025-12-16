@@ -17,4 +17,3 @@ let eq-fst : Eq (fst zero (suc zero)) zero := refl
 let zz : Pair Nat Nat := pair zero zero
 let eq-p : Eq zz zz := refl
 let eq-p1 : Eq zz (pair zero zero) := refl
-let eq-p2 : Eq (pair zero zero) (pair zero zero) := refl
