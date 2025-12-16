@@ -90,6 +90,11 @@ module Core = struct
         then fprintf fmt "fun {%s} => %s" bind.name (show_term bind.bound)
         else fprintf fmt "fun %s => %s" bind.name (show_term bind.bound)]
     | Pi of typ binder * typ
+    [@printer
+      fun fmt (bind, b) ->
+        if bind.implicit
+        then fprintf fmt "∀ {%s : %s} -> %s" bind.name (show_typ bind.bound) (show_typ b)
+        else fprintf fmt "∀ (%s : %s) -> %s" bind.name (show_typ bind.bound) (show_typ b)]
     (* Meta 是使用者自己明確寫下來的那些 *)
     | Meta of metavar
     (* InsertedMeta 是 elaborator 自動塞進去的部分，所以需要紀錄 context 中的變數 *)
