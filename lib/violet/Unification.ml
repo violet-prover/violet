@@ -74,6 +74,7 @@ module PartialRenaming = struct
     let renaming_map = invert dom sp in
     let rhs = rename m renaming_map rhs in
     let solution = lams (Bwd.to_list dom) rhs in
+    Printf.printf "solution of %s is: %s\n" ([%show: metavar] m) ([%show: term] solution);
     Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () -> eval solution
   ;;
 end
