@@ -125,7 +125,6 @@ and check_top ~loc top =
       ([ name ], (Rigid (name, Bwd.Emp), `Local));
     List.iter (bind_constructor ~loc params) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
-    Meta.BoundState.set @@ Bwd.of_list (List.map (fun b -> b.name) bindings);
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
