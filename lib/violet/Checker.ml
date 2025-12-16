@@ -67,14 +67,7 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 ;;
 
-let bind_constructor ~loc params ({ name; bound; _ } : Surface.pretype binder) : unit =
-  let typ : Surface.pretype =
-    List.fold_right
-      (fun { name; bound; _ } return_ty ->
-         Surface.Pi ({ name; bound; implicit = true }, return_ty))
-      params
-      bound
-  in
+let bind_constructor ~loc ({ name; bound = typ; _ } : Surface.pretype binder) : unit =
   let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
@@ -123,7 +116,7 @@ and check_top ~loc top =
       ~context_visible:`Visible
       ~context_export:`Export
       ([ name ], (Label (name, Bwd.Emp), `Local));
-    List.iter (bind_constructor ~loc params) clauses
+    List.iter (bind_constructor ~loc) clauses
   | Surface.Let (name, bindings, result_ty, body) ->
     let typ : Surface.pretype =
       List.fold_right

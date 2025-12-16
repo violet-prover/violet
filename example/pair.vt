@@ -1,2 +1,2 @@
 data Pair (A B : U) : U
-  | pair : A -> B -> Pair A B
+  | pair : {A B : U} -> A -> B -> Pair A B
