@@ -17,6 +17,11 @@ let rec check ~loc (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
   | Hole, _ -> Meta.meta_fresh ()
   | tm, expected_typ ->
     let tm, infer_typ = infer ~loc tm in
+    Printf.printf
+      "checking `%s` has type `%s ~ %s`\n"
+      ([%show: Core.term] tm)
+      ([%show: Core.value] expected_typ)
+      ([%show: Core.value] infer_typ);
     Unification.unify ~loc expected_typ infer_typ;
     tm
 

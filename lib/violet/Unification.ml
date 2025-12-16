@@ -98,6 +98,12 @@ let fresh_variable () : Core.value =
 ;;
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
+  Printf.printf
+    "unify `%s` and `%s` (or verbose `%s ?= %s`)\n"
+    ([%show: Core.value] a)
+    ([%show: Core.value] b)
+    ([%show: Core.value] (force a))
+    ([%show: Core.value] (force b));
   Reporter.tracef
     ~loc
     "unify `%s` and `%s` (or verbose `%s ?= %s`)"
