@@ -1,14 +1,6 @@
 open Syntax.Core
 open Bwd
 
-let count = ref 0
-
-let fresh (vars : string bwd) : term =
-  let r = InsertedMeta (MetaVar !count, vars) in
-  count := !count + 1;
-  r
-;;
-
 let meta_context = Hashtbl.create ~random:true 100
 let lookup_meta (mvar : metavar) : value option = Hashtbl.find_opt meta_context mvar
 
@@ -28,7 +20,11 @@ end
 
 module BoundState = Algaeff.State.Make (Bound)
 
+let count = ref 0
+
 let meta_fresh () =
   let locals : string bwd = BoundState.get () in
-  fresh locals
+  let r = InsertedMeta (MetaVar !count, locals) in
+  count := !count + 1;
+  r
 ;;
