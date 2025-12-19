@@ -1,3 +1,13 @@
 data Nat : U
   | zero : Nat
   | suc : Nat -> Nat
+
+let motive (x : Nat) : U := Nat -> Nat
+let case-zero (y : Nat) : Nat := y
+let case-suc (x- : Nat) (add-x- : motive x-) (y : Nat) : Nat := add-x- y
+let add (x : Nat) : Nat -> Nat :=
+  Nat-elim
+    motive
+    case-zero
+    case-suc
+    x
