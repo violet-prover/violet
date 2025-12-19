@@ -240,7 +240,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
       Surface.Var name_of_the_inductive_type
     else
       (* e.g. List A, then we need to use `List A` *)
-      Surface.apply (Var name_of_the_inductive_type) (Surface.names params)
+      Surface.apply_tele (Var name_of_the_inductive_type) params
   in
   let motive_typ : Surface.pretype =
     Surface.pi
