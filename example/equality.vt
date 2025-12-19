@@ -1,19 +1,2 @@
-import nat
-import pair
-
 data Eq {A : U} (x y : A) : U
   | refl : {A : U} -> {x : A} -> Eq {A} x x
-
-let add1 (x : Nat) : Nat := suc x
-
-let eq-0 : Eq zero zero := refl
-let eq-0-implicit : Eq {Nat} zero zero := refl
-
-let eq-1 : Eq (add1 zero) (suc zero) := refl
-
-let fst (a b : Nat) : Nat := a
-let eq-fst : Eq (fst zero (suc zero)) zero := refl
-
-let zz : Pair Nat Nat := pair zero zero
-let eq-p : Eq zz zz := refl
-let eq-p1 : Eq zz (pair zero zero) := refl

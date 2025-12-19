@@ -1,0 +1,9 @@
+import nat
+import equality
+
+let add1 (x : Nat) : Nat := suc x
+
+let eq-1 : Eq (add1 zero) (suc zero) := refl
+
+let eq-0 : Eq zero zero := refl
+let eq-0-implicit : Eq {Nat} zero zero := refl
