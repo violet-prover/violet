@@ -105,6 +105,7 @@ and check_top ~loc top =
   | Surface.Data { name; params; ind_ty; clauses } ->
     Reporter.tracef ~loc "checking [inductive data type] %s" name
     @@ fun () ->
+    (* Bind type former into context and environment *)
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -121,7 +122,22 @@ and check_top ~loc top =
       ~context_visible:`Visible
       ~context_export:`Export
       ([ name ], (Label (name, Bwd.Emp), `Local));
-    List.iter (bind_constructor ~loc) clauses
+
+    (* Create each type introducer *)
+    List.iter (bind_constructor ~loc) clauses;
+
+    (* Build type eliminator (or induction principle) *)
+    (* 先從 ind_ty = U 而且沒有 params 的情況思考，那 P 就是 name -> U *)
+    let P_typ : Surface.pretype = Surface.Pi ({name; bound=Var name; implicit=false}, Surface.Universe) in
+    let lst_of_case_typ : Surface.pretype list =
+      List.map (case_typ ~loc) clauses
+    in
+    let typ = check ~loc typ Universe in
+    let typ = eval typ in
+    Context.S.include_singleton
+      ~context_visible:`Visible
+      ~context_export:`Export
+      ([ name <> "-ind" ], (typ, `Local))
   | Surface.Let (name, bindings, result_ty, body) ->
     let typ : Surface.pretype =
       List.fold_right
