@@ -19,7 +19,10 @@ module Surface = struct
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of bool * preterm * preterm
     [@printer
-      fun fmt (_, a, b) -> fprintf fmt "(%s %s)" (show_preterm a) (show_preterm b)]
+      fun fmt (implicit, a, b) ->
+        if implicit
+        then fprintf fmt "(%s {%s})" (show_preterm a) (show_preterm b)
+        else fprintf fmt "(%s %s)" (show_preterm a) (show_preterm b)]
     (* fun x => M *)
     (* so we record (x , M) *)
     | Lambda of preterm binder
