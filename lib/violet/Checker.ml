@@ -129,7 +129,7 @@ let bind_of_case
   let motives =
     List.map
       (fun { name; _ } ->
-         { name = "masala"
+         { name = "fix"
          ; bound = Surface.apply (Var motive_name) [ Var name ]
          ; implicit = false
          })
@@ -145,7 +145,9 @@ let bind_of_case
            (Var motive_name)
            [ (if List.is_empty tele
               then Var name
-              else Surface.apply (Var name) (Surface.names tele))
+              else
+                (* we apply to a telescope so each implicit/explicit call is right *)
+                Surface.apply_tele (Var name) tele)
            ])
   ; implicit = false
   }
@@ -231,9 +233,18 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
   (* Build type eliminator (or induction principle) *)
   (* 先從 ind_ty = U 沒有 params 的情況思考，那 motive 就是 D -> U *)
   let handle_name = "x" in
+  let motive_result_typ =
+    if List.is_empty params
+    then
+      (* If parameters is empty, e.g. `Bool` or `Nat`, we just use the name of inductive type *)
+      Surface.Var name_of_the_inductive_type
+    else
+      (* e.g. List A, then we need to use `List A` *)
+      Surface.apply (Var name_of_the_inductive_type) (Surface.names params)
+  in
   let motive_typ : Surface.pretype =
     Surface.pi
-      [ { name = handle_name; bound = Var name_of_the_inductive_type; implicit = false } ]
+      [ { name = handle_name; bound = motive_result_typ; implicit = false } ]
       Surface.Universe
   in
   let motive_bound_name = "P" in
@@ -253,11 +264,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
         2. P is the motive
       *)
       (Surface.pi
-         [ { name = handle_name
-           ; bound = Surface.Var name_of_the_inductive_type
-           ; implicit = false
-           }
-         ]
+         [ { name = handle_name; bound = motive_result_typ; implicit = false } ]
          (Surface.apply (Var motive_bound_name) [ Var "x" ]))
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in

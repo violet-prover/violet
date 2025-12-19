@@ -128,6 +128,12 @@ module Surface = struct
     | f, [] -> f
     | f, x :: xs -> apply (App (false, f, x)) xs
   ;;
+
+  let rec apply_tele (f : preterm) (tele : preterm binder list) : preterm =
+    match f, tele with
+    | f, [] -> f
+    | f, { name; implicit; _ } :: xs -> apply_tele (App (implicit, f, Var name)) xs
+  ;;
 end
 
 module Core = struct
