@@ -72,6 +72,28 @@ module Surface = struct
     ; imports : Trie.path list (* import libraries *)
     ; tops : top Asai.Range.located list
     }
+
+  let rec lambda (names : string list) (body : preterm) : preterm =
+    match names with
+    | [] -> body
+    | p :: ps -> Lambda { name = p; bound = lambda ps body; implicit = false }
+  ;;
+
+  let rec telescope : pretype -> pretype binder list = function
+    | Pi (bind, body) -> bind :: telescope body
+    | _ -> []
+  ;;
+
+  let rec names : pretype binder list -> preterm list = function
+    | [] -> []
+    | b :: tele -> Var b.name :: names tele
+  ;;
+
+  let rec apply (f : preterm) (args : preterm list) : preterm =
+    match f, args with
+    | f, [] -> f
+    | f, x :: xs -> apply (App (false, f, x)) xs
+  ;;
 end
 
 module Core = struct

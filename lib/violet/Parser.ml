@@ -86,6 +86,17 @@ and p_patom () : Surface.preterm =
       let rhs = p_preterm () in
       (* Expand multiple binders into nested Pi types *)
       List.fold_right (fun binder acc -> Surface.Pi (binder, acc)) binders rhs
+    | Lexer.LAMBDA ->
+      shift pos;
+      (* TODO: support typed lambda? *)
+      (* let bindings_lists =
+        many (bracket (p_multi_bindings true) <|> parens (p_multi_bindings false)) ()
+      in
+      let bindings = List.concat bindings_lists in *)
+      let names = many ident () in
+      consume Lexer.ARROW;
+      let tm = p_preterm () in
+      Surface.lambda names tm
     | tok ->
       Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
   in
