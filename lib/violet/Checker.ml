@@ -243,8 +243,15 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
   let typ : Surface.pretype =
     List.fold_right
       (fun binding return_ty -> Surface.Pi (binding, return_ty))
-      ({ name = motive_bound_name; bound = motive_typ; implicit = false }
-       :: lst_of_case_typ)
+      (List.append
+         params
+         ({ name = motive_bound_name; bound = motive_typ; implicit = false }
+          :: lst_of_case_typ))
+      (* The final part is just a (x : D) -> P x
+        where
+        1. D is the inductive data type
+        2. P is the motive
+      *)
       (Surface.pi
          [ { name = handle_name
            ; bound = Surface.Var name_of_the_inductive_type
