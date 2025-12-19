@@ -72,11 +72,57 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 ;;
 
+(* Check a surface type is really a type *)
+let check_type ~loc pretype : Core.term = check ~loc pretype Universe
+
 let bind_constructor ~loc ({ name; bound = typ; _ } : Surface.pretype binder) : unit =
   let ctor_ty = check ~loc typ Universe in
   let ctor_ty = eval ctor_ty in
   Context.S.include_singleton ([ name ], (ctor_ty, `Local));
   Env.S.include_singleton ([ name ], (Label (name, Bwd.Emp), `Local))
+;;
+
+let bind_of_case
+      ~loc
+      ind_name
+      motive_name
+      ({ name; bound = typ; _ } : Surface.pretype binder)
+  : Surface.pretype binder
+  =
+  let tele = Surface.telescope typ in
+  let recursive_points =
+    List.filter
+      (fun bind ->
+         let typ = bind.bound in
+         let typ = check_type ~loc typ in
+         let typ = eval typ in
+         match typ with
+         | IndType (head, _) -> head == ind_name
+         | _ -> false)
+      tele
+  in
+  let motives =
+    List.map
+      (fun { name; _ } ->
+         { name = ""
+         ; bound = Surface.App (true, Var motive_name, Var name)
+         ; implicit = false
+         })
+      recursive_points
+  in
+  { name = "case-" ^ name
+  ; bound =
+      List.fold_right
+        (fun bind result -> Surface.Pi (bind, result))
+        (List.append tele motives)
+        (Surface.App
+           ( false
+           , Var motive_name
+           , if List.is_empty tele
+             then Var name
+             else Surface.apply (Var name) (Surface.names tele) ))
+  ; implicit = false
+  }
 ;;
 
 let rec check_module (file : Surface.t) : unit =
@@ -103,41 +149,7 @@ let rec check_module (file : Surface.t) : unit =
 and check_top ~loc top =
   match top with
   | Surface.Data { name; params; ind_ty; clauses } ->
-    Reporter.tracef ~loc "checking [inductive data type] %s" name
-    @@ fun () ->
-    (* Bind type former into context and environment *)
-    let typ : Surface.pretype =
-      List.fold_right
-        (fun binding return_ty -> Surface.Pi (binding, return_ty))
-        params
-        ind_ty
-    in
-    let typ = check ~loc typ Universe in
-    let typ = eval typ in
-    Context.S.include_singleton
-      ~context_visible:`Visible
-      ~context_export:`Export
-      ([ name ], (typ, `Local));
-    Env.S.include_singleton
-      ~context_visible:`Visible
-      ~context_export:`Export
-      ([ name ], (Label (name, Bwd.Emp), `Local));
-
-    (* Create each type introducer *)
-    List.iter (bind_constructor ~loc) clauses;
-
-    (* Build type eliminator (or induction principle) *)
-    (* 先從 ind_ty = U 而且沒有 params 的情況思考，那 P 就是 name -> U *)
-    let P_typ : Surface.pretype = Surface.Pi ({name; bound=Var name; implicit=false}, Surface.Universe) in
-    let lst_of_case_typ : Surface.pretype list =
-      List.map (case_typ ~loc) clauses
-    in
-    let typ = check ~loc typ Universe in
-    let typ = eval typ in
-    Context.S.include_singleton
-      ~context_visible:`Visible
-      ~context_export:`Export
-      ([ name <> "-ind" ], (typ, `Local))
+    handle_inductive_type ~loc name params ind_ty clauses
   | Surface.Let (name, bindings, result_ty, body) ->
     let typ : Surface.pretype =
       List.fold_right
@@ -147,7 +159,7 @@ and check_top ~loc top =
     in
     Reporter.tracef ~loc "checking [top let] %s : %s" name ([%show: Surface.pretype] typ)
     @@ fun () ->
-    let typ = check ~loc typ Universe in
+    let typ = check_type ~loc typ in
     let typ = eval typ in
     let term : Surface.preterm =
       List.fold_right
@@ -166,4 +178,59 @@ and check_top ~loc top =
       ~context_export:`Export
       ([ name ], Env.S.section [] @@ fun () -> eval term, `Local);
     ()
+
+and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses =
+  Reporter.tracef ~loc "checking [inductive data type] %s" name_of_the_inductive_type
+  @@ fun () ->
+  (* Bind type former into context and environment *)
+  let typ : Surface.pretype =
+    List.fold_right
+      (fun binding return_ty -> Surface.Pi (binding, return_ty))
+      params
+      ind_ty
+  in
+  let typ = check_type ~loc typ in
+  let typ = eval typ in
+  Context.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ name_of_the_inductive_type ], (typ, `Local));
+  Env.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ( [ name_of_the_inductive_type ]
+    , (IndType (name_of_the_inductive_type, Bwd.Emp), `Local) );
+  (* Create each type introducer *)
+  List.iter (bind_constructor ~loc) clauses;
+  (* Build type eliminator (or induction principle) *)
+  (* 先從 ind_ty = U 沒有 params 的情況思考，那 motive 就是 D -> U *)
+  let handle_name = "x" in
+  let motive_typ : Surface.pretype =
+    Surface.Pi
+      ( { name = handle_name; bound = Var name_of_the_inductive_type; implicit = false }
+      , Surface.Universe )
+  in
+  let motive_bound_name = "P" in
+  let lst_of_case_typ : Surface.pretype binder list =
+    List.map (bind_of_case ~loc name_of_the_inductive_type motive_bound_name) clauses
+  in
+  let typ : Surface.pretype =
+    List.fold_right
+      (fun binding return_ty -> Surface.Pi (binding, return_ty))
+      ({ name = motive_bound_name; bound = motive_typ; implicit = false }
+       :: lst_of_case_typ)
+      (Surface.Pi
+         ( { name = handle_name
+           ; bound = Surface.Var name_of_the_inductive_type
+           ; implicit = false
+           }
+         , Surface.apply (Var motive_bound_name) [ Var "x" ] ))
+  in
+  Printf.printf "%s\n" ([%show: Surface.pretype] typ);
+  let typ = check ~loc typ Universe in
+  let typ = eval typ in
+  Context.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ name_of_the_inductive_type ^ "-elim" ], (typ, `Local))
 ;;
