@@ -84,6 +84,12 @@ module Surface = struct
     | _ -> []
   ;;
 
+  let rec pi (tele : pretype binder list) (result : pretype) : pretype =
+    match tele with
+    | [] -> result
+    | b :: bs -> Pi (b, pi bs result)
+  ;;
+
   let rec names : pretype binder list -> preterm list = function
     | [] -> []
     | b :: tele -> Var b.name :: names tele

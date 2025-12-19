@@ -73,8 +73,7 @@ and p_patom () : Surface.preterm =
          consume Lexer.R_PAREN;
          consume Lexer.ARROW;
          let rhs = p_preterm () in
-         (* Expand multiple binders into nested Pi types *)
-         List.fold_right (fun binder acc -> Surface.Pi (binder, acc)) binders rhs
+         Surface.pi binders rhs
        | None ->
          (* 用括號包住的 term 也能當成一種 atom 使用 *)
          shift pos;
@@ -84,19 +83,7 @@ and p_patom () : Surface.preterm =
       let binders = bracket (p_multi_bindings true) () in
       consume Lexer.ARROW;
       let rhs = p_preterm () in
-      (* Expand multiple binders into nested Pi types *)
-      List.fold_right (fun binder acc -> Surface.Pi (binder, acc)) binders rhs
-    | Lexer.LAMBDA ->
-      shift pos;
-      (* TODO: support typed lambda? *)
-      (* let bindings_lists =
-        many (bracket (p_multi_bindings true) <|> parens (p_multi_bindings false)) ()
-      in
-      let bindings = List.concat bindings_lists in *)
-      let names = many ident () in
-      consume Lexer.ARROW;
-      let tm = p_preterm () in
-      Surface.lambda names tm
+      Surface.pi binders rhs
     | tok ->
       Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
   in
