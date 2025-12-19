@@ -117,7 +117,7 @@ let bind_of_case
     List.map
       (fun { name; _ } ->
          { name = "masala"
-         ; bound = Surface.App (false, Var motive_name, Var name)
+         ; bound = Surface.apply (Var motive_name) [ Var name ]
          ; implicit = false
          })
       recursive_points
@@ -128,12 +128,12 @@ let bind_of_case
       List.fold_right
         (fun bind result -> Surface.Pi (bind, result))
         (List.append tele motives)
-        (Surface.App
-           ( false
-           , Var motive_name
-           , if List.is_empty tele
-             then Var name
-             else Surface.apply (Var name) (Surface.names tele) ))
+        (Surface.apply
+           (Var motive_name)
+           [ (if List.is_empty tele
+              then Var name
+              else Surface.apply (Var name) (Surface.names tele))
+           ])
   ; implicit = false
   }
 ;;
