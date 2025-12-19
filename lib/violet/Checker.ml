@@ -90,6 +90,18 @@ let bind_of_case
   : Surface.pretype binder
   =
   let tele = Surface.telescope typ in
+  (* Rename _ to generated name, so we can see the difference *)
+  let counter = ref (-1) in
+  let tele =
+    List.map
+      (fun bind ->
+         incr counter;
+         { bind with
+           name = (if bind.name = "_" then "x" ^ string_of_int !counter else bind.name)
+         })
+      tele
+  in
+  (* If the dependencies of the constructor are the inductive type itself, find out and create recursive motives *)
   let recursive_points =
     List.filter
       (fun bind ->
@@ -104,12 +116,13 @@ let bind_of_case
   let motives =
     List.map
       (fun { name; _ } ->
-         { name = ""
-         ; bound = Surface.App (true, Var motive_name, Var name)
+         { name = "masala"
+         ; bound = Surface.App (false, Var motive_name, Var name)
          ; implicit = false
          })
       recursive_points
   in
+  (* Make the current case binder *)
   { name = "case-" ^ name
   ; bound =
       List.fold_right
@@ -226,11 +239,13 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
            }
          , Surface.apply (Var motive_bound_name) [ Var "x" ] ))
   in
-  Printf.printf "%s\n" ([%show: Surface.pretype] typ);
+  let eliminator_name = name_of_the_inductive_type ^ "-elim" in
+  Printf.printf "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
   let typ = check ~loc typ Universe in
   let typ = eval typ in
+  (* TODO: insert computation of eliminator into Environment *)
   Context.S.include_singleton
     ~context_visible:`Visible
     ~context_export:`Export
-    ([ name_of_the_inductive_type ^ "-elim" ], (typ, `Local))
+    ([ eliminator_name ], (typ, `Local))
 ;;
