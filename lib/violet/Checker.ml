@@ -233,18 +233,13 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
   (* Build type eliminator (or induction principle) *)
   (* 先從 ind_ty = U 沒有 params 的情況思考，那 motive 就是 D -> U *)
   let handle_name = "x" in
-  let motive_result_typ =
-    if List.is_empty params
-    then
-      (* If parameters is empty, e.g. `Bool` or `Nat`, we just use the name of inductive type *)
-      Surface.Var name_of_the_inductive_type
-    else
-      (* e.g. List A, then we need to use `List A` *)
-      Surface.apply_tele (Var name_of_the_inductive_type) params
-  in
+  let ind_deps = List.map (fun b -> { b with implicit = true }) params in
+  (* If parameters is empty, e.g. `Nat`, then we use `Nat`
+     or we have parameters, e.g. List A, then we use `List A` *)
+  let ind_typ = Surface.apply_tele (Var name_of_the_inductive_type) params in
   let motive_typ : Surface.pretype =
     Surface.pi
-      [ { name = handle_name; bound = motive_result_typ; implicit = false } ]
+      [ { name = handle_name; bound = ind_typ; implicit = false } ]
       Surface.Universe
   in
   let motive_bound_name = "P" in
@@ -255,7 +250,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
     List.fold_right
       (fun binding return_ty -> Surface.Pi (binding, return_ty))
       (List.append
-         params
+         ind_deps
          ({ name = motive_bound_name; bound = motive_typ; implicit = false }
           :: lst_of_case_typ))
       (* The final part is just a (x : D) -> P x
@@ -264,7 +259,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
         2. P is the motive
       *)
       (Surface.pi
-         [ { name = handle_name; bound = motive_result_typ; implicit = false } ]
+         [ { name = handle_name; bound = ind_typ; implicit = false } ]
          (Surface.apply (Var motive_bound_name) [ Var "x" ]))
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
