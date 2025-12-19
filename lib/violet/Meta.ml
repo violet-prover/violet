@@ -25,6 +25,6 @@ let count = ref 0
 let meta_fresh () =
   let locals : string bwd = BoundState.get () in
   let r = InsertedMeta (MetaVar !count, locals) in
-  count := !count + 1;
+  incr count;
   r
 ;;
