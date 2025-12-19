@@ -33,8 +33,7 @@ let rec p_preterm () : Surface.preterm = Combinator.infix partial_arrow spine ()
 
 and partial_arrow () : Surface.preterm -> Surface.preterm -> Surface.preterm =
   Combinator.consume Lexer.ARROW;
-  fun (a : Surface.preterm) (b : Surface.preterm) ->
-    Pi ({ name = "_"; bound = a; implicit = false }, b)
+  fun a b -> Pi ({ name = "_"; bound = a; implicit = false }, b)
 
 and spine () : Surface.preterm =
   let a = p_patom () in
@@ -84,6 +83,22 @@ and p_patom () : Surface.preterm =
       consume Lexer.ARROW;
       let rhs = p_preterm () in
       Surface.pi binders rhs
+    | Lexer.LAMBDA ->
+      shift pos;
+      consume Lexer.LAMBDA;
+      (match catch_parse_error (many1 ident) with
+       | Some names ->
+         consume Lexer.ARROW;
+         let tm = p_preterm () in
+         Surface.lambda names tm
+       | None ->
+         let bindings_lists =
+           many (bracket (p_multi_bindings true) <|> parens (p_multi_bindings false)) ()
+         in
+         let bindings = List.concat bindings_lists in
+         consume Lexer.ARROW;
+         let tm = p_preterm () in
+         Surface.typed_lambda bindings tm)
     | tok ->
       Reporter.fatalf ~loc Parse_error "unexpected token %s" ([%show: Lexer.token] tok)
   in

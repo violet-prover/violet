@@ -52,6 +52,17 @@ let rec eval (tm : term) : value =
             Env.S.include_singleton ([ name ], (v, `Local));
             eval bound)
       }
+  | TypedLambda ({ name; implicit; _ }, body) ->
+    VLambda
+      { name
+      ; implicit
+      ; bound =
+          (fun v ->
+            Env.S.section []
+            @@ fun () ->
+            Env.S.include_singleton ([ name ], (v, `Local));
+            eval body)
+      }
   | Meta m -> Meta.eval m
   | InsertedMeta (m, bounds) -> vapp_bounds (Meta.eval m) bounds
 

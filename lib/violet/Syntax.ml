@@ -20,13 +20,34 @@ module Surface = struct
     | App of bool * preterm * preterm
     [@printer
       fun fmt (_, a, b) -> fprintf fmt "(%s %s)" (show_preterm a) (show_preterm b)]
-    (* fun x => x *)
+    (* fun x => M *)
+    (* so we record (x , M) *)
     | Lambda of preterm binder
     [@printer
       fun fmt bind ->
         if bind.implicit
         then fprintf fmt "fun {%s} => %s" bind.name (show_preterm bind.bound)
         else fprintf fmt "fun %s => %s" bind.name (show_preterm bind.bound)]
+    (* fun (x : T) => M *)
+    (* so we record (x , T , M) *)
+    | TypedLambda of pretype binder * preterm
+    [@printer
+      fun fmt (bind, body) ->
+        if bind.implicit
+        then
+          fprintf
+            fmt
+            "fun {%s : %s} => %s"
+            bind.name
+            (show_pretype bind.bound)
+            (show_preterm body)
+        else
+          fprintf
+            fmt
+            "fun (%s : %s) => %s"
+            bind.name
+            (show_pretype bind.bound)
+            (show_preterm body)]
     | Pi of pretype binder * pretype
     [@printer
       fun fmt (bind, b) ->
@@ -79,6 +100,12 @@ module Surface = struct
     | p :: ps -> Lambda { name = p; bound = lambda ps body; implicit = false }
   ;;
 
+  let rec typed_lambda (binds : pretype binder list) (body : preterm) : preterm =
+    match binds with
+    | [] -> body
+    | b :: bs -> TypedLambda (b, typed_lambda bs body)
+  ;;
+
   let rec telescope : pretype -> pretype binder list = function
     | Pi (bind, body) -> bind :: telescope body
     | _ -> []
@@ -117,6 +144,24 @@ module Core = struct
         if bind.implicit
         then fprintf fmt "fun {%s} => %s" bind.name (show_term bind.bound)
         else fprintf fmt "fun %s => %s" bind.name (show_term bind.bound)]
+    | TypedLambda of typ binder * term
+    [@printer
+      fun fmt (bind, body) ->
+        if bind.implicit
+        then
+          fprintf
+            fmt
+            "fun {%s : %s} => %s"
+            bind.name
+            (show_typ bind.bound)
+            (show_term body)
+        else
+          fprintf
+            fmt
+            "fun (%s : %s) => %s"
+            bind.name
+            (show_typ bind.bound)
+            (show_term body)]
     | Pi of typ binder * typ
     [@printer
       fun fmt (bind, b) ->

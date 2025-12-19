@@ -2,10 +2,9 @@ data Bool : U
   | true : Bool
   | false : Bool
 
-let motive (x : Bool) : U := Bool
 let not (x : Bool) : Bool :=
   Bool-elim
-    motive
+    (\(x : Bool) -> Bool)
     false
     true
     x

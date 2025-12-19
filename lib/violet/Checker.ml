@@ -47,18 +47,22 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
     (match f_typ with
      | VPi ({ implicit; name = _; bound = a }, b) ->
        if is_implicit == implicit
-       then (
+       then begin
          let arg' = check ~loc arg a in
-         App (f', arg'), b @@ eval arg')
+         App (f', arg'), b @@ eval arg'
+       end
        else if implicit
-       then infer ~loc @@ App (false, App (implicit, f, Hole), arg)
-       else
+       then begin
+         infer ~loc @@ App (false, App (implicit, f, Hole), arg)
+       end
+       else begin
          Reporter.fatalf
            ~loc
            Elab_error
            "Bad apply %s %s"
            ([%show: Surface.preterm] f)
            ([%show: Surface.preterm] arg)
+       end
      | ty ->
        Reporter.fatalf
          ~loc
@@ -69,11 +73,20 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
     let ty = eval @@ Meta.meta_fresh () in
     let t = Meta.meta_fresh () in
     t, ty
+  | TypedLambda ({ name; bound = ty; implicit }, body) ->
+    Env.S.section []
+    @@ fun () ->
+    Env.S.include_singleton ([ name ], (Rigid (name, Bwd.Emp), `Local));
+    Context.S.section []
+    @@ fun () ->
+    let ty = check_type ~loc ty in
+    Context.S.include_singleton ([ name ], (eval ty, `Local));
+    let body, ty_of_body = infer ~loc body in
+    ( Core.TypedLambda ({ name; bound = ty; implicit }, body)
+    , Core.VPi ({ name; bound = eval ty; implicit }, fun _ -> ty_of_body) )
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
-;;
 
-(* Check a surface type is really a type *)
-let check_type ~loc pretype : Core.term = check ~loc pretype Universe
+and check_type ~loc pretype : Core.term = check ~loc pretype Universe
 
 let bind_constructor ~loc ({ name; bound = typ; _ } : Surface.pretype binder) : unit =
   let ctor_ty = check ~loc typ Universe in
