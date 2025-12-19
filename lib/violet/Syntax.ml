@@ -107,6 +107,7 @@ module Surface = struct
   ;;
 
   let rec telescope : pretype -> pretype binder list = function
+    | Located { value = p; _ } -> telescope p
     | Pi (bind, body) -> bind :: telescope body
     | _ -> []
   ;;
