@@ -1,7 +1,6 @@
 import nat
 import list
 import vec
-import pair
 import equality
 
 # whatever
