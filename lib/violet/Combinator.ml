@@ -62,6 +62,11 @@ let rec many (p : unit -> 'a) () : 'a list =
   | Some x -> x :: many p ()
 ;;
 
+let many1 (p : unit -> 'a) () : 'a list =
+  let first = p () in
+  first :: many p ()
+;;
+
 let ( <|> ) (p1 : unit -> 'a) (p2 : unit -> 'a) () : 'a =
   match catch_parse_error p1 with
   | None -> p2 ()
