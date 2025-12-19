@@ -232,9 +232,9 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
   (* 先從 ind_ty = U 沒有 params 的情況思考，那 motive 就是 D -> U *)
   let handle_name = "x" in
   let motive_typ : Surface.pretype =
-    Surface.Pi
-      ( { name = handle_name; bound = Var name_of_the_inductive_type; implicit = false }
-      , Surface.Universe )
+    Surface.pi
+      [ { name = handle_name; bound = Var name_of_the_inductive_type; implicit = false } ]
+      Surface.Universe
   in
   let motive_bound_name = "P" in
   let lst_of_case_typ : Surface.pretype binder list =
@@ -245,12 +245,13 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
       (fun binding return_ty -> Surface.Pi (binding, return_ty))
       ({ name = motive_bound_name; bound = motive_typ; implicit = false }
        :: lst_of_case_typ)
-      (Surface.Pi
-         ( { name = handle_name
+      (Surface.pi
+         [ { name = handle_name
            ; bound = Surface.Var name_of_the_inductive_type
            ; implicit = false
            }
-         , Surface.apply (Var motive_bound_name) [ Var "x" ] ))
+         ]
+         (Surface.apply (Var motive_bound_name) [ Var "x" ]))
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
   Printf.printf "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
