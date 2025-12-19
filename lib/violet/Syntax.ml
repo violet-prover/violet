@@ -136,7 +136,26 @@ module Core = struct
                     if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
                   | _ -> show_value v)
                 @@ Bwd.to_list spine))]
-      (* label 是 constructor 或是 data type 之類的東西，跟 rigid 要分開 *)
+      (* indtype 是 inductive type 在 environment 裡面的表示方式，跟 rigid 要分開 *)
+    | IndType of string * value bwd
+    [@printer
+      fun fmt (head, spine) ->
+        if Bwd.is_empty spine
+        then fprintf fmt "%s" head
+        else
+          fprintf
+            fmt
+            "%s %s"
+            head
+            (String.concat
+               " "
+               (List.map (fun v ->
+                  match v with
+                  | Label (_, sp) ->
+                    if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
+                  | _ -> show_value v)
+                @@ Bwd.to_list spine))]
+      (* label 是 constructor 的表示方式，跟 rigid 要分開 *)
     | Label of string * value bwd
     [@printer
       fun fmt (head, spine) ->
