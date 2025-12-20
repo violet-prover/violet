@@ -260,7 +260,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
       *)
       (Surface.pi
          [ { name = handle_name; bound = ind_typ; implicit = false } ]
-         (Surface.apply (Var motive_bound_name) [ Var "x" ]))
+         (Surface.apply (Var motive_bound_name) [ Var handle_name ]))
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
   Eio.traceln "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
