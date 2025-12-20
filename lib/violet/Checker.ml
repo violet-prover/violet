@@ -17,7 +17,7 @@ let rec check ~loc (term : Surface.preterm) (typ : Core.value_ty) : Core.term =
   | Hole, _ -> Meta.meta_fresh ()
   | tm, expected_typ ->
     let tm, infer_typ = infer ~loc tm in
-    Printf.printf
+    Eio.traceln
       "checking `%s` has type `%s ~ %s`\n"
       ([%show: Core.term] tm)
       ([%show: Core.value] expected_typ)
@@ -263,7 +263,7 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
          (Surface.apply (Var motive_bound_name) [ Var "x" ]))
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
-  Printf.printf "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
+  Eio.traceln "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
   let typ = check ~loc typ Universe in
   let typ = eval typ in
   (* TODO: insert computation of eliminator into Environment *)

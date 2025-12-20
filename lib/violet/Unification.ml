@@ -77,7 +77,7 @@ module PartialRenaming = struct
     let renaming_map = invert dom sp in
     let rhs = rename m renaming_map rhs in
     let solution = lams (Bwd.to_list dom) rhs in
-    Printf.printf "solution of %s is: %s\n" ([%show: metavar] m) ([%show: term] solution);
+    Eio.traceln "solution of %s is: %s\n" ([%show: metavar] m) ([%show: term] solution);
     Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () -> eval solution
   ;;
 end
@@ -101,7 +101,8 @@ let fresh_variable () : Core.value =
 ;;
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
-  Printf.printf
+  Eio.traceln "!!!here";
+  Eio.traceln
     "unify `%s` and `%s` (or verbose `%s ?= %s`)\n"
     ([%show: Core.value] a)
     ([%show: Core.value] b)
