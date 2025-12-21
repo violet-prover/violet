@@ -1,7 +1,0 @@
-import nat
-import pair
-
-data Eq {A : U} (x y : A) : U
-  | refl : {A : U} -> {x : A} -> Eq {A} x x
-
-let eq-failed : Eq (pair zero zero) (pair zero zero) := refl

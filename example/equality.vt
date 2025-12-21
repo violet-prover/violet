@@ -1,2 +1,2 @@
-data Eq {A : U} (x y : A) : U
-  | refl : {A : U} -> {x : A} -> Eq {A} x x
+data Id {A : U} : A -> A -> U
+  | refl : {x : A} -> Id x x
