@@ -101,7 +101,6 @@ let fresh_variable () : Core.value =
 ;;
 
 let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
-  Eio.traceln "!!!here";
   Eio.traceln
     "unify `%s` and `%s` (or verbose `%s ?= %s`)\n"
     ([%show: Core.value] a)
