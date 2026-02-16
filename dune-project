@@ -32,7 +32,6 @@
   eio
   eio_main
   asai
-  mugen
   algaeff
   yuujinchou
   bwd)
