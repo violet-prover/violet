@@ -80,14 +80,16 @@ module Surface = struct
   type top =
     | Let of string * pretype binder list * pretype * preterm
     (*
-       data <name> : <ind_ty> where
-         <clauses>
+       data <name> <params> : <deps> <ind_ty> where
+         <ctors>
     *)
     | Data of
-        { name : string
+        { name : string (* parameters is a list of bindings that will be opaque *)
         ; params : pretype binder list
+          (* dependencies is a list of bindings that can be concrete *)
+        ; deps : pretype binder list (* ind_ty should always be U *)
         ; ind_ty : pretype
-        ; clauses : pretype binder list
+        ; ctors : pretype binder list
         }
   [@@deriving show]
 
@@ -115,10 +117,22 @@ module Surface = struct
     | _ -> []
   ;;
 
+  let rec codomain : pretype -> pretype = function
+    | Located { value = p; _ } -> codomain p
+    | Pi (_, body) -> codomain body
+    | t -> t
+  ;;
+
   let rec pi (tele : pretype binder list) (result : pretype) : pretype =
     match tele with
     | [] -> result
     | b :: bs -> Pi (b, pi bs result)
+  ;;
+
+  let rec applied_spine (t : preterm) : preterm list =
+    match t with
+    | App (_, f, arg) -> applied_spine f @ [ arg ]
+    | _ -> []
   ;;
 
   let rec apply (f : preterm) (args : preterm list) : preterm =
@@ -265,3 +279,12 @@ module Core = struct
 
   and value_ty = value
 end
+
+let%expect_test "applied spine" =
+  let result =
+    Surface.applied_spine
+      (Surface.apply (Surface.Var "a") [ Surface.Var "b"; Surface.Var "c" ])
+  in
+  print_string @@ [%show: Surface.preterm list] result;
+  [%expect {| [b; c] |}]
+;;

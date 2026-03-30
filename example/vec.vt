@@ -1,6 +1,6 @@
 import nat
 
-data Vec (A : U) (n : Nat) : U
+data Vec (A : U) : Nat -> U
   | nil : {A : U} -> Vec A zero
   | cons : {A : U} -> {n : Nat} -> A -> Vec A n -> Vec A (suc n)
 

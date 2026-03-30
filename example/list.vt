@@ -1,8 +1,8 @@
 import nat
 
 data List (A : U) : U
-  | nil : {A : U} -> List A
-  | cons : {A : U} -> A -> List A -> List A
+  | nil : List A
+  | cons : A -> List A -> List A
 
 let n : List Nat := nil
 let c : List Nat := cons zero nil

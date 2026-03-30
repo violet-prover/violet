@@ -4,7 +4,7 @@ data Bool : U
 
 let not (x : Bool) : Bool :=
   Bool-elim
+    x
     (\(x : Bool) -> Bool)
     false
     true
-    x

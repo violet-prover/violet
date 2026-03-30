@@ -1,2 +1,2 @@
-data Id {A : U} : A -> A -> U
-  | refl : {x : A} -> Id x x
+data Id {A : U} (x : A) : A -> U
+  | refl : Id x x

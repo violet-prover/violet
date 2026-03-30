@@ -7,7 +7,7 @@ let case-zero (y : Nat) : Nat := y
 let case-suc (x- : Nat) (add-x- : motive x-) (y : Nat) : Nat := suc (add-x- y)
 let add (x : Nat) : Nat -> Nat :=
   Nat-elim
+    x
     motive
     case-zero
     case-suc
-    x

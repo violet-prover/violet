@@ -170,9 +170,10 @@ let p_inductive () : Surface.top =
   in
   let params = List.concat params_lists in
   consume Lexer.COLON;
-  let ind_ty = p_preterm () in
-  let clauses = many p_ind_clause () in
-  Data { name; params; ind_ty; clauses }
+  let ret = p_preterm () in
+  let ctors = many p_ind_clause () in
+  Data
+    { name; params; deps = Surface.telescope ret; ind_ty = Surface.codomain ret; ctors }
 ;;
 
 let p_top () : Surface.top Asai.Range.located =

@@ -176,8 +176,8 @@ let rec check_module (file : Surface.t) : unit =
 
 and check_top ~loc top =
   match top with
-  | Surface.Data { name; params; ind_ty; clauses } ->
-    handle_inductive_type ~loc name params ind_ty clauses
+  | Surface.Data { name; params; deps; ind_ty; ctors } ->
+    handle_inductive_type ~loc name params deps ind_ty ctors
   | Surface.Let (name, bindings, result_ty, body) ->
     let typ : Surface.pretype =
       List.fold_right
@@ -207,7 +207,8 @@ and check_top ~loc top =
       ([ name ], Env.S.section [] @@ fun () -> eval term, `Local);
     ()
 
-and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses =
+and handle_inductive_type ~loc name_of_the_inductive_type params deps ind_ty ctors =
+  let _ = deps in
   Reporter.tracef ~loc "checking [inductive data type] %s" name_of_the_inductive_type
   @@ fun () ->
   (* Bind type former into context and environment *)
@@ -229,38 +230,10 @@ and handle_inductive_type ~loc name_of_the_inductive_type params ind_ty clauses 
     ( [ name_of_the_inductive_type ]
     , (IndType (name_of_the_inductive_type, Bwd.Emp), `Local) );
   (* Create each type introducer *)
-  List.iter (bind_constructor ~loc) clauses;
-  (* Build type eliminator (or induction principle) *)
-  (* 先從 ind_ty = U 沒有 params 的情況思考，那 motive 就是 D -> U *)
-  let handle_name = "x" in
-  let ind_deps = List.map (fun b -> { b with implicit = true }) params in
-  (* If parameters is empty, e.g. `Nat`, then we use `Nat`
-     or we have parameters, e.g. List A, then we use `List A` *)
-  let ind_typ = Surface.apply_tele (Var name_of_the_inductive_type) params in
-  let motive_typ : Surface.pretype =
-    Surface.pi
-      [ { name = handle_name; bound = ind_typ; implicit = false } ]
-      Surface.Universe
-  in
-  let motive_bound_name = "P" in
-  let lst_of_case_typ : Surface.pretype binder list =
-    List.map (bind_of_case ~loc name_of_the_inductive_type motive_bound_name) clauses
-  in
+  List.iter (bind_constructor ~loc) ctors;
+  (* Compute eliminator type of the inductive data type definition *)
   let typ : Surface.pretype =
-    List.fold_right
-      (fun binding return_ty -> Surface.Pi (binding, return_ty))
-      (List.append
-         ind_deps
-         ({ name = motive_bound_name; bound = motive_typ; implicit = false }
-          :: lst_of_case_typ))
-      (* The final part is just a (x : D) -> P x
-        where
-        1. D is the inductive data type
-        2. P is the motive
-      *)
-      (Surface.pi
-         [ { name = handle_name; bound = ind_typ; implicit = false } ]
-         (Surface.apply (Var motive_bound_name) [ Var handle_name ]))
+    ElabData.eliminator_type ~name:name_of_the_inductive_type ~params ~deps ~ind_ty ctors
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
   Eio.traceln "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
