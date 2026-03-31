@@ -33,7 +33,7 @@ let eliminator_result_type ~name ~params ~deps ~ind_ty =
   let _ = ind_ty in
   let good_deps = rename_tele deps in
   let t = Surface.apply_tele (Surface.Var "motive") good_deps in
-  Surface.apply t [Surface.Var "target"]
+  Surface.apply t [ Surface.Var "target" ]
 ;;
 
 let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
@@ -49,15 +49,15 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
   let patch_delta delta =
     List.concat_map
       (fun bind ->
-        if head bind.bound = Surface.Var name
-        then
-          [ bind
-          ; { name = "ih-" ^ bind.name
-            ; bound = Surface.apply (Surface.Var "motive") [ Surface.Var bind.name ]
-            ; implicit = false
-            }
-          ]
-        else [ bind ])
+         if head bind.bound = Surface.Var name
+         then
+           [ bind
+           ; { name = "ih-" ^ bind.name
+             ; bound = Surface.apply (Surface.Var "motive") [ Surface.Var bind.name ]
+             ; implicit = false
+             }
+           ]
+         else [ bind ])
       delta
   in
   let delta = Surface.telescope ctor.bound in

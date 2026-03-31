@@ -217,11 +217,8 @@ and handle_inductive_type ~loc name_of_the_inductive_type params deps ind_ty cto
   let typ : Surface.pretype =
     List.fold_right
       (fun binding return_ty -> Surface.Pi (binding, return_ty))
-(
-
-  
-      params @ deps
-)      ind_ty
+      (params @ deps)
+      ind_ty
   in
   let typ = check_type ~loc typ in
   let typ = eval typ in
