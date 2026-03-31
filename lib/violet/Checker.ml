@@ -67,7 +67,9 @@ and infer ~loc : Surface.preterm -> Core.term * Core.value_ty = function
        Reporter.fatalf
          ~loc
          Type_error
-         "cannot apply a value to something with type `%s`"
+         "cannot apply a value `%s` to `(%s) : %s`"
+         ([%show: Surface.preterm] arg)
+         ([%show: Core.term] f')
          ([%show: Core.value_ty] ty))
   | Hole ->
     let ty = eval @@ Meta.meta_fresh () in
@@ -215,8 +217,11 @@ and handle_inductive_type ~loc name_of_the_inductive_type params deps ind_ty cto
   let typ : Surface.pretype =
     List.fold_right
       (fun binding return_ty -> Surface.Pi (binding, return_ty))
-      params
-      ind_ty
+(
+
+  
+      params @ deps
+)      ind_ty
   in
   let typ = check_type ~loc typ in
   let typ = eval typ in
