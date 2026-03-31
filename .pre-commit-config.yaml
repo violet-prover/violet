@@ -1,8 +1,13 @@
 repos:
   - repo: local
     hooks:
-      - id: dune-fmt
+      - id: format ocaml files
         name: dune fmt
         entry: dune fmt
+        language: system
+        pass_filenames: false
+      - id: run ocaml test
+        name: dune test
+        entry: dune test
         language: system
         pass_filenames: false
