@@ -320,10 +320,6 @@ and handle_inductive_type
     ~context_visible:`Visible
     ~context_export:`Export
     ([ eliminator_name ], (typ_val, `Constructor));
-  Env.S.include_singleton
-    ~context_visible:`Visible
-    ~context_export:`Export
-    ([ eliminator_name ], (Var (eliminator_name, Bwd.Emp), `Constructor));
   let reducer =
     ElabData.build_elim_reducer
       ~ind_name:name_of_the_inductive_type
@@ -332,5 +328,9 @@ and handle_inductive_type
       ~deps
       ctors
   in
-  Env.register_elim_reducer eliminator_name reducer
+  let elim_value = Core.Elim ({ elim_name = eliminator_name; reducer }, Bwd.Emp) in
+  Env.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ eliminator_name ], (elim_value, `Constructor))
 ;;

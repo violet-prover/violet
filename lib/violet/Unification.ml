@@ -52,6 +52,7 @@ module PartialRenaming = struct
     | Var (x, sp) -> rename_sp m pr (Var x) sp
     | Label (x, sp) -> rename_sp m pr (Var x) sp
     | IndType (x, sp) -> rename_sp m pr (Var x) sp
+    | Elim ({ elim_name; _ }, sp) -> rename_sp m pr (Var elim_name) sp
     | VLambda { name; bound = clos; implicit } ->
       Hashtbl.add pr.ren pr.cod pr.dom;
       let body =
@@ -139,6 +140,8 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
   | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 ->
     unify_spine ~loc lvl sp1 sp2
   | IndType (h1, sp1), IndType (h2, sp2) when String.equal h1 h2 ->
+    unify_spine ~loc lvl sp1 sp2
+  | Elim (h1, sp1), Elim (h2, sp2) when String.equal h1.elim_name h2.elim_name ->
     unify_spine ~loc lvl sp1 sp2
   | VLambda { bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (lvl, Emp) in

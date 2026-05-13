@@ -289,6 +289,27 @@ module Core = struct
                     if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
                   | _ -> show_value v)
                 @@ Bwd.to_list spine))]
+      (* Elim 是一個 inductive type 的 eliminator。head.reducer 帶著 ι-rule。
+         Evaluation.force_head 在 spine 足夠時呼叫 reducer 看能不能 ι-reduce；
+         否則 Elim 維持像個帶 spine 的 neutral head。 *)
+    | Elim of elim_head * value bwd
+    [@printer
+      fun fmt ({ elim_name = head; _ }, spine) ->
+        if Bwd.is_empty spine
+        then fprintf fmt "%s" head
+        else
+          fprintf
+            fmt
+            "%s %s"
+            head
+            (String.concat
+               " "
+               (List.map (fun v ->
+                  match v with
+                  | Elim (_, sp) | Var (_, sp) | Label (_, sp) | IndType (_, sp) ->
+                    if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
+                  | _ -> show_value v)
+                @@ Bwd.to_list spine))]
     | VLambda of (value -> value) binder [@printer fun fmt _ -> fprintf fmt "<closure>"]
     | VPi of value_ty binder * (value -> value)
     [@printer
@@ -300,6 +321,11 @@ module Core = struct
         else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
   [@@deriving show]
+
+  and elim_head =
+    { elim_name : string
+    ; reducer : (value bwd -> value option[@opaque])
+    }
 
   and value_ty = value
 

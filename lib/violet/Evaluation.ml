@@ -10,6 +10,7 @@ let rec vapp (t : value) (u : value) : value =
   | Var (h, sp) -> Var (h, sp <: u)
   | Label (h, sp) -> Label (h, sp <: u)
   | IndType (h, sp) -> IndType (h, sp <: u)
+  | Elim (h, sp) -> Elim (h, sp <: u)
   | v -> Reporter.fatalf Elab_error "cannot apply on %s" ([%show: value] v)
 
 and vapp_spine (t : value) : value bwd -> value = function
@@ -27,21 +28,19 @@ let rec force : value -> value = function
 
 (* Like force but also unfolds opaque global heads.  Use when we need to see
    the WHNF spine of a value (e.g. for application type-checking, where the
-   head must be a VPi).  Eliminators get a chance to ι-reduce first: when
-   `X-elim`'s target argument forces to a `Label`, the registered reducer
-   fires; otherwise the head stays opaque. *)
+   head must be a VPi).  Eliminators get a chance to ι-reduce: when an
+   `Elim`'s target argument has reduced to a `Label`, its reducer fires;
+   otherwise the head stays neutral. *)
 let rec force_head (v : value) : value =
   match force v with
   | Var (x, sp) ->
-    (match Env.lookup_elim_reducer x with
-     | Some reducer ->
-       (match reducer sp with
-        | Some reduced -> force_head reduced
-        | None -> Var (x, sp))
-     | None ->
-       (match Env.unfold_def x with
-        | Some def -> force_head (vapp_spine def sp)
-        | None -> Var (x, sp)))
+    (match Env.unfold_def x with
+     | Some def -> force_head (vapp_spine def sp)
+     | None -> Var (x, sp))
+  | Elim (({ reducer; _ } as h), sp) ->
+    (match reducer sp with
+     | Some reduced -> force_head reduced
+     | None -> Elim (h, sp))
   | t -> t
 ;;
 
@@ -61,7 +60,7 @@ let rec eval (env : value bwd) (tm : term) : value =
   | LocalVar i -> env_nth env i
   | Var x ->
     (match Env.lookup x with
-     | (Label _ | IndType _) as v -> v
+     | (Label _ | IndType _ | Elim _) as v -> v
      | _ -> Var (x, Emp))
   | App (t, u) -> vapp (eval env t) (eval env u)
   | Pi ({ name; bound; implicit }, b) ->

@@ -306,7 +306,11 @@ let build_elim_reducer
     in
     go ctor_infos 0
   in
-  fun (spine : Core.value bwd) ->
+  (* Self-reference via let rec: when building the IH for a recursive ctor
+     position we need to construct another `Elim` whose head carries this
+     very reducer.  Without let rec the IH would be a plain `Var` head with
+     no reduction behavior. *)
+  let rec reducer (spine : Core.value bwd) : Core.value option =
     let spine_list = Bwd.to_list spine in
     (* Need at least the structural part filled to reduce.  Extra args past
        the structural slice are trailing applications to the eliminator's
@@ -345,11 +349,13 @@ let build_elim_reducer
                     let ih_spine =
                       Bwd.of_list (params_sp @ ih_deps @ [ arg; motive ] @ cases_sp)
                     in
-                    [ arg; Core.Var (elim_name, ih_spine) ])
+                    [ arg; Core.Elim ({ elim_name; reducer }, ih_spine) ])
                (List.combine own_args info.binder_kinds)
            in
            Some (vapp_list (vapp_list case case_args) trailing))
       | _ -> None)
+  in
+  reducer
 ;;
 
 let nat_ctors : Surface.pretype binder list =
@@ -387,7 +393,7 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
   let cs = Core.Var ("cs", Emp) in
   let spine = Emp <: target <: motive <: cz <: cs in
   print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some cs n (Nat-elim n M cz cs)) |}]
+  [%expect {| (Some cs n Nat-elim n M cz cs) |}]
 ;;
 
 let vec_ctors : Surface.pretype binder list =
@@ -434,5 +440,5 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let ccons = Core.Var ("ccons", Emp) in
   let spine = Emp <: aV <: depN <: target <: motive <: cnil <: ccons in
   print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some ccons k x xs (Vec-elim A k xs M cnil ccons)) |}]
+  [%expect {| (Some ccons k x xs Vec-elim A k xs M cnil ccons) |}]
 ;;

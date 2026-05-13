@@ -45,27 +45,6 @@ let register_definition (name : string) (v : Core.value) : unit =
 
 let unfold_def (name : string) : Core.value option = Hashtbl.find_opt definitions name
 
-(* Per-eliminator ι-reduction rules, keyed by eliminator name (e.g.
-   "Nat-elim").  Populated by Checker.handle_inductive_type when a `data`
-   declaration is elaborated; consulted by Evaluation.force_head. *)
-let elim_reducers : (string, Core.value bwd -> Core.value option) Hashtbl.t =
-  Hashtbl.create ~random:true 32
-;;
-
-let register_elim_reducer
-      (elim_name : string)
-      (reducer : Core.value bwd -> Core.value option)
-  : unit
-  =
-  Hashtbl.replace elim_reducers elim_name reducer
-;;
-
-let lookup_elim_reducer (elim_name : string)
-  : (Core.value bwd -> Core.value option) option
-  =
-  Hashtbl.find_opt elim_reducers elim_name
-;;
-
 (* Handle scoping effects *)
 module Handler = struct
   let pp_path fmt = function
