@@ -1,2 +1,21 @@
 data Id {A : U} (x : A) : A -> U
   | refl : Id x x
+
+# Symmetry: Id x y -> Id y x.  The motive is `\z q -> Id z x`; the refl
+# case demands Id x x, which is refl.
+let sym {A : U} (x : A) (y : A) (p : Id x y) : Id y x :=
+  Id-elim x y p (\(z : A) (q : Id x z) -> Id z x) refl
+
+# Transitivity.  Eliminate on `q : Id y z`; motive `\w r -> Id x w`; the
+# refl case (w = y) needs Id x y, which is the hypothesis `p`.
+let trans {A : U} (x : A) (y : A) (z : A) (p : Id x y) (q : Id y z) : Id x z :=
+  Id-elim y z q (\(w : A) (r : Id y w) -> Id x w) p
+
+# Congruence: equal inputs give equal outputs under any function.
+let cong {A : U} {B : U} (f : A -> B) (x : A) (y : A) (p : Id x y) : Id (f x) (f y) :=
+  Id-elim x y p (\(z : A) (r : Id x z) -> Id (f x) (f z)) refl
+
+# Transport (a.k.a. subst): a proof at x can be moved to one at y along p.
+# This is exactly J specialized to a non-dependent motive.
+let subst {A : U} (P : A -> U) (x : A) (y : A) (p : Id x y) (px : P x) : P y :=
+  Id-elim x y p (\(z : A) (r : Id x z) -> P z) px

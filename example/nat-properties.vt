@@ -12,3 +12,32 @@ let eq-0 : Id zero zero := refl
 let eq-0-implicit : Id {Nat} zero zero := refl
 
 let eq-2 : Id (add one one) two := refl
+
+let azr-motive (n : Nat) : U := Id (add n zero) n
+let azr-base : azr-motive zero := refl
+let azr-step (n : Nat) (ih : azr-motive n) : azr-motive (suc n) :=
+  cong suc (add n zero) n ih
+let add-zero-r (n : Nat) : Id (add n zero) n :=
+  Nat-elim n azr-motive azr-base azr-step
+
+let asr-motive (m : Nat) : U := (n : Nat) -> Id (add m (suc n)) (suc (add m n))
+let asr-base (n : Nat) : Id (add zero (suc n)) (suc (add zero n)) := refl
+let asr-step (m : Nat) (ih : asr-motive m) (n : Nat)
+  : Id (add (suc m) (suc n)) (suc (add (suc m) n)) :=
+  cong suc (add m (suc n)) (suc (add m n)) (ih n)
+let add-suc-r (m : Nat) (n : Nat) : Id (add m (suc n)) (suc (add m n)) :=
+  Nat-elim m asr-motive asr-base asr-step n
+
+let comm-motive (m : Nat) : U := (n : Nat) -> Id (add m n) (add n m)
+let comm-base (n : Nat) : Id (add zero n) (add n zero) :=
+  sym (add n zero) n (add-zero-r n)
+let comm-step (m : Nat) (ih : comm-motive m) (n : Nat)
+  : Id (add (suc m) n) (add n (suc m)) :=
+  trans
+    (suc (add m n))
+    (suc (add n m))
+    (add n (suc m))
+    (cong suc (add m n) (add n m) (ih n))
+    (sym (add n (suc m)) (suc (add n m)) (add-suc-r n m))
+let add-comm (m : Nat) (n : Nat) : Id (add m n) (add n m) :=
+  Nat-elim m comm-motive comm-base comm-step n
