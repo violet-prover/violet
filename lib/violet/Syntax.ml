@@ -154,6 +154,9 @@ module Core = struct
 
   type term =
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
+    (* local variable: de Bruijn INDEX (0 = innermost binder) *)
+    | LocalVar of int [@printer fun fmt i -> fprintf fmt "$%d" i]
+    (* global name: top-level let / data / constructor *)
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of term * term
     [@printer fun fmt (a, b) -> fprintf fmt "%s %s" (show_term a) (show_term b)]
@@ -189,11 +192,10 @@ module Core = struct
         else fprintf fmt "∀ (%s : %s) -> %s" bind.name (show_typ bind.bound) (show_typ b)]
     (* Meta 是使用者自己明確寫下來的那些 *)
     | Meta of metavar
-    (* InsertedMeta 是 elaborator 自動塞進去的部分，所以需要紀錄 context 中的變數 *)
-    | InsertedMeta of metavar * string bwd
-    [@printer
-      fun fmt (m, vars) ->
-        fprintf fmt "%s %s" (show_metavar m) (String.concat " " (Bwd.to_list vars))]
+    (* InsertedMeta 是 elaborator 自動塞進去的部分；payload 是插入時的 level 計數，
+       evaluation 時透過 vapp_locals 套用到當下 env 的前 lvl 個 local *)
+    | InsertedMeta of metavar * int
+    [@printer fun fmt (m, n) -> fprintf fmt "%s[..%d]" (show_metavar m) n]
 
   and typ = term [@@deriving show]
 
@@ -209,8 +211,29 @@ module Core = struct
             "%s(%s)"
             (show_metavar mhead)
             (String.concat ", " (List.map show_value @@ Bwd.to_list locals))]
-    (* rigid 是一種 neutral value，是一個 bound variable applied 到 0..N 個引數後的產品 *)
-    | Rigid of string * value bwd
+    (* local-bound free variable: de Bruijn LEVEL (counted from the outside in)。
+       Lambda/Pi 開新 binder 時直接拿當下的 lvl 來生這個 head。 *)
+    | RigidLocal of int * value bwd
+    [@printer
+      fun fmt (lvl, spine) ->
+        if Bwd.is_empty spine
+        then fprintf fmt "$%d" lvl
+        else
+          fprintf
+            fmt
+            "$%d %s"
+            lvl
+            (String.concat
+               " "
+               (List.map (fun v ->
+                  match v with
+                  | RigidLocal (_, sp) ->
+                    if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
+                  | _ -> show_value v)
+                @@ Bwd.to_list spine))]
+    (* opaque global head：top-level let 還沒展開時的 representation。
+       Unfold 由 Unification 視需要呼叫 Env.unfold_def 觸發。 *)
+    | Var of string * value bwd
     [@printer
       fun fmt (head, spine) ->
         if Bwd.is_empty spine
@@ -224,7 +247,7 @@ module Core = struct
                " "
                (List.map (fun v ->
                   match v with
-                  | Rigid (_, sp) ->
+                  | Var (_, sp) ->
                     if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
                   | _ -> show_value v)
                 @@ Bwd.to_list spine))]
@@ -270,7 +293,8 @@ module Core = struct
     | VPi of value_ty binder * (value -> value)
     [@printer
       fun fmt ({ name; bound; implicit }, closure) ->
-        let result = closure (Rigid (name, Bwd.Emp)) in
+        (* Printer 用 RigidLocal 0 當佔位；只是輸出用，跟實際 elaboration level 無關 *)
+        let result = closure (RigidLocal (0, Bwd.Emp)) in
         if implicit
         then fprintf fmt "{%s : %s} -> %s" name (show_value bound) (show_value result)
         else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
@@ -278,6 +302,9 @@ module Core = struct
   [@@deriving show]
 
   and value_ty = value
+
+  let rigid_local (lvl : int) : value = RigidLocal (lvl, Bwd.Emp)
+  let lvl_to_ix ~(env_size : int) (lvl : int) : int = env_size - lvl - 1
 end
 
 let%expect_test "applied spine" =

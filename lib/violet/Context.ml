@@ -7,9 +7,10 @@ type modifier_cmd = Trace
 module TypeContext = struct
   type data = Core.value_ty
 
+  (* Locals don't live in Yuujinchou anymore — they're handled in Checker's
+     local_ctx with de Bruijn indices.  Only globals remain here. *)
   type tag =
     [ `Imported
-    | `Local
     | `Constructor
     ]
 
@@ -54,7 +55,6 @@ module Handler = struct
 
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
-    | x, `Local -> Format.fprintf fmt "%s (local)" ([%show: Core.value_ty] x)
     | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
   ;;
 

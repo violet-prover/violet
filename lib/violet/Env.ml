@@ -7,9 +7,10 @@ type modifier_cmd = Trace
 module ValueEnvironment = struct
   type data = Core.value
 
+  (* Locals don't live in Yuujinchou anymore — they're handled in Checker's
+     local_ctx with de Bruijn indices.  Only globals remain here. *)
   type tag =
     [ `Imported
-    | `Local
     | `Constructor
     ]
 
@@ -33,6 +34,17 @@ let lookup (x : string) : Core.value =
       (String.concat "." [ x ])
 ;;
 
+(* Top-level let definitions, keyed by name.  Unification consults this when
+   it needs to unfold a `Var (x, _)` opaque head.  Constructors and inductive
+   types live in Yuujinchou (S) only — they're not "defined" in the same sense. *)
+let definitions : (string, Core.value) Hashtbl.t = Hashtbl.create ~random:true 100
+
+let register_definition (name : string) (v : Core.value) : unit =
+  Hashtbl.replace definitions name v
+;;
+
+let unfold_def (name : string) : Core.value option = Hashtbl.find_opt definitions name
+
 (* Handle scoping effects *)
 module Handler = struct
   let pp_path fmt = function
@@ -48,7 +60,6 @@ module Handler = struct
 
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value] x)
-    | x, `Local -> Format.fprintf fmt "%s (local)" ([%show: Core.value] x)
     | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
   ;;
 

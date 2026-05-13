@@ -1,2 +1,5 @@
 (test
- (name test_violet))
+ (name test_violet)
+ (deps
+  (source_tree ../example))
+ (libraries violet asai eio eio_main yuujinchou bwd unix tsort))

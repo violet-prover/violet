@@ -1,7 +1,14 @@
 open Syntax
 
+(* Give anonymous (`_`) binders unique names so they can be referenced later
+   (e.g. as constructor arguments in the eliminator's spine). Leave named
+   binders alone — renaming them would invalidate downstream references to
+   the original name (the references aren't rewritten). *)
 let rename_tele tele : Surface.pretype binder list =
-  List.mapi (fun i bind -> { bind with name = bind.name ^ string_of_int i }) tele
+  List.mapi
+    (fun i bind ->
+       if bind.name = "_" then { bind with name = "_" ^ string_of_int i } else bind)
+    tele
 ;;
 
 let eliminator_params ~name ~params ~deps ~ind_ty =
@@ -50,31 +57,49 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
     List.concat_map
       (fun bind ->
          if head bind.bound = Surface.Var name
-         then
+         then (
+           (* Motive takes (deps ... , target), so the IH must mirror that
+              shape — supply the recursive point's dep arguments, not just
+              the point itself. *)
+           let rec_spine = Surface.applied_spine bind.bound in
+           let dep_args = List.drop (List.length params) rec_spine in
            [ bind
            ; { name = "ih-" ^ bind.name
-             ; bound = Surface.apply (Surface.Var "motive") [ Surface.Var bind.name ]
+             ; bound =
+                 Surface.apply
+                   (Surface.Var "motive")
+                   (dep_args @ [ Surface.Var bind.name ])
              ; implicit = false
              }
-           ]
+           ])
          else [ bind ])
       delta
   in
   let delta = Surface.telescope ctor.bound in
+  let renamed_delta = rename_tele delta in
   let spine = Surface.applied_spine (Surface.codomain ctor.bound) in
-  let spine = List.drop (List.length params) spine in
-  let final = Surface.apply_tele (Surface.Var ctor.name) delta in
+  (* Implicit params aren't written in the user's surface spine, so only
+     drop as many entries as there are explicit params. Dropping
+     `List.length params` overshoots whenever any param is implicit
+     (e.g. `data Id {A : U} (x : A) : A -> U | refl : Id x x`). *)
+  let n_explicit_params = List.length (List.filter (fun p -> not p.implicit) params) in
+  let spine = List.drop n_explicit_params spine in
+  (* The constructor's stored type is wrapped with implicit data params by
+     `close_ctor_type`, so applying it requires those params up front. They
+     resolve to the eliminator's outer params (which are in scope here). *)
+  let param_args = List.map (fun p -> { p with implicit = true }) params in
+  let final = Surface.apply_tele (Surface.Var ctor.name) (param_args @ renamed_delta) in
   { name = "case-" ^ ctor.name
   ; bound =
       Surface.pi
-        (patch_delta (rename_tele delta))
+        (patch_delta renamed_delta)
         (Surface.apply (Surface.Var "motive") (spine @ [ final ]))
   ; implicit = false
   }
 ;;
 
 let eliminator_type ~name ~params ~deps ~ind_ty ctors =
-  let params = eliminator_params ~name ~params ~deps ~ind_ty in
+  let elim_params = eliminator_params ~name ~params ~deps ~ind_ty in
   let target_bind = eliminator_target_binding ~name ~params ~deps ~ind_ty in
   let motive_type = eliminator_motive_type ~name ~params ~deps ~ind_ty in
   let case_binds =
@@ -82,7 +107,7 @@ let eliminator_type ~name ~params ~deps ~ind_ty ctors =
   in
   let result_ty = eliminator_result_type ~name ~params ~deps ~ind_ty in
   Surface.pi
-    (params
+    (elim_params
      @ [ target_bind; { name = "motive"; bound = motive_type; implicit = false } ]
      @ case_binds)
     result_ty
@@ -138,7 +163,10 @@ let%expect_test "Vec case nil" =
   in
   print_string @@ [%show: Surface.pretype binder] result;
   [%expect
-    {| { Syntax.name = "case-nil"; bound = ((motive zero) nil); implicit = false } |}]
+    {|
+    { Syntax.name = "case-nil"; bound = ((motive zero) (nil {A}));
+      implicit = false }
+    |}]
 ;;
 
 let%expect_test "Vec case cons" =
@@ -170,7 +198,7 @@ let%expect_test "Vec case cons" =
     {|
     { Syntax.name = "case-cons";
       bound =
-      Π{k0 : Nat} -> Π(x1 : A) -> Π(xs2 : ((Vec A) k)) -> Π(ih-xs2 : (motive xs2)) -> ((motive (suc k)) (((cons {k}) x) xs));
+      Π{k : Nat} -> Π(x : A) -> Π(xs : ((Vec A) k)) -> Π(ih-xs : ((motive k) xs)) -> ((motive (suc k)) ((((cons {A}) {k}) x) xs));
       implicit = false }
     |}]
 ;;

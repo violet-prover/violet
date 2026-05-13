@@ -5,136 +5,155 @@ open Evaluation
 module PartialRenaming = struct
   open Core
 
-  type t = (string, string) Hashtbl.t
+  (* dom = size of the meta's argument context (LHS, fresh after invert)
+     cod = size of the surrounding context the meta lives in (RHS)
+     ren = cod-level → dom-level (where each spine element ended up) *)
+  type t =
+    { dom : int
+    ; cod : int
+    ; ren : (int, int) Hashtbl.t
+    }
 
-  let invert (domain : string bwd) (sp : value bwd) : t =
-    let rec go = function
-      | Emp -> Hashtbl.create ~random:true 1000
-      | Snoc (rest, (t, v)) ->
-        let ren = go rest in
-        (match force t with
-         | Rigid (x, Emp) ->
-           (match Hashtbl.find_opt ren x with
-            | Some _ -> Reporter.fatalf Elab_error "bad"
-            | None ->
-              Hashtbl.add ren x v;
-              ren)
-         | _ -> Reporter.fatalf Elab_error "invert failed")
-    in
-    go @@ Bwd.combine sp domain
+  let invert (gamma : int) (sp : value bwd) : t =
+    let ren = Hashtbl.create ~random:true 16 in
+    (* Iterate the spine LEFT-TO-RIGHT (outermost arg first) so the dom-side
+       position we assign matches argument-order in the solution.  Bwd.iter
+       is right-to-left, so go via to_list / List.iteri here. *)
+    let sp_list = Bwd.to_list sp in
+    List.iteri
+      (fun pos v ->
+         match force v with
+         | RigidLocal (l, Emp) ->
+           if Hashtbl.mem ren l
+           then Reporter.fatalf Elab_error "non-linear spine (level $%d repeated)" l
+           else Hashtbl.add ren l pos
+         | other ->
+           Reporter.fatalf Elab_error "non-variable in spine: %s" ([%show: value] other))
+      sp_list;
+    { dom = List.length sp_list; cod = gamma; ren }
   ;;
 
-  let rec rename (m : metavar) (renaming_map : t) (rhs : value) : term =
-    match rhs with
+  let rec rename (m : metavar) (pr : t) (v : value) : term =
+    match force v with
     | Universe -> Universe
-    | Flex (m', sp) ->
-      if m = m'
-      then
-        Reporter.fatalf
-          Elab_error
-          "meta variable %s itself occurs in rhs"
-          ([%show: metavar] m)
-      else rename_sp m renaming_map (Meta m') sp
-    | Rigid (x, sp) ->
-      (match Hashtbl.find_opt renaming_map x with
+    | Flex (m', _) when m = m' ->
+      Reporter.fatalf
+        Elab_error
+        "meta variable %s occurs in its own solution"
+        ([%show: metavar] m)
+    | Flex (m', sp) -> rename_sp m pr (Meta m') sp
+    | RigidLocal (l, sp) ->
+      (match Hashtbl.find_opt pr.ren l with
        | None ->
-         if Context.has x
-         then (
-           let ts = Bwd.map (fun x -> rename m renaming_map x) sp in
-           List.fold_left (fun acc k -> App (acc, k)) (Var x) @@ Bwd.to_list ts)
-         else
-           Reporter.fatalf
-             Elab_error
-             "cannot complete partial renaming, there has no variable %s in context"
-             x
-       | Some x' -> rename_sp m renaming_map (Var x') sp)
-      (* 把 constructor 這些東西 quote 回 variable 也沒差，還是會執行成 label *)
-    | Label (x, sp) ->
-      rename_sp m renaming_map (Var x) sp
-      (* 把 inductive type 的表示 quote 回 variable 也沒差，還是會執行成 indtype *)
-    | IndType (x, sp) -> rename_sp m renaming_map (Var x) sp
-    | VLambda { implicit; name; bound = clos } ->
-      Lambda { implicit; name; bound = rename m renaming_map (clos @@ Rigid (name, Emp)) }
-    | VPi ({ implicit; name; bound = a }, b) ->
-      Pi
-        ( { implicit; name; bound = rename m renaming_map a }
-        , rename m renaming_map (b (Rigid (name, Emp))) )
+         Reporter.fatalf Elab_error "escaping local $%d in meta solution (not in spine)" l
+       | Some l' ->
+         (* l' is a dom-level; convert to term-side de Bruijn INDEX *)
+         rename_sp m pr (LocalVar (pr.dom - l' - 1)) sp)
+    | Var (x, sp) -> rename_sp m pr (Var x) sp
+    | Label (x, sp) -> rename_sp m pr (Var x) sp
+    | IndType (x, sp) -> rename_sp m pr (Var x) sp
+    | VLambda { name; bound = clos; implicit } ->
+      Hashtbl.add pr.ren pr.cod pr.dom;
+      let body =
+        rename
+          m
+          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
+          (clos (RigidLocal (pr.cod, Emp)))
+      in
+      Hashtbl.remove pr.ren pr.cod;
+      Lambda { name; implicit; bound = body }
+    | VPi ({ name; bound = a; implicit }, b) ->
+      let a' = rename m pr a in
+      Hashtbl.add pr.ren pr.cod pr.dom;
+      let b' =
+        rename
+          m
+          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
+          (b (RigidLocal (pr.cod, Emp)))
+      in
+      Hashtbl.remove pr.ren pr.cod;
+      Pi ({ name; bound = a'; implicit }, b')
 
-  and rename_sp (m : metavar) (renaming : t) (t : term) (sp : value bwd) : term =
+  and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
     match sp with
     | Emp -> t
-    | Snoc (sp, u) -> App (rename_sp m renaming t sp, rename m renaming u)
+    | Snoc (sp, u) -> App (rename_sp m pr t sp, rename m pr u)
   ;;
 
-  let rec lams (dom : string list) (tm : term) : term =
-    match dom with
-    | [] -> tm
-    | name :: dom -> Lambda { name; bound = lams dom tm; implicit = false }
+  (* Wrap a term in `dom` outer Lambdas so the solution can stand alone.
+     Names are placeholders for pretty printing only. *)
+  let lams (dom : int) (tm : term) : term =
+    let rec go i acc =
+      if i = dom
+      then acc
+      else
+        go
+          (i + 1)
+          (Lambda
+             { name = Printf.sprintf "x%d" (dom - i - 1); implicit = false; bound = acc })
+    in
+    go 0 tm
   ;;
 
-  let run m sp rhs =
-    let dom = Bwd.map (fun _ -> Format.sprintf "<%d>" (Random.int 1000)) sp in
-    let renaming_map = invert dom sp in
-    let rhs = rename m renaming_map rhs in
-    let solution = lams (Bwd.to_list dom) rhs in
+  let run (gamma : int) (m : metavar) (sp : value bwd) (rhs : value) : value =
+    let pr = invert gamma sp in
+    let rhs_tm = rename m pr rhs in
+    let solution = lams pr.dom rhs_tm in
     Eio.traceln "solution of %s is: %s\n" ([%show: metavar] m) ([%show: term] solution);
-    Reporter.tracef "solution is: %s" ([%show: term] solution) @@ fun () -> eval solution
+    Reporter.tracef "solution is: %s" ([%show: term] solution)
+    @@ fun () -> eval Emp solution
   ;;
 end
 
-let solve (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.value) : unit =
+let solve (gamma : int) (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.value) : unit
+  =
   let spine_str =
     String.concat " <: " @@ List.map (fun v -> [%show: Core.value] v) (Bwd.to_list sp)
   in
   Reporter.tracef "spine: %s" spine_str
   @@ fun () ->
-  let solution = PartialRenaming.run m sp rhs in
+  let solution = PartialRenaming.run gamma m sp rhs in
   Meta.insert_meta m solution
 ;;
 
-let count = ref 0
-
-let fresh_variable () : Core.value =
-  let r = Format.sprintf "*%d" !count in
-  count := !count + 1;
-  Rigid (r, Emp)
-;;
-
-let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
+let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
   Eio.traceln
     "unify `%s` and `%s` (or verbose `%s ?= %s`)\n"
     ([%show: Core.value] a)
     ([%show: Core.value] b)
-    ([%show: Core.value] (force a))
-    ([%show: Core.value] (force b));
+    ([%show: Core.value] (force_head a))
+    ([%show: Core.value] (force_head b));
   Reporter.tracef
     ~loc
-    "unify `%s` and `%s` (or verbose `%s ?= %s`)"
+    "unify `%s` and `%s`"
     ([%show: Core.value] a)
     ([%show: Core.value] b)
-    ([%show: Core.value] (force a))
-    ([%show: Core.value] (force b))
   @@ fun () ->
-  match force a, force b with
+  (* force_head unfolds metas AND opaque global heads.  After this, the only
+     way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
+  match force_head a, force_head b with
   | Universe, Universe -> ()
-  | Rigid (h1, sp1), Rigid (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc sp1 sp2
-  | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc sp1 sp2
+  | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 ->
+    unify_spine ~loc lvl sp1 sp2
+  | Var (h1, sp1), Var (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc lvl sp1 sp2
+  | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 ->
+    unify_spine ~loc lvl sp1 sp2
   | IndType (h1, sp1), IndType (h2, sp2) when String.equal h1 h2 ->
-    unify_spine ~loc sp1 sp2
-  | VLambda { bound = bound1; _ }, VLambda { bound = bound2; _ } ->
-    let x = fresh_variable () in
-    unify ~loc (bound1 x) (bound2 x)
+    unify_spine ~loc lvl sp1 sp2
+  | VLambda { bound = b1; _ }, VLambda { bound = b2; _ } ->
+    let x = Core.RigidLocal (lvl, Emp) in
+    unify ~loc (lvl + 1) (b1 x) (b2 x)
   | VLambda { bound; _ }, t | t, VLambda { bound; _ } ->
-    let x = fresh_variable () in
-    unify ~loc (bound x) (vapp t x)
+    let x = Core.RigidLocal (lvl, Emp) in
+    unify ~loc (lvl + 1) (bound x) (vapp t x)
   | VPi (_, b1), VPi (_, b2) ->
-    let x = fresh_variable () in
-    unify ~loc (b1 x) (b2 x)
+    let x = Core.RigidLocal (lvl, Emp) in
+    unify ~loc (lvl + 1) (b1 x) (b2 x)
   | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
-    let x = eval @@ Meta.meta_fresh () in
-    unify ~loc (b x) t
-  | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc sp1 sp2
-  | t, Flex (m, sp) | Flex (m, sp), t -> solve m sp t
+    let x = Meta.fresh_meta_value lvl in
+    unify ~loc lvl (b x) t
+  | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc lvl sp1 sp2
+  | t, Flex (m, sp) | Flex (m, sp), t -> solve lvl m sp t
   | expected, actual ->
     Reporter.fatalf
       ~loc
@@ -145,12 +164,12 @@ let rec unify ~loc (a : Core.value) (b : Core.value) : unit =
       ([%show: Core.value] a)
       ([%show: Core.value] b)
 
-and unify_spine ~loc (xs : Core.value bwd) (ys : Core.value bwd) : unit =
+and unify_spine ~loc (lvl : int) (xs : Core.value bwd) (ys : Core.value bwd) : unit =
   match xs, ys with
   | Emp, Emp -> ()
   | Snoc (xs, x), Snoc (ys, y) ->
-    unify_spine ~loc xs ys;
-    unify ~loc x y
+    unify_spine ~loc lvl xs ys;
+    unify ~loc lvl x y
   | _, _ ->
     let left = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value xs in
     let right = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value ys in
