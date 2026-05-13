@@ -20,4 +20,4 @@ This project develop violet using nameful context (library Yuujinchou).
   - universe
   - hole
   - (?) first class sigma v.s. record based sigma
-- (TODO) universe polymorphism
+- universe polymorphism
