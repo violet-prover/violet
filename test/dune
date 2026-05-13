@@ -1,5 +1,7 @@
-(test
- (name test_violet)
+(tests
+ (names test_violet test_typed_parser)
  (deps
   (source_tree ../example))
+ (preprocess
+  (pps ppx_deriving.show))
  (libraries violet asai eio eio_main yuujinchou bwd unix tsort))
