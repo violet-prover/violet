@@ -7,11 +7,11 @@ This project develop violet using nameful context (library Yuujinchou).
   - let definition
   - import statement
   - inductive types (view `nat`, `list`, `vec`, `equality` in `example/`)
-    - generated eliminator (e.g. `Nat-elim`)
+    - generated eliminator (type and computation) (e.g. `Nat-elim`)
     - (TODO) pattern matching (rely on eliminator)
     - (TODO) strictly positive check
     - (?) sized type for termination checker
-  - (TODO) export keyword for top let
+  - (TODO) export keyword for top-level let definition
 - term
   - variable
   - application
@@ -20,4 +20,4 @@ This project develop violet using nameful context (library Yuujinchou).
   - universe
   - hole
   - (?) first class sigma v.s. record based sigma
-- (TODO) universe polymorphism: library mugen
+- (TODO) universe polymorphism
