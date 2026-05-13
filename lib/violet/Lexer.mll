@@ -5,13 +5,14 @@ type token =
   | DATA [@printer fun fmt () -> fprintf fmt "data"]
   | LET [@printer fun fmt () -> fprintf fmt "let"]
   | IMPORT [@printer fun fmt () -> fprintf fmt "import"]
-  | UNIV [@printer fun fmt () -> fprintf fmt "U"]
+  | UNIVERSE [@printer fun fmt () -> fprintf fmt "universe"]
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
   | LAMBDA [@printer fun fmt () -> fprintf fmt "\\"]
   | DOT [@printer fun fmt () -> fprintf fmt "."]
   | VERT [@printer fun fmt () -> fprintf fmt "|"]
+  | JOIN [@printer fun fmt () -> fprintf fmt "\xe2\x8a\x94"]
   | L_PAREN [@printer fun fmt () -> fprintf fmt "("]
   | R_PAREN [@printer fun fmt () -> fprintf fmt ")"]
   | L_BRACKET [@printer fun fmt () -> fprintf fmt "{"]
@@ -34,7 +35,7 @@ let newline = '\r' | '\n' | "\r\n"
 rule token =
   parse
   | "#" { comment lexbuf }
-  | "U" { return lexbuf @@ UNIV }
+  | "universe" { return lexbuf @@ UNIVERSE }
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
   | "import" { return lexbuf @@ IMPORT }
@@ -44,6 +45,7 @@ rule token =
   | "\\" { return lexbuf @@ LAMBDA }
   | '.' { return lexbuf @@ DOT }
   | '|' { return lexbuf @@ VERT }
+  | "⊔" { return lexbuf @@ JOIN }
   | '(' { return lexbuf @@ L_PAREN }
   | ')' { return lexbuf @@ R_PAREN }
   | '{' { return lexbuf @@ L_BRACKET }

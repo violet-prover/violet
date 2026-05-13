@@ -29,11 +29,10 @@ let eliminator_target_binding ~name ~params ~deps ~ind_ty =
 ;;
 
 let eliminator_motive_type ~name ~params ~deps ~ind_ty =
-  let _ = ind_ty in
   let good_deps = rename_tele deps in
   let final_ty = Surface.apply_tele (Surface.Var name) (params @ good_deps) in
   let final_bind = { name = "_"; bound = final_ty; implicit = false } in
-  Surface.pi (good_deps @ [ final_bind ]) Surface.Universe
+  Surface.pi (good_deps @ [ final_bind ]) ind_ty
 ;;
 
 let eliminator_result_type ~name ~params ~deps ~ind_ty =
@@ -374,7 +373,7 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
     build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat-elim" ~params:[] ~deps:[] nat_ctors
   in
   let target = Core.Label ("zero", Emp) in
-  let motive = Core.Universe in
+  let motive = Core.Universe Level.LZero in
   let cz = Core.Var ("cz", Emp) in
   let cs = Core.Var ("cs", Emp) in
   let spine = Emp <: target <: motive <: cz <: cs in

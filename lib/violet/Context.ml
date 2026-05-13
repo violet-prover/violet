@@ -97,3 +97,26 @@ module Handler = struct
       input
   ;;
 end
+
+(* Level variables declared by `universe U V` in the current module's scope.
+   Reset per module (see Checker.check_module). *)
+let level_vars : (string, unit) Hashtbl.t = Hashtbl.create ~random:true 16
+let declare_level_var (name : string) : unit = Hashtbl.replace level_vars name ()
+let is_level_var (name : string) : bool = Hashtbl.mem level_vars name
+let clear_level_vars () : unit = Hashtbl.clear level_vars
+
+let declared_level_vars () : string list =
+  Hashtbl.fold (fun k () acc -> k :: acc) level_vars []
+;;
+
+let%expect_test "declare and lookup level var" =
+  clear_level_vars ();
+  declare_level_var "U";
+  print_string @@ string_of_bool (is_level_var "U");
+  print_newline ();
+  print_string @@ string_of_bool (is_level_var "V");
+  [%expect
+    {|
+    true
+    false |}]
+;;

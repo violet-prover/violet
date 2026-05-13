@@ -69,6 +69,8 @@ module Surface = struct
             bind.name
             (show_pretype bind.bound)
             (show_pretype b)]
+    | Max of preterm * preterm
+    [@printer fun fmt (a, b) -> fprintf fmt "(%s ⊔ %s)" (show_preterm a) (show_preterm b)]
 
   and pretype = preterm [@@deriving show]
 
@@ -91,6 +93,8 @@ module Surface = struct
         ; ind_ty : pretype
         ; ctors : pretype binder list
         }
+    (* `universe U V W` declares per-module level variables. *)
+    | Universe_decl of string list
   [@@deriving show]
 
   type t =
@@ -153,7 +157,12 @@ module Core = struct
   [@@deriving show]
 
   type term =
-    | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
+    | Universe of Level.level
+    [@printer
+      fun fmt l ->
+        if Level.equal l Level.LZero
+        then fprintf fmt "𝓤"
+        else fprintf fmt "𝓤(%s)" (Level.show_level l)]
     (* local variable: de Bruijn INDEX (0 = innermost binder) *)
     | LocalVar of int [@printer fun fmt i -> fprintf fmt "$%d" i]
     (* global name: top-level let / data / constructor *)
@@ -196,6 +205,23 @@ module Core = struct
        evaluation 時透過 vapp_locals 套用到當下 env 的前 lvl 個 local *)
     | InsertedMeta of metavar * int
     [@printer fun fmt (m, n) -> fprintf fmt "%s[..%d]" (show_metavar m) n]
+    | Lift of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : term
+        }
+    | LiftTerm of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : term
+        ; tm : term
+        }
+    | UnliftTerm of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : term
+        ; tm : term
+        }
 
   and typ = term [@@deriving show]
 
@@ -319,7 +345,29 @@ module Core = struct
         if implicit
         then fprintf fmt "{%s : %s} -> %s" name (show_value bound) (show_value result)
         else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
-    | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
+    | Universe of Level.level
+    [@printer
+      fun fmt l ->
+        if Level.equal l Level.LZero
+        then fprintf fmt "𝓤"
+        else fprintf fmt "𝓤(%s)" (Level.show_level l)]
+    | VLift of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : value
+        }
+    | VLiftTerm of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : value
+        ; tm : value
+        }
+    | VUnliftTerm of
+        { from_lvl : Level.level
+        ; to_lvl : Level.level
+        ; ty : value
+        ; tm : value
+        }
   [@@deriving show]
 
   and elim_head =

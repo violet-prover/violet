@@ -43,6 +43,12 @@ let resolve_local (ctx : local_ctx) (x : string) : int option =
   go 0 ctx.names
 ;;
 
+(* Resolve a surface identifier that might refer to a declared universe
+   variable.  Returns Some level if the name is a level var, else None. *)
+let resolve_universe_var (x : string) : Level.level option =
+  if Context.is_level_var x then Some (Level.LVar x) else None
+;;
+
 (* Look up the type of a local by index, mirroring resolve_local. *)
 let local_type (ctx : local_ctx) (ix : int) : Core.value =
   let rec nth env i =
@@ -69,28 +75,52 @@ let rec check ~loc (ctx : local_ctx) (term : Surface.preterm) (typ : Core.value_
       Core.Lambda { name = x; bound = body; implicit = lambda_mode })
   | Hole, _ -> Meta.meta_fresh ctx.lvl
   | tm, expected_typ ->
-    let tm, infer_typ = infer ~loc ctx tm in
+    let tm_elab, infer_typ = infer ~loc ctx tm in
     Eio.traceln
       "checking `%s` has type `%s ~ %s`\n"
-      ([%show: Core.term] tm)
+      ([%show: Core.term] tm_elab)
       ([%show: Core.value] expected_typ)
       ([%show: Core.value] infer_typ);
-    Unification.unify ~loc ctx.lvl expected_typ infer_typ;
-    tm
+    (* Lift insertion: if both sides are concrete universes (no level metas),
+       levels differ, but actual ≤ expected, wrap the term in `Lift` to
+       discharge the mismatch.  Otherwise fall through to unification. *)
+    (match force_head expected_typ, force_head infer_typ with
+     | Core.Universe l1, Core.Universe l2 when Level.not_equal l1 l2 && Level.le l2 l1 ->
+       Core.Lift { from_lvl = l2; to_lvl = l1; ty = tm_elab }
+     | _ ->
+       Unification.unify ~loc ctx.lvl expected_typ infer_typ;
+       tm_elab)
 
 and infer ~loc (ctx : local_ctx) : Surface.preterm -> Core.term * Core.value_ty = function
   | Located { loc; value } -> infer ~loc:(Option.get loc) ctx value
-  | Universe -> Universe, Universe
+  | Universe -> Universe Level.LZero, Universe (Level.LSuc Level.LZero)
+  | Max (a, b) ->
+    let a_tm, _ = infer ~loc ctx a in
+    let b_tm, _ = infer ~loc ctx b in
+    (match a_tm, b_tm with
+     | Core.Universe l_a, Core.Universe l_b ->
+       let l = Level.lmax l_a l_b in
+       Core.Universe l, Core.Universe (Level.lsuc l)
+     | _ ->
+       Reporter.fatalf
+         ~loc
+         Type_error
+         "operands of `⊔` must be universes, got `%s` and `%s`"
+         ([%show: Core.term] a_tm)
+         ([%show: Core.term] b_tm))
   | Var x ->
     (match resolve_local ctx x with
      | Some i -> Core.LocalVar i, local_type ctx i
-     | None -> Core.Var x, Context.lookup x)
+     | None ->
+       (match resolve_universe_var x with
+        | Some l -> Core.Universe l, Core.Universe (Level.lsuc l)
+        | None -> Core.Var x, Context.lookup x))
   | Pi ({ name; bound = a; implicit }, b) ->
-    let a = check ~loc ctx a Universe in
+    let a, l_a = infer_type ~loc ctx a in
     let a_val = eval ctx.env a in
     let ctx' = bind ctx name a_val in
-    let b = check ~loc ctx' b Universe in
-    Core.Pi ({ name; bound = a; implicit }, b), Core.Universe
+    let b, l_b = infer_type ~loc ctx' b in
+    Core.Pi ({ name; bound = a; implicit }, b), Core.Universe (Level.lmax l_a l_b)
   | App (is_implicit, f, arg) ->
     let f', f_typ = infer ~loc ctx f in
     (* Unfold opaque global heads (e.g. `motive x` -> `Nat -> Nat`) so an
@@ -135,8 +165,23 @@ and infer ~loc (ctx : local_ctx) : Surface.preterm -> Core.term * Core.value_ty 
     , Core.VPi ({ name; bound = ty_val; implicit }, fun _ -> ty_of_body) )
   | Lambda _ -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
 
+and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
+  : Core.term * Level.level
+  =
+  let tm, ty = infer ~loc ctx pretype in
+  match force_head ty with
+  | Universe l -> tm, l
+  | other ->
+    Reporter.fatalf
+      ~loc
+      Type_error
+      "expected a type, but got `%s : %s`"
+      ([%show: Core.term] tm)
+      ([%show: Core.value] other)
+
 and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
-  check ~loc ctx pretype Universe
+  let tm, _ = infer_type ~loc ctx pretype in
+  tm
 ;;
 
 (* Wrap a constructor's user-written type with implicit Π over the inductive
@@ -167,7 +212,7 @@ let bind_constructor
   : unit
   =
   let typ = close_ctor_type params typ in
-  let ctor_ty_tm = check ~loc ctx typ Universe in
+  let ctor_ty_tm = check_type ~loc ctx typ in
   let ctor_ty = eval ctx.env ctor_ty_tm in
   Context.S.include_singleton ([ name ], (ctor_ty, `Constructor));
   Env.S.include_singleton ([ name ], (Label (name, Bwd.Emp), `Constructor))
@@ -228,6 +273,16 @@ let bind_of_case
 let rec check_module (file : Surface.t) : unit =
   let module_name = Filename.chop_extension @@ Filename.basename file.name in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
+  Context.clear_level_vars ();
+  let has_explicit_universe_decl =
+    List.exists
+      (fun (top : Surface.top Asai.Range.located) ->
+         match top.value with
+         | Surface.Universe_decl _ -> true
+         | _ -> false)
+      file.tops
+  in
+  if not has_explicit_universe_decl then Context.declare_level_var "U";
   Context.S.section [ module_name ]
   @@ fun () ->
   Env.S.section [ module_name ]
@@ -247,6 +302,10 @@ let rec check_module (file : Surface.t) : unit =
 and check_top ~loc top =
   let ctx = empty_ctx in
   match top with
+  | Surface.Universe_decl names ->
+    let _ = loc in
+    let _ = ctx in
+    List.iter Context.declare_level_var names
   | Surface.Data { name; params; deps; ind_ty; ctors } ->
     handle_inductive_type ~loc ctx name params deps ind_ty ctors
   | Surface.Let (name, bindings, result_ty, body) ->
@@ -297,8 +356,39 @@ and handle_inductive_type
       (params @ deps)
       ind_ty
   in
-  let typ_tm = check_type ~loc ctx typ in
+  let typ_tm, inferred_sort = infer_type ~loc ctx typ in
   let typ_val = eval ctx.env typ_tm in
+  (* Soundness check: `data Foo (a : A) (b : B) : R`'s Pi-tower lives at
+     `lmax (sort A) (sort B) (sort R)`.  We must confirm this is ≤ R, the
+     user-declared return sort, otherwise distinct universes can leak (e.g.
+     `data Sigma (A : U) (B : A -> V) : V` with independent U, V).
+     Walk the elaborated value down to its final Universe to recover R. *)
+  let rec final_sort_of_val (ctx_lvl : int) (v : Core.value) : Level.level =
+    match force_head v with
+    | Core.VPi (_, b) -> final_sort_of_val (ctx_lvl + 1) (b (Core.rigid_local ctx_lvl))
+    | Core.Universe l -> l
+    | other ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "data type `%s`'s spine should end in a Universe, got `%s`"
+        name_of_the_inductive_type
+        ([%show: Core.value] other)
+  in
+  let user_sort = final_sort_of_val ctx.lvl typ_val in
+  (* The Pi-tower lives at `Universe (lsuc user_sort)` when its trailing
+     Universe is the user-declared sort.  Soundness: every parameter's type
+     level must be ≤ user_sort, equivalently inferred_sort ≤ lsuc user_sort. *)
+  if not (Level.le inferred_sort (Level.lsuc user_sort))
+  then
+    Reporter.fatalf
+      ~loc
+      Type_error
+      "inductive type `%s`'s declared return sort `%s` is not large enough; constructed \
+       Pi-tower lives at sort `%s`"
+      name_of_the_inductive_type
+      ([%show: Level.level] user_sort)
+      ([%show: Level.level] inferred_sort);
   Context.S.include_singleton
     ~context_visible:`Visible
     ~context_export:`Export
@@ -314,7 +404,7 @@ and handle_inductive_type
   in
   let eliminator_name = name_of_the_inductive_type ^ "-elim" in
   Eio.traceln "ELIMINATOR %s : %s\n" eliminator_name ([%show: Surface.pretype] typ);
-  let typ_tm = check ~loc ctx typ Universe in
+  let typ_tm = check_type ~loc ctx typ in
   let typ_val = eval ctx.env typ_tm in
   Context.S.include_singleton
     ~context_visible:`Visible

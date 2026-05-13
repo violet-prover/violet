@@ -56,7 +56,7 @@ let rec env_nth (env : value bwd) (i : int) : value =
 
 let rec eval (env : value bwd) (tm : term) : value =
   match tm with
-  | Universe -> Universe
+  | Universe l -> Universe l
   | LocalVar i -> env_nth env i
   | Var x ->
     (match Env.lookup x with
@@ -71,6 +71,23 @@ let rec eval (env : value bwd) (tm : term) : value =
     VLambda { name; implicit; bound = (fun v -> eval (env <: v) body) }
   | Meta m -> Meta.eval m
   | InsertedMeta (m, n) -> vapp_locals (Meta.eval m) env n
+  | Lift { from_lvl; to_lvl; ty } -> VLift { from_lvl; to_lvl; ty = eval env ty }
+  | LiftTerm { from_lvl; to_lvl; ty; tm } ->
+    let v_ty = eval env ty in
+    let v_tm = eval env tm in
+    (match v_tm with
+     | VUnliftTerm inner
+       when Level.equal inner.from_lvl from_lvl && Level.equal inner.to_lvl to_lvl ->
+       inner.tm
+     | _ -> VLiftTerm { from_lvl; to_lvl; ty = v_ty; tm = v_tm })
+  | UnliftTerm { from_lvl; to_lvl; ty; tm } ->
+    let v_ty = eval env ty in
+    let v_tm = eval env tm in
+    (match v_tm with
+     | VLiftTerm inner
+       when Level.equal inner.from_lvl from_lvl && Level.equal inner.to_lvl to_lvl ->
+       inner.tm
+     | _ -> VUnliftTerm { from_lvl; to_lvl; ty = v_ty; tm = v_tm })
 
 (* 把 v 套上 env 的 outermost n 個 local。env 從外往內，
    所以 outermost 是 env 從左數起的 n 個元素。 *)
@@ -96,6 +113,30 @@ and vapp_locals (v : value) (env : value bwd) (n : int) : value =
 ;;
 
 let%expect_test "eval Universe" =
-  print_string @@ [%show: value] (eval Emp Universe);
+  print_string @@ [%show: value] (eval Emp (Universe Level.LZero));
   [%expect {| 𝓤 |}]
+;;
+
+let%expect_test "lift unlift cancels" =
+  let zero = Level.lzero in
+  let one = Level.lsuc Level.lzero in
+  (* env contains a single value `x` (printed as `$0`) at de Bruijn index 0.
+     `Var "A"` is also stored as a value so eval doesn't hit Env.lookup. *)
+  let x_val = rigid_local 0 in
+  let a_val = rigid_local 1 in
+  let env = Bwd.Infix.(Bwd.Emp <: a_val <: x_val) in
+  let v =
+    eval
+      env
+      (LiftTerm
+         { from_lvl = zero
+         ; to_lvl = one
+         ; ty = LocalVar 1
+         ; tm =
+             UnliftTerm
+               { from_lvl = zero; to_lvl = one; ty = LocalVar 1; tm = LocalVar 0 }
+         })
+  in
+  print_string @@ [%show: value] v;
+  [%expect {| $0 |}]
 ;;

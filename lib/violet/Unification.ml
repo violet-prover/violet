@@ -35,7 +35,7 @@ module PartialRenaming = struct
 
   let rec rename (m : metavar) (pr : t) (v : value) : term =
     match force v with
-    | Universe -> Universe
+    | Universe l -> Universe l
     | Flex (m', _) when m = m' ->
       Reporter.fatalf
         Elab_error
@@ -74,6 +74,11 @@ module PartialRenaming = struct
       in
       Hashtbl.remove pr.ren pr.cod;
       Pi ({ name; bound = a'; implicit }, b')
+    | VLift { from_lvl; to_lvl; ty } -> Lift { from_lvl; to_lvl; ty = rename m pr ty }
+    | VLiftTerm { from_lvl; to_lvl; ty; tm } ->
+      LiftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
+    | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
+      UnliftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
 
   and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
     match sp with
@@ -133,7 +138,25 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
   (* force_head unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
   match force_head a, force_head b with
-  | Universe, Universe -> ()
+  | Universe l1, Universe l2 when Level.equal l1 l2 -> ()
+  | VLift a, VLift b ->
+    if Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl
+    then unify ~loc lvl a.ty b.ty
+    else
+      Reporter.fatalf
+        ~loc
+        Type_error
+        "cannot unify Lift at different levels: %s vs %s"
+        ([%show: Level.level] a.to_lvl)
+        ([%show: Level.level] b.to_lvl)
+  | VLiftTerm a, VLiftTerm b
+    when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
+    unify ~loc lvl a.ty b.ty;
+    unify ~loc lvl a.tm b.tm
+  | VUnliftTerm a, VUnliftTerm b
+    when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
+    unify ~loc lvl a.ty b.ty;
+    unify ~loc lvl a.tm b.tm
   | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 ->
     unify_spine ~loc lvl sp1 sp2
   | Var (h1, sp1), Var (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc lvl sp1 sp2

@@ -3,6 +3,9 @@ import list
 import vec
 import equality
 import compute
+import universe-explicit
+import sigma
+import sigma-multi
 
 # whatever
 let id {A : U} (x : A) : A := x

@@ -113,6 +113,10 @@ let expected : (string * outcome) list =
   ; "../example/index.vt", `Ok
   ; "../example/nat-properties.vt", `Ok
   ; "../example/compute.vt", `Ok
+  ; "../example/universe-explicit.vt", `Ok
+  ; "../example/sigma.vt", `Ok
+  ; "../example/sigma-multi.vt", `Ok
+  ; "../example/independent-universes-bad.vt", `Fail
   ]
 ;;
 

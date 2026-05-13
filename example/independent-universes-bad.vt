@@ -1,0 +1,3 @@
+universe U V
+
+let bad (A : U) : V := A

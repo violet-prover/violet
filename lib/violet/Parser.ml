@@ -29,11 +29,17 @@ let ident () : string =
       ([%show: Lexer.token] tok)
 ;;
 
-let rec p_preterm () : Surface.preterm = Combinator.infix partial_arrow spine ()
+let rec p_preterm () : Surface.preterm = Combinator.infix partial_arrow p_max_level ()
 
 and partial_arrow () : Surface.preterm -> Surface.preterm -> Surface.preterm =
   Combinator.consume Lexer.ARROW;
   fun a b -> Pi ({ name = "_"; bound = a; implicit = false }, b)
+
+and p_max_level () : Surface.preterm = Combinator.infix partial_join spine ()
+
+and partial_join () : Surface.preterm -> Surface.preterm -> Surface.preterm =
+  Combinator.consume Lexer.JOIN;
+  fun a b -> Max (a, b)
 
 and spine () : Surface.preterm =
   let a = p_patom () in
@@ -63,7 +69,6 @@ and p_patom () : Surface.preterm =
   let loc = Option.get tok.loc in
   let tm : Surface.preterm =
     match tok.value with
-    | Lexer.UNIV -> Universe
     | Lexer.IDENT s -> Var s
     | Lexer.L_PAREN ->
       (match catch_parse_error (p_multi_bindings false) with
@@ -176,10 +181,17 @@ let p_inductive () : Surface.top =
     { name; params; deps = Surface.telescope ret; ind_ty = Surface.codomain ret; ctors }
 ;;
 
+let p_universe () : Surface.top =
+  Combinator.consume Lexer.UNIVERSE;
+  let first = ident () in
+  let rest = Combinator.many ident () in
+  Universe_decl (first :: rest)
+;;
+
 let p_top () : Surface.top Asai.Range.located =
   let open Combinator in
   let loc = current_loc () in
-  let value = (p_let <|> p_inductive) () in
+  let value = (p_let <|> p_inductive <|> p_universe) () in
   { loc; value }
 ;;
 
