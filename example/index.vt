@@ -2,6 +2,7 @@ import nat
 import list
 import vec
 import equality
+import compute
 
 # whatever
 let id {A : U} (x : A) : A := x

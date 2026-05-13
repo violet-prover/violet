@@ -27,13 +27,21 @@ let rec force : value -> value = function
 
 (* Like force but also unfolds opaque global heads.  Use when we need to see
    the WHNF spine of a value (e.g. for application type-checking, where the
-   head must be a VPi). *)
+   head must be a VPi).  Eliminators get a chance to ι-reduce first: when
+   `X-elim`'s target argument forces to a `Label`, the registered reducer
+   fires; otherwise the head stays opaque. *)
 let rec force_head (v : value) : value =
   match force v with
   | Var (x, sp) ->
-    (match Env.unfold_def x with
-     | Some def -> force_head (vapp_spine def sp)
-     | None -> Var (x, sp))
+    (match Env.lookup_elim_reducer x with
+     | Some reducer ->
+       (match reducer sp with
+        | Some reduced -> force_head reduced
+        | None -> Var (x, sp))
+     | None ->
+       (match Env.unfold_def x with
+        | Some def -> force_head (vapp_spine def sp)
+        | None -> Var (x, sp)))
   | t -> t
 ;;
 
