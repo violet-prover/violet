@@ -520,7 +520,20 @@ module Grammar = struct
           then
             match buf.(after).Asai.Range.value with
             | Lexer.IDENT s ->
-              after + 1, wrap_loc qmark_loc (S.Goal (Some s))
+              let ident_loc = buf.(after).Asai.Range.loc in
+              let span =
+                match qmark_loc, ident_loc with
+                | Some q, Some j ->
+                  (try
+                     let bpos, _ = Asai.Range.split q in
+                     let _, epos = Asai.Range.split j in
+                     Some (Asai.Range.make (bpos, epos))
+                   with
+                   | Invalid_argument _ -> qmark_loc)
+                | Some _, None -> qmark_loc
+                | None, _ -> ident_loc
+              in
+              after + 1, wrap_loc span (S.Goal (Some s))
             | _ -> assert false
           else after, wrap_loc qmark_loc (S.Goal None)
         in

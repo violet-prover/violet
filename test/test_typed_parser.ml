@@ -220,6 +220,26 @@ let goal_test () =
      end
    | _ ->
      Format.printf "goal_test FAIL ?here: unexpected parse result@.";
+     exit 1);
+  (* `?here` location spans both the `?` and the identifier *)
+  let tops3 = parse_tops "let f : U := ?here" in
+  (match tops3 with
+   | [ { Asai.Range.value = Violet.Syntax.Surface.Let (_, _, _, body); _ } ] ->
+     (match body with
+      | Violet.Syntax.Surface.Located { loc = Some loc; value = Violet.Syntax.Surface.Goal (Some "here") } ->
+        let bpos, epos = Asai.Range.split loc in
+        let span = epos.offset - bpos.offset in
+        if span = 5
+        then Format.printf "goal_test OK  ?here span = 5 (covers `?here`)@."
+        else begin
+          Format.printf "goal_test FAIL ?here span: expected 5, got %d@." span;
+          exit 1
+        end
+      | _ ->
+        Format.printf "goal_test FAIL ?here span: unexpected AST shape@.";
+        exit 1)
+   | _ ->
+     Format.printf "goal_test FAIL ?here span: unexpected parse result@.";
      exit 1)
 ;;
 
