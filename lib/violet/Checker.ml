@@ -1209,13 +1209,36 @@ let rec dispatch (m : machine) (g : goal) : unit =
            ~clauses
        in
        (* `intros` lists every binder on the guard line — one per Pi-layer
-          of the full function type (params + past-params). Wrap with intros
-          lambdas only; the outer Pi-layers from `bindings` are covered by
-          intros[0..np-1]. *)
+          of the full function type (params + past-params). Each lambda's
+          implicit-ness must match the corresponding Pi-binder: for intros
+          [0..np-1] take it from `bindings`; for the rest take it from
+          `signature`'s outer Pi-layers. *)
+       let intros_with_modes : (string * bool) list =
+         let np = List.length bindings in
+         let param_modes =
+           List.map (fun (b : Surface.pretype binder) -> b.implicit) bindings
+         in
+         let rec sig_modes n s =
+           if n <= 0
+           then []
+           else (
+             match s with
+             | Surface.Located { value; _ } -> sig_modes n value
+             | Surface.Pi (b, cod) -> b.implicit :: sig_modes (n - 1) cod
+             | _ ->
+               Reporter.fatalf
+                 ~loc
+                 Elab_error
+                 "elim: signature has fewer Pi-layers than intros require")
+         in
+         let n_sig = List.length intros - np in
+         let modes = param_modes @ sig_modes n_sig signature in
+         List.map2 (fun n implicit -> n, implicit) intros modes
+       in
        let term : Surface.preterm =
          List.fold_right
-           (fun n body -> Surface.Lambda { name = n; bound = body; implicit = false })
-           intros
+           (fun (n, implicit) body -> Surface.Lambda { name = n; bound = body; implicit })
+           intros_with_modes
            elim_inner
        in
        push m (KTopLet_HaveBody (loc, name, typ_val));
