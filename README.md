@@ -2,7 +2,7 @@
 
 This project develop violet using nameful context (library Yuujinchou).
 
-- core unification and meta solving: elaboration-zoo
+- core unification and meta solving: elaboration-zoo, Pterodactyl
 - top level
   - let definition
   - import statement
