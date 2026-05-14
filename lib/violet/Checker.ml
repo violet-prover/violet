@@ -209,7 +209,7 @@ let rewrite_recursive_calls
       Surface.TypedLambda ({ b with bound = rw b.bound }, rw body)
     | Surface.Pi (b, body) -> Surface.Pi ({ b with bound = rw b.bound }, rw body)
     | Surface.Max (a, b) -> Surface.Max (rw a, rw b)
-    | Surface.Var _ | Surface.Universe | Surface.Hole -> t
+    | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
   in
   rw body
 ;;
@@ -685,10 +685,20 @@ type machine =
   ; mutable result : produced option
   ; mutable ctx : local_ctx
   ; mutable saved_ctx : local_ctx list
+  ; module_name : string
+  ; goal_counter : int ref
+  ; pending_goals : int ref
   }
 
-let make_machine () : machine =
-  { goals = []; result = None; ctx = empty_ctx; saved_ctx = [] }
+let make_machine ~(module_name : string) ~(goal_counter : int ref) () : machine =
+  { goals = []
+  ; result = None
+  ; ctx = empty_ctx
+  ; saved_ctx = []
+  ; module_name
+  ; goal_counter
+  ; pending_goals = ref 0
+  }
 ;;
 
 let save_ctx (m : machine) : unit = m.saved_ctx <- m.ctx :: m.saved_ctx
@@ -709,6 +719,48 @@ let take_result (m : machine) : produced =
     m.result <- None;
     p
   | None -> Reporter.fatalf Elab_error "StackElab: take_result on empty result"
+;;
+
+let resolve_goal_name (m : machine) (n : string option) : string =
+  match n with
+  | Some s -> s
+  | None ->
+    let i = !(m.goal_counter) in
+    m.goal_counter := i + 1;
+    string_of_int i
+;;
+
+let emit_goal_report
+      ~(loc : Asai.Range.t)
+      (m : machine)
+      ~(name : string)
+      ~(target : Core.value)
+  : unit
+  =
+  let buf = Buffer.create 128 in
+  Buffer.add_string buf (Printf.sprintf "?%s/%s\n" m.module_name name);
+  Buffer.add_string buf "  --- context ---\n";
+  (* Bwd.to_list returns outermost-first. *)
+  let names = Bwd.to_list m.ctx.names in
+  let types = Bwd.to_list m.ctx.types in
+  List.iter2
+    (fun n ty ->
+       Buffer.add_string buf
+         (Printf.sprintf "  %s : %s\n" n ([%show: Core.value] ty)))
+    names
+    types;
+  Buffer.add_string buf "  --- target ---\n";
+  Buffer.add_string buf
+    (Printf.sprintf "  %s" ([%show: Core.value] target));
+  Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
+;;
+
+let name_of_top : Surface.top -> string = function
+  | Surface.Let (n, _, _, _) -> n
+  | Surface.Data { name; _ } -> name
+  | Surface.Stack_def { name; _ } -> name
+  | Surface.Elim_def { name; _ } -> name
+  | Surface.Universe_decl _ -> "<universe_decl>"
 ;;
 
 let rec dispatch (m : machine) (g : goal) : unit =
@@ -734,6 +786,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
         | Some l ->
           m.result <- Some (PTermType (Core.Universe l, Core.Universe (Level.lsuc l)))
         | None -> m.result <- Some (PTermType (Core.Var x, Context.lookup x))))
+  | GInferType (loc, Goal name_opt) ->
+    let name = resolve_goal_name m name_opt in
+    emit_goal_report ~loc m ~name ~target:(Core.Universe Level.LZero);
+    incr m.pending_goals;
+    m.result <- Some (PType (Meta.meta_fresh m.ctx.lvl, Level.LZero))
   | GInferType (loc, p) ->
     push m (KEnsureUniverse loc);
     push m (GInfer (loc, p))
@@ -879,6 +936,18 @@ let rec dispatch (m : machine) (g : goal) : unit =
     let ty = Evaluation.eval m.ctx.env (Meta.meta_fresh m.ctx.lvl) in
     let tm = Meta.meta_fresh m.ctx.lvl in
     m.result <- Some (PTermType (tm, ty))
+  | GCheck (loc, Goal name_opt, ty) ->
+    let name = resolve_goal_name m name_opt in
+    emit_goal_report ~loc m ~name ~target:ty;
+    incr m.pending_goals;
+    m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
+  | GInfer (loc, Goal name_opt) ->
+    let name = resolve_goal_name m name_opt in
+    let ty_tm = Meta.meta_fresh m.ctx.lvl in
+    let ty_val = Evaluation.eval m.ctx.env ty_tm in
+    emit_goal_report ~loc m ~name ~target:ty_val;
+    incr m.pending_goals;
+    m.result <- Some (PTermType (Meta.meta_fresh m.ctx.lvl, ty_val))
   | GInfer (loc, Max (a, b)) ->
     push m (KMax_HaveLeft (loc, b));
     push m (GInfer (loc, a))
@@ -1143,7 +1212,7 @@ and drive (m : machine) : produced =
 and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
   : Core.term * Level.level
   =
-  let m = make_machine () in
+  let m = make_machine ~module_name:"_internal" ~goal_counter:(ref 0) () in
   m.ctx <- ctx;
   push m (GInferType (loc, pretype));
   match drive m with
@@ -1185,11 +1254,33 @@ let with_handlers (k : unit -> 'a) : 'a =
   @@ k
 ;;
 
+(* Like with_handlers, but prints emitted diagnostics to stdout so that
+   %expect_test blocks can match against them. *)
+let with_handlers_emitting (k : unit -> 'a) : 'a =
+  Reporter.run
+    ~emit:(fun (d : Reporter.Message.t Asai.Diagnostic.t) ->
+       Format.printf "[%s] %t@."
+         (Reporter.Message.show d.message)
+         d.explanation.value)
+    ~fatal:(fun d -> failwith ([%show: Reporter.Message.t] d.message))
+  @@ fun () ->
+  Context.S.run
+    ~shadow:Context.Handler.shadow
+    ~not_found:Context.Handler.not_found
+    ~hook:Context.Handler.hook
+  @@ fun () ->
+  Env.S.run
+    ~shadow:Env.Handler.shadow
+    ~not_found:Env.Handler.not_found
+    ~hook:Env.Handler.hook
+  @@ k
+;;
+
 (* Test harness: run a single GInfer to completion against the empty ctx. *)
 let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   with_handlers
   @@ fun () ->
-  let m = make_machine () in
+  let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
   push m (GInfer (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), p));
   match drive m with
   | PTermType (tm, ty) -> tm, ty
@@ -1204,7 +1295,7 @@ let%expect_test "infer Universe" =
 
 let%expect_test "infer Var bound locally" =
   with_handlers (fun () ->
-    let m = make_machine () in
+    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
     m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
     push
       m
@@ -1238,7 +1329,7 @@ let%expect_test "check Lambda against Pi" =
       , fun _ -> Core.Universe Level.LZero )
   in
   with_handlers (fun () ->
-    let m = make_machine () in
+    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
     push
       m
       (GCheck
@@ -1256,7 +1347,7 @@ let%expect_test "infer App" =
   (* Apply a locally-bound function f : (U -> U) to a locally-bound argument x : U.
      This tests the App dispatch without needing lift insertion. *)
   with_handlers (fun () ->
-    let m = make_machine () in
+    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
     let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
     (* Bind x : U at level 0 *)
     m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
@@ -1316,8 +1407,69 @@ let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
   [%expect {| ((foo m) n) |}]
 ;;
 
-let check_top ~loc (top : Surface.top) : unit =
-  let m = make_machine () in
+let%expect_test "report named goal in check mode" =
+  with_handlers_emitting (fun () ->
+    let m = make_machine ~module_name:"nat" ~goal_counter:(ref 0) () in
+    m.ctx <- bind m.ctx "A" (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx "x" (Core.RigidLocal (0, Bwd.Emp));
+    push
+      m
+      (GCheck
+         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+         , Surface.Goal (Some "here")
+         , Core.RigidLocal (0, Bwd.Emp) ));
+    ignore (drive m);
+    Printf.printf "pending=%d" !(m.pending_goals));
+  [%expect {|
+    [Reporter.Message.Goal_report] ?nat/here
+      --- context ---
+      A : 𝓤
+      x : $0
+      --- target ---
+      $0
+    pending=1
+    |}]
+;;
+
+let%expect_test "auto-numbered goals" =
+  with_handlers_emitting (fun () ->
+    let counter = ref 0 in
+    let m = make_machine ~module_name:"nat" ~goal_counter:counter () in
+    push
+      m
+      (GCheck
+         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+         , Surface.Goal None
+         , Core.Universe Level.LZero ));
+    push
+      m
+      (GCheck
+         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+         , Surface.Goal None
+         , Core.Universe Level.LZero ));
+    ignore (drive m);
+    Printf.printf "pending=%d counter=%d" !(m.pending_goals) !counter);
+  [%expect {|
+    [Reporter.Message.Goal_report] ?nat/0
+      --- context ---
+      --- target ---
+      𝓤
+    [Reporter.Message.Goal_report] ?nat/1
+      --- context ---
+      --- target ---
+      𝓤
+    pending=2 counter=2
+    |}]
+;;
+
+let check_top
+      ~(module_name : string)
+      ~(goal_counter : int ref)
+      ~(loc : Asai.Range.t)
+      (top : Surface.top)
+  : unit
+  =
+  let m = make_machine ~module_name ~goal_counter () in
   let g =
     match top with
     | Surface.Universe_decl names -> GTopUniverseDecl names
@@ -1330,7 +1482,15 @@ let check_top ~loc (top : Surface.top) : unit =
       GTopElimDef (loc, name, params, signature, intros, target, clauses)
   in
   push m g;
-  ignore (drive m)
+  ignore (drive m);
+  if !(m.pending_goals) > 0
+  then
+    Reporter.emitf
+      ~loc
+      Goal_unresolved
+      "declaration `%s` has %d unresolved goal(s)"
+      (name_of_top top)
+      !(m.pending_goals)
 ;;
 
 let check_module (file : Surface.t) : unit =
@@ -1356,9 +1516,10 @@ let check_module (file : Surface.t) : unit =
         @@ Yuujinchou.Language.(union [ all; renaming library [] ]));
        Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]))
     file.imports;
+  let goal_counter = ref 0 in
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
        let loc = Option.get top.loc in
-       check_top ~loc top.value)
+       check_top ~module_name ~goal_counter ~loc top.value)
     file.tops
 ;;

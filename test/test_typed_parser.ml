@@ -184,7 +184,47 @@ let benchmark () =
     (typed_med /. cur_med)
 ;;
 
+let goal_test () =
+  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet.Parser.tokens "<goal_test>" lexbuf) in
+    let m = Violet.Parser.parse_buf ~name:"<goal_test>" toks in
+    m.Violet.Syntax.Surface.tops
+  in
+  (* `?` alone as the body *)
+  let tops1 = parse_tops "let f : U := ?" in
+  (match tops1 with
+   | [ { Asai.Range.value = Violet.Syntax.Surface.Let (_, _, _, body); _ } ] ->
+     let s = Violet.Syntax.Surface.show_preterm body in
+     if s = "?"
+     then Format.printf "goal_test OK  bare ? -> %s@." s
+     else begin
+       Format.printf "goal_test FAIL bare ?: got %s@." s;
+       exit 1
+     end
+   | _ ->
+     Format.printf "goal_test FAIL bare ?: unexpected parse result@.";
+     exit 1);
+  (* `?here` as the body *)
+  let tops2 = parse_tops "let f : U := ?here" in
+  (match tops2 with
+   | [ { Asai.Range.value = Violet.Syntax.Surface.Let (_, _, _, body); _ } ] ->
+     let s = Violet.Syntax.Surface.show_preterm body in
+     if s = "?here"
+     then Format.printf "goal_test OK  ?here -> %s@." s
+     else begin
+       Format.printf "goal_test FAIL ?here: got %s@." s;
+       exit 1
+     end
+   | _ ->
+     Format.printf "goal_test FAIL ?here: unexpected parse result@.";
+     exit 1)
+;;
+
 let () =
   positive_test ();
+  goal_test ();
   benchmark ()
 ;;

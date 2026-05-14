@@ -31,6 +31,7 @@ module C : sig
     | T_WHERE
     | T_STACK_ARROW
     | T_FAT_ARROW
+    | T_QMARK
 
   type t
 
@@ -69,6 +70,7 @@ end = struct
     | T_WHERE
     | T_STACK_ARROW
     | T_FAT_ARROW
+    | T_QMARK
 
   let tag_index = function
     | T_DATA -> 0
@@ -91,6 +93,7 @@ end = struct
     | T_WHERE -> 17
     | T_STACK_ARROW -> 18
     | T_FAT_ARROW -> 19
+    | T_QMARK -> 20
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -114,17 +117,18 @@ end = struct
     | Lexer.WHERE -> T_WHERE
     | Lexer.STACK_ARROW -> T_STACK_ARROW
     | Lexer.FAT_ARROW -> T_FAT_ARROW
+    | Lexer.QMARK -> T_QMARK
   ;;
 
   type t = int
 
   let empty = 0
-  let top = 0xFFFFF
+  let top = 0x1FFFFF
   let one t = 1 lsl tag_index t
   let of_list ts = List.fold_left (fun s t -> s lor (1 lsl tag_index t)) 0 ts
   let union = ( lor )
   let inter = ( land )
-  let negate s = lnot s land 0xFFFFF
+  let negate s = lnot s land 0x1FFFFF
   let mem_tag t s = s land (1 lsl tag_index t) <> 0
   let mem tok s = mem_tag (tag_of tok) s
   let is_empty s = s = 0
@@ -502,9 +506,31 @@ module Grammar = struct
         in
         { tp; parse }
       in
+      (* QMARK atom: `?` optionally followed by IDENT. The `tp.first` is
+         only T_QMARK, so the dispatcher in `||` only enters here when the
+         current token IS a QMARK — we just need to peek the next token to
+         decide whether an IDENT follows. *)
+      let goal_atom : S.preterm t =
+        let tp = Tp.{ null = false; first = C.one C.T_QMARK; follow = C.empty } in
+        let parse buf i =
+          let qmark_loc = buf.(i).Asai.Range.loc in
+          let after = i + 1 in
+          if after < Array.length buf
+             && C.tag_of buf.(after).Asai.Range.value = C.T_IDENT
+          then
+            match buf.(after).Asai.Range.value with
+            | Lexer.IDENT s ->
+              after + 1, wrap_loc qmark_loc (S.Goal (Some s))
+            | _ -> assert false
+          else after, wrap_loc qmark_loc (S.Goal None)
+        in
+        { tp; parse }
+      in
       (* atom_no_bracket is used in the "explicit" branch of `arg` so the alt
          with `{ atom }` doesn't double-claim LBRACKET. *)
-      let atom_no_bracket : S.preterm t = ident_atom || p_atom_lparen || p_atom_lambda in
+      let atom_no_bracket : S.preterm t =
+        ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
+      in
       let atom : S.preterm t = atom_no_bracket || p_atom_lbracket in
       let arg : (bool * S.preterm) t =
         (let+ _ = tok C.T_LBRACKET
