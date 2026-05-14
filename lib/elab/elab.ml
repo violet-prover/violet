@@ -1,3 +1,9 @@
+module Syntax = Violet_kernel.Syntax
+module Level = Violet_kernel.Level
+module Evaluation = Wiring.Eval
+module Check = Wiring.Check
+module Unification = Unify
+module ElabData = Driver
 open Syntax
 open Asai.Range
 open Bwd
@@ -829,7 +835,7 @@ type goal =
       * Surface.stack_move list
       * Surface.clause list
   | KTopLet_HaveType of t * string * Surface.preterm * Surface.pretype binder list
-  | KTopLet_HaveBody of t * string * Core.value_ty
+  | KTopLet_HaveBody of t * string * Core.term * Core.value_ty
   | KTopData_HaveType of
       t
       * string
@@ -867,16 +873,24 @@ type machine =
   ; mutable ctx : local_ctx
   ; mutable saved_ctx : local_ctx list
   ; module_name : string
+  ; kernel_module : Violet_kernel.Module.t
   ; goal_counter : int ref
   ; pending_goals : int ref
   }
 
-let make_machine ~(module_name : string) ~(goal_counter : int ref) () : machine =
+let make_machine
+      ~(module_name : string)
+      ~(kernel_module : Violet_kernel.Module.t)
+      ~(goal_counter : int ref)
+      ()
+  : machine
+  =
   { goals = []
   ; result = None
   ; ctx = empty_ctx
   ; saved_ctx = []
   ; module_name
+  ; kernel_module
   ; goal_counter
   ; pending_goals = ref 0
   }
@@ -1299,14 +1313,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
            bindings
            body
        in
-       push m (KTopLet_HaveBody (loc, name, typ_val));
+       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
          Elab_error
          "KTopLet_HaveType: bad result %s"
          ([%show: produced] other))
-  | KTopLet_HaveBody (_loc, name, typ_val) ->
+  | KTopLet_HaveBody (_loc, name, typ_tm, typ_val) ->
     (match take_result m with
      | PTerm term ->
        Context.S.include_singleton
@@ -1319,6 +1333,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~context_export:`Export
          ([ name ], (body_val, `Constructor));
        Env.register_definition name body_val;
+       let qname = m.module_name ^ "." ^ name in
+       Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term;
        m.result <- Some PUnit
      | other ->
        Reporter.fatalf
@@ -1370,7 +1386,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
            bindings
            inner
        in
-       push m (KTopLet_HaveBody (loc, name, typ_val));
+       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
@@ -1409,7 +1425,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
            intros
            elim_inner
        in
-       push m (KTopLet_HaveBody (loc, name, typ_val));
+       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
@@ -1480,7 +1496,19 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~context_visible:`Visible
          ~context_export:`Export
          ([ name ], (Core.IndType (name, Bwd.Emp), `Constructor));
-       List.iter (bind_constructor ~loc m.ctx params) ctors;
+       let ctor_names = List.map (fun (b : Surface.pretype binder) -> b.name) ctors in
+       let qname = m.module_name ^ "." ^ name in
+       let qctor_names = List.map (fun cn -> m.module_name ^ "." ^ cn) ctor_names in
+       Check.accept_data m.kernel_module ~name:qname ~ty:typ_tm ~ctor_names:qctor_names;
+       List.iter
+         (bind_constructor
+            ~loc
+            ~ind_name:qname
+            ~module_name:m.module_name
+            ~kernel_module:m.kernel_module
+            m.ctx
+            params)
+         ctors;
        let elim_typ : Surface.pretype =
          ElabData.eliminator_type ~name ~params ~deps ~ind_ty ctors
        in
@@ -1494,11 +1522,18 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let reducer =
          ElabData.build_elim_reducer ~ind_name:name ~elim_name ~params ~deps ctors
        in
-       let elim_value = Core.Elim ({ elim_name; reducer }, Bwd.Emp) in
+       let elim_head : Core.elim_head = { elim_name; reducer } in
+       let elim_value = Core.Elim (elim_head, Bwd.Emp) in
        Env.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export
          ([ elim_name ], (elim_value, `Constructor));
+       let qelim_name = m.module_name ^ "." ^ elim_name in
+       Check.accept_elim
+         m.kernel_module
+         ~name:qelim_name
+         ~ty:elim_typ_tm
+         ~reducer:elim_head;
        m.result <- Some PUnit
      | other ->
        Reporter.fatalf
@@ -1518,7 +1553,13 @@ and drive (m : machine) : produced =
 and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
   : Core.term * Level.level
   =
-  let m = make_machine ~module_name:"_internal" ~goal_counter:(ref 0) () in
+  let m =
+    make_machine
+      ~module_name:"_internal"
+      ~kernel_module:(Violet_kernel.Module.create ())
+      ~goal_counter:(ref 0)
+      ()
+  in
   m.ctx <- ctx;
   push m (GInferType (loc, pretype));
   match drive m with
@@ -1530,6 +1571,9 @@ and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
 
 and bind_constructor
       ~loc
+      ~(ind_name : string)
+      ~(module_name : string)
+      ~(kernel_module : Violet_kernel.Module.t)
       (ctx : local_ctx)
       (params : Surface.pretype binder list)
       ({ name; bound = typ; _ } : Surface.pretype binder)
@@ -1539,7 +1583,9 @@ and bind_constructor
   let ctor_ty_tm = check_type ~loc ctx typ in
   let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
   Context.S.include_singleton ([ name ], (ctor_ty, `Constructor));
-  Env.S.include_singleton ([ name ], (Core.Label (name, Bwd.Emp), `Constructor))
+  Env.S.include_singleton ([ name ], (Core.Label (name, Bwd.Emp), `Constructor));
+  let qctor_name = module_name ^ "." ^ name in
+  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_name ~ty:ctor_ty_tm
 ;;
 
 (* Internal: run a thunk under all elaboration effect handlers. *)
@@ -1584,7 +1630,13 @@ let with_handlers_emitting (k : unit -> 'a) : 'a =
 let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   with_handlers
   @@ fun () ->
-  let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
+  let m =
+    make_machine
+      ~module_name:"test"
+      ~kernel_module:(Violet_kernel.Module.create ())
+      ~goal_counter:(ref 0)
+      ()
+  in
   push m (GInfer (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), p));
   match drive m with
   | PTermType (tm, ty) -> tm, ty
@@ -1599,7 +1651,13 @@ let%expect_test "infer Universe" =
 
 let%expect_test "infer Var bound locally" =
   with_handlers (fun () ->
-    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
+    let m =
+      make_machine
+        ~module_name:"test"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:(ref 0)
+        ()
+    in
     m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
     push
       m
@@ -1633,7 +1691,13 @@ let%expect_test "check Lambda against Pi" =
       , fun _ -> Core.Universe Level.LZero )
   in
   with_handlers (fun () ->
-    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
+    let m =
+      make_machine
+        ~module_name:"test"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:(ref 0)
+        ()
+    in
     push
       m
       (GCheck
@@ -1651,7 +1715,13 @@ let%expect_test "infer App" =
   (* Apply a locally-bound function f : (U -> U) to a locally-bound argument x : U.
      This tests the App dispatch without needing lift insertion. *)
   with_handlers (fun () ->
-    let m = make_machine ~module_name:"test" ~goal_counter:(ref 0) () in
+    let m =
+      make_machine
+        ~module_name:"test"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:(ref 0)
+        ()
+    in
     let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
     (* Bind x : U at level 0 *)
     m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
@@ -1713,7 +1783,13 @@ let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
 
 let%expect_test "report named goal in check mode" =
   with_handlers_emitting (fun () ->
-    let m = make_machine ~module_name:"nat" ~goal_counter:(ref 0) () in
+    let m =
+      make_machine
+        ~module_name:"nat"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:(ref 0)
+        ()
+    in
     m.ctx <- bind m.ctx "A" (Core.Universe Level.LZero);
     m.ctx <- bind m.ctx "x" (Core.RigidLocal (0, Bwd.Emp));
     push
@@ -1739,7 +1815,13 @@ let%expect_test "report named goal in check mode" =
 let%expect_test "auto-numbered goals" =
   with_handlers_emitting (fun () ->
     let counter = ref 0 in
-    let m = make_machine ~module_name:"nat" ~goal_counter:counter () in
+    let m =
+      make_machine
+        ~module_name:"nat"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:counter
+        ()
+    in
     push
       m
       (GCheck
@@ -1794,12 +1876,13 @@ let%expect_test "compute_effective_intros: bracketed intro at explicit param err
 
 let check_top
       ~(module_name : string)
+      ~(kernel_module : Violet_kernel.Module.t)
       ~(goal_counter : int ref)
       ~(loc : Asai.Range.t)
       (top : Surface.top)
   : unit
   =
-  let m = make_machine ~module_name ~goal_counter () in
+  let m = make_machine ~module_name ~kernel_module ~goal_counter () in
   let g =
     match top with
     | Surface.Universe_decl names -> GTopUniverseDecl names
@@ -1826,6 +1909,7 @@ let check_top
 let check_module (file : Surface.t) : unit =
   let module_name = Filename.chop_extension @@ Filename.basename file.name in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
+  let kernel_module = Violet_kernel.Module.create () in
   Context.clear_level_vars ();
   let has_explicit_universe_decl =
     List.exists
@@ -1850,6 +1934,6 @@ let check_module (file : Surface.t) : unit =
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
        let loc = Option.get top.loc in
-       check_top ~module_name ~goal_counter ~loc top.value)
+       check_top ~module_name ~kernel_module ~goal_counter ~loc top.value)
     file.tops
 ;;

@@ -4,8 +4,17 @@
   (source_tree ../example))
  (preprocess
   (pps ppx_deriving.show))
- (libraries violet asai eio eio_main yuujinchou bwd unix tsort))
+ (libraries
+  violet_elab
+  violet_kernel
+  asai
+  eio
+  eio_main
+  yuujinchou
+  bwd
+  unix
+  tsort))
 
 (test
  (name test_typed_parser)
- (libraries violet asai))
+ (libraries violet_elab violet_kernel asai))

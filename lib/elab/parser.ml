@@ -9,6 +9,14 @@
    Everything else type-checks under the typed-algebraic discipline, so the
    grammar is statically proven unambiguous along those paths. *)
 
+(* Re-export Syntax so existing `Syntax.Surface` and `Syntax.binder` references
+   continue to resolve without per-site edits.  Surface now lives in elab;
+   binder is in Violet_kernel.Syntax. *)
+module Syntax = struct
+  include Violet_kernel.Syntax
+  module Surface = Surface
+end
+
 module C : sig
   type tag =
     | T_DATA

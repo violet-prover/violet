@@ -1,4 +1,4 @@
-open Syntax.Core
+open Violet_kernel.Syntax.Core
 open Bwd
 open Bwd.Infix
 
@@ -37,3 +37,8 @@ let fresh_meta_value (lvl : int) : value =
   in
   Flex (m, build 0 Emp)
 ;;
+
+module View : Violet_kernel.Views.META_VIEW = struct
+  let lookup = lookup_meta
+  let eval = eval
+end

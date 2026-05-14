@@ -2,7 +2,16 @@
  (name benchmark_typed_parser)
  (preprocess
   (pps ppx_deriving.show))
- (libraries violet asai eio eio_main yuujinchou bwd unix tsort))
+ (libraries
+  violet_elab
+  violet_kernel
+  asai
+  eio
+  eio_main
+  yuujinchou
+  bwd
+  unix
+  tsort))
 
 (rule
  (alias bench)

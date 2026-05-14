@@ -1,3 +1,5 @@
+module Syntax = Violet_kernel.Syntax
+module Level = Violet_kernel.Level
 open Syntax
 open Bwd
 open Bwd.Infix
@@ -216,26 +218,24 @@ let%expect_test "Vec result type" =
   [%expect {| ((motive _0) target) |}]
 ;;
 
-(* Per-ctor binder kind, computed at declaration time. *)
-type binder_kind =
+(* These types are defined in Context (elab/context.ml).
+   Alias them here so existing code in driver continues to compile unchanged. *)
+type binder_kind = Context.binder_kind =
   | Regular
-  | Recursive of string list (* names of dep args extracted from rec arg's type *)
+  | Recursive of string list
 
-type ctor_info =
+type ctor_info = Context.ctor_info =
   { ctor_name : string
-  ; binder_names : string list (* renamed ctor own arg names *)
+  ; binder_names : string list
   ; binder_kinds : binder_kind list
   }
 
-type polarity =
+type polarity = Context.polarity =
   | StrictlyPositive
   | Unrestricted
 [@@deriving show]
 
-(* All information about a declared inductive, stored in Context.S as the
-   tag attached to the inductive type's binding. Replaces the two flat
-   global Hashtbls that were keyed by raw inductive name. *)
-type ind_info =
+type ind_info = Context.ind_info =
   { params : Surface.pretype binder list
   ; deps : Surface.pretype binder list
   ; ind_ty : Surface.pretype
@@ -960,7 +960,7 @@ let%expect_test "polarity: List has all SP params" =
       [ cons ]
   in
   print_string @@ [%show: polarity list] pol;
-  [%expect {| [ElabData.StrictlyPositive] |}]
+  [%expect {| [Context.StrictlyPositive] |}]
 ;;
 
 let%expect_test "polarity: param negative under Pi demoted" =
@@ -986,7 +986,7 @@ let%expect_test "polarity: param negative under Pi demoted" =
     infer_param_polarity ~ind_name:"D" ~params ~lookup_polarity:(fun _ -> None) [ mk ]
   in
   print_string @@ [%show: polarity list] pol;
-  [%expect {| [ElabData.Unrestricted] |}]
+  [%expect {| [Context.Unrestricted] |}]
 ;;
 
 let%expect_test "polarity: Rose nested under List positive slot stays SP" =
@@ -1015,5 +1015,5 @@ let%expect_test "polarity: Rose nested under List positive slot stays SP" =
     infer_param_polarity ~ind_name:"Rose" ~params ~lookup_polarity:lookup [ node ]
   in
   print_string @@ [%show: polarity list] pol;
-  [%expect {| [ElabData.StrictlyPositive] |}]
+  [%expect {| [Context.StrictlyPositive] |}]
 ;;

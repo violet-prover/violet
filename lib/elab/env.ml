@@ -1,5 +1,6 @@
 open Yuujinchou
 open Bwd
+module Syntax = Violet_kernel.Syntax
 open Syntax
 
 type modifier_cmd = Trace
@@ -101,4 +102,9 @@ module Handler = struct
       Eio.traceln "@]@.";
       input
   ;;
+end
+
+module View : Violet_kernel.Views.ENV_VIEW = struct
+  let lookup = lookup
+  let unfold = unfold_def
 end

@@ -19,11 +19,11 @@ let timeout_sec = 30
 (* Topologically load the file and its imports, mirroring what bin/main.ml's
    `prepare_dependencies` does. Without this, examples that `import nat` fail
    to find Nat / zero / suc when checked alone. *)
-let load_with_deps (filename : string) : Violet.Syntax.Surface.t list =
+let load_with_deps (filename : string) : Violet_elab.Surface.t list =
   let mods = Hashtbl.create 16 in
   let deps = Hashtbl.create 16 in
   let rec walk m =
-    let key = Filename.chop_extension @@ Filename.basename m.Violet.Syntax.Surface.name in
+    let key = Filename.chop_extension @@ Filename.basename m.Violet_elab.Surface.name in
     if Hashtbl.mem deps key
     then ()
     else begin
@@ -35,11 +35,11 @@ let load_with_deps (filename : string) : Violet.Syntax.Surface.t list =
            let filepath =
              Filename.dirname m.name ^ "/" ^ String.concat "/" library ^ ".vt"
            in
-           walk (Violet.Parser.parse_file filepath))
+           walk (Violet_elab.Parser.parse_file filepath))
         m.imports
     end
   in
-  walk (Violet.Parser.parse_file filename);
+  walk (Violet_elab.Parser.parse_file filename);
   match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
   | Sorted r -> List.map (Hashtbl.find mods) r
   | ErrorCycle _ -> failwith "import cycle"
@@ -54,14 +54,14 @@ let run_check_in_child filename =
   (try
      Eio_main.run
      @@ fun _env ->
-     Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+     Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
      @@ fun () ->
-     let open Violet.Context.Handler in
-     Violet.Context.S.run ~shadow ~not_found ~hook
+     let open Violet_elab.Context.Handler in
+     Violet_elab.Context.S.run ~shadow ~not_found ~hook
      @@ fun () ->
-     let open Violet.Env.Handler in
-     Violet.Env.S.run ~shadow ~not_found ~hook
-     @@ fun () -> List.iter Violet.Checker.check_module (load_with_deps filename)
+     let open Violet_elab.Env.Handler in
+     Violet_elab.Env.S.run ~shadow ~not_found ~hook
+     @@ fun () -> List.iter Violet_elab.Elab.check_module (load_with_deps filename)
    with
    | _ -> exit_code := 1);
   exit !exit_code

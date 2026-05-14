@@ -1,6 +1,31 @@
 open Yuujinchou
 open Bwd
+module Syntax = Violet_kernel.Syntax
 open Syntax
+
+type binder_kind =
+  | Regular
+  | Recursive of string list
+
+type ctor_info =
+  { ctor_name : string
+  ; binder_names : string list
+  ; binder_kinds : binder_kind list
+  }
+
+type polarity =
+  | StrictlyPositive
+  | Unrestricted
+[@@deriving show]
+
+type ind_info =
+  { params : Surface.pretype binder list
+  ; deps : Surface.pretype binder list
+  ; ind_ty : Surface.pretype
+  ; ctors : Surface.pretype binder list
+  ; infos : ctor_info list
+  ; param_polarity : polarity list
+  }
 
 type modifier_cmd = Trace
 
@@ -12,7 +37,7 @@ module TypeContext = struct
   type tag =
     [ `Imported
     | `Constructor
-    | `Inductive of ElabData.ind_info
+    | `Inductive of ind_info
     ]
 
   type hook = modifier_cmd

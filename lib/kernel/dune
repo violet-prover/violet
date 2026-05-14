@@ -1,0 +1,7 @@
+(library
+ (name violet_kernel)
+ (public_name violet_kernel)
+ (inline_tests)
+ (preprocess
+  (pps ppx_deriving.show ppx_expect))
+ (libraries bwd))
