@@ -16,6 +16,12 @@ module Surface = struct
     [@printer fun fmt { loc = _; value } -> fprintf fmt "%s" (show_preterm value)]
     | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
     | Hole [@printer fun fmt _ -> fprintf fmt "_"]
+    | Goal of string option
+    [@printer
+      fun fmt n ->
+        match n with
+        | Some s -> fprintf fmt "?%s" s
+        | None -> fprintf fmt "?"]
     | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
     | App of bool * preterm * preterm
     [@printer

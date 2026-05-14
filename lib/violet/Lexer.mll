@@ -20,6 +20,7 @@ type token =
   | R_PAREN [@printer fun fmt () -> fprintf fmt ")"]
   | L_BRACKET [@printer fun fmt () -> fprintf fmt "{"]
   | R_BRACKET [@printer fun fmt () -> fprintf fmt "}"]
+  | QMARK [@printer fun fmt () -> fprintf fmt "?"]
   | IDENT of string [@printer fun fmt name -> fprintf fmt "<identifier:%s>" name]
   | EOF
 [@@deriving show]
@@ -56,6 +57,7 @@ rule token =
   | ')' { return lexbuf @@ R_PAREN }
   | '{' { return lexbuf @@ L_BRACKET }
   | '}' { return lexbuf @@ R_BRACKET }
+  | '?' { return lexbuf @@ QMARK }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
   | whitespace { token lexbuf }
   | newline { Lexing.new_line lexbuf; token lexbuf }
