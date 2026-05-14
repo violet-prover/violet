@@ -1453,8 +1453,25 @@ let rec dispatch (m : machine) (g : goal) : unit =
            name
            ([%show: Level.level] user_sort)
            ([%show: Level.level] inferred_sort);
+       let lookup_polarity (n : string) : ElabData.polarity list option =
+         match Context.S.resolve [ n ] with
+         | Some (_, `Inductive info) -> Some (info : ElabData.ind_info).param_polarity
+         | _ -> None
+       in
+       ElabData.check_strict_positivity
+         ~loc:(Some loc)
+         ~ind_name:name
+         ~params
+         ~deps
+         ~lookup_polarity
+         ctors;
+       let param_polarity =
+         ElabData.infer_param_polarity ~ind_name:name ~params ~lookup_polarity ctors
+       in
        let infos = List.map (ElabData.analyze_ctor ~ind_name:name ~params) ctors in
-       let ind_info : ElabData.ind_info = { params; deps; ind_ty; ctors; infos } in
+       let ind_info : ElabData.ind_info =
+         { params; deps; ind_ty; ctors; infos; param_polarity }
+       in
        Context.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export

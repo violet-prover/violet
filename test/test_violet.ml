@@ -119,6 +119,9 @@ let expected : (string * outcome) list =
   ; "../example/bad/bad-stack-not-pi.vt", `Fail
   ; "../example/bad/bad-stack-coverage.vt", `Fail
   ; "../example/bad/independent-universes-bad.vt", `Fail
+  ; "../example/bad/bad-positivity-negative.vt", `Fail
+  ; "../example/bad/bad-positivity-nested.vt", `Fail
+  ; "../example/bad/bad-positivity-non-uniform.vt", `Fail
   ]
 ;;
 

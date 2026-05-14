@@ -227,6 +227,11 @@ type ctor_info =
   ; binder_kinds : binder_kind list
   }
 
+type polarity =
+  | StrictlyPositive
+  | Unrestricted
+[@@deriving show]
+
 (* All information about a declared inductive, stored in Context.S as the
    tag attached to the inductive type's binding. Replaces the two flat
    global Hashtbls that were keyed by raw inductive name. *)
@@ -236,6 +241,7 @@ type ind_info =
   ; ind_ty : Surface.pretype
   ; ctors : Surface.pretype binder list
   ; infos : ctor_info list
+  ; param_polarity : polarity list
   }
 
 let arities_of (info : ind_info) : (string * int) list =
@@ -246,6 +252,93 @@ let rec head_of_surface = function
   | Surface.App (_, f, _) -> head_of_surface f
   | Surface.Located { value = t; _ } -> head_of_surface t
   | t -> t
+;;
+
+(* Does the global name `target` occur (as a Surface.Var) anywhere in `t`,
+   respecting shadowing by inner binders that re-bind the same name? *)
+let occurs_in (target : string) (t : Surface.preterm) : bool =
+  let rec go t =
+    match t with
+    | Surface.Located { value = u; _ } -> go u
+    | Surface.Var n -> String.equal n target
+    | Surface.App (_, f, x) -> go f || go x
+    | Surface.Pi (b, body) -> go b.bound || ((not (String.equal b.name target)) && go body)
+    (* Surface.Lambda has no type annotation; `b.bound` is the body. *)
+    | Surface.Lambda b -> (not (String.equal b.name target)) && go b.bound
+    | Surface.TypedLambda (b, body) ->
+      go b.bound || ((not (String.equal b.name target)) && go body)
+    | Surface.Max (a, b) -> go a || go b
+    | Surface.Universe | Surface.Hole | Surface.Goal _ -> false
+  in
+  go t
+;;
+
+(* Split a term into its head and applied spine (in left-to-right order). *)
+let head_and_spine (t : Surface.preterm) : Surface.preterm * Surface.preterm list =
+  let rec go t acc =
+    match t with
+    | Surface.Located { value = u; _ } -> go u acc
+    | Surface.App (_, f, x) -> go f (x :: acc)
+    | h -> h, acc
+  in
+  go t []
+;;
+
+let%expect_test "occurs_in: Var present" =
+  let t = Surface.Var "Bad" in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  [%expect {| true |}]
+;;
+
+let%expect_test "occurs_in: Var absent" =
+  let t = Surface.Var "Other" in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  [%expect {| false |}]
+;;
+
+let%expect_test "occurs_in: under App argument" =
+  let t = Surface.apply (Surface.Var "List") [ Surface.Var "Bad" ] in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  [%expect {| true |}]
+;;
+
+let%expect_test "occurs_in: under Pi domain" =
+  let t =
+    Surface.Pi
+      ({ name = "_"; bound = Surface.Var "Bad"; implicit = false }, Surface.Var "X")
+  in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  [%expect {| true |}]
+;;
+
+let%expect_test "occurs_in: shadowed by inner binder" =
+  let t =
+    Surface.Pi
+      ({ name = "Bad"; bound = Surface.Universe; implicit = false }, Surface.Var "Bad")
+  in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  (* Bad in domain (Universe) doesn't match; in body, Bad is shadowed → no. *)
+  [%expect {| false |}]
+;;
+
+let%expect_test "occurs_in: Lambda shadows" =
+  let t = Surface.Lambda { name = "Bad"; bound = Surface.Var "Bad"; implicit = false } in
+  print_string @@ string_of_bool (occurs_in "Bad" t);
+  (* Body's `Bad` is shadowed by the lambda binder → no. *)
+  [%expect {| false |}]
+;;
+
+let%expect_test "head_and_spine: bare var" =
+  let h, sp = head_and_spine (Surface.Var "Nat") in
+  Format.printf "%s/%d" ([%show: Surface.preterm] h) (List.length sp);
+  [%expect {| Nat/0 |}]
+;;
+
+let%expect_test "head_and_spine: applied" =
+  let t = Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "n" ] in
+  let h, sp = head_and_spine t in
+  Format.printf "%s/%d" ([%show: Surface.preterm] h) (List.length sp);
+  [%expect {| Vec/2 |}]
 ;;
 
 let analyze_ctor ~ind_name ~params (ctor : Surface.pretype binder) : ctor_info =
@@ -455,4 +548,472 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let spine = Emp <: aV <: depN <: target <: motive <: cnil <: ccons in
   print_string @@ [%show: Core.value option] (reducer spine);
   [%expect {| (Some ccons k x xs Vec-elim A k xs M cnil ccons) |}]
+;;
+
+(* Strict positivity check for a single inductive declaration.
+   `ind_name`  — name of the inductive being defined.
+   `params`    — declared parameters; their names anchor the uniformity test.
+   `deps`      — declared dependencies (indices). Carried for arity arithmetic.
+   `lookup_polarity` — returns `Some pols` if a name resolves to a previously
+                       declared inductive (with one entry per declared param),
+                       or `None` otherwise (locals, non-inductive globals).
+   `ctors`     — list of constructor binders to check.
+
+   Raises via `Reporter.fatalf ~loc Type_error` on the first violation. *)
+let check_strict_positivity
+      ~(loc : Asai.Range.t option)
+      ~(ind_name : string)
+      ~(params : Surface.pretype binder list)
+      ~(deps : Surface.pretype binder list)
+      ~(lookup_polarity : string -> polarity list option)
+      (ctors : Surface.pretype binder list)
+  : unit
+  =
+  (* deps names are not needed here; n_params suffices to split param-
+     vs index-slot positions in the spine when checking recursive uses. *)
+  let _ = deps in
+  let n_params = List.length params in
+  let param_names = List.map (fun (p : Surface.pretype binder) -> p.name) params in
+  let fail_neg ~ctor_name ~arg_ty =
+    Reporter.fatalf
+      ?loc
+      Type_error
+      "constructor `%s` of `%s` places `%s` in a negative position:\n\
+      \  in argument type `%s`,\n\
+      \  `%s` occurs to the left of `->`."
+      ctor_name
+      ind_name
+      ind_name
+      ([%show: Surface.preterm] arg_ty)
+      ind_name
+  in
+  let fail_foreign ~ctor_name ~arg_ty ~foreign_name ~slot =
+    Reporter.fatalf
+      ?loc
+      Type_error
+      "constructor `%s` of `%s` places `%s` under non-positive slot of `%s`:\n\
+      \  in argument type `%s`,\n\
+      \  parameter %d of `%s` is not strictly positive."
+      ctor_name
+      ind_name
+      ind_name
+      foreign_name
+      ([%show: Surface.preterm] arg_ty)
+      slot
+      foreign_name
+  in
+  let fail_non_uniform ~ctor_name ~arg_ty ~slot ~expected ~got =
+    Reporter.fatalf
+      ?loc
+      Type_error
+      "constructor `%s` of `%s` uses `%s` non-uniformly:\n\
+      \  in argument type `%s`,\n\
+      \  parameter %d must be `%s` (the declared param) but is `%s`."
+      ctor_name
+      ind_name
+      ind_name
+      ([%show: Surface.preterm] arg_ty)
+      slot
+      expected
+      ([%show: Surface.preterm] got)
+  in
+  let rec sp ~ctor_name ~arg_ty t =
+    match t with
+    | Surface.Located { value = u; _ } -> sp ~ctor_name ~arg_ty u
+    | Surface.Pi (b, body) ->
+      if occurs_in ind_name b.bound then fail_neg ~ctor_name ~arg_ty;
+      (* Body keeps the same `arg_ty` for diagnostics. *)
+      if not (String.equal b.name ind_name) then sp ~ctor_name ~arg_ty body
+    | _ ->
+      let h, spine = head_and_spine t in
+      (match h with
+       | Surface.Var n when String.equal n ind_name ->
+         (* Recursive self-use. Param slots must match the declared param
+            names (uniform recursion); index slots are values that must
+            not mention the inductive being defined. *)
+         let rec strip = function
+           | Surface.Located { value = u; _ } -> strip u
+           | other -> other
+         in
+         List.iteri
+           (fun i si ->
+              if i < n_params
+              then begin
+                let expected = List.nth param_names i in
+                match strip si with
+                | Surface.Var n when String.equal n expected -> ()
+                | got -> fail_non_uniform ~ctor_name ~arg_ty ~slot:(i + 1) ~expected ~got
+              end
+              else if occurs_in ind_name si
+              then fail_neg ~ctor_name ~arg_ty)
+           spine
+       | Surface.Var n ->
+         (match lookup_polarity n with
+          | Some pols ->
+            let n_pols = List.length pols in
+            List.iteri
+              (fun i si ->
+                 if i < n_pols
+                 then
+                   begin match List.nth pols i with
+                   | StrictlyPositive -> sp ~ctor_name ~arg_ty si
+                   | Unrestricted ->
+                     if occurs_in ind_name si
+                     then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1)
+                   end
+                 else if occurs_in ind_name si
+                 then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1))
+              spine
+          | None -> if occurs_in ind_name t then fail_neg ~ctor_name ~arg_ty)
+       | _ -> if occurs_in ind_name t then fail_neg ~ctor_name ~arg_ty)
+  in
+  List.iter
+    (fun (ctor : Surface.pretype binder) ->
+       let tele = Surface.telescope ctor.bound in
+       List.iter
+         (fun (b : Surface.pretype binder) ->
+            sp ~ctor_name:ctor.name ~arg_ty:b.bound b.bound)
+         tele)
+    ctors
+;;
+
+let%expect_test "SP: List-shaped clean ctor accepted" =
+  (* data List (A : U) | cons : A -> List A -> List A *)
+  let cons : Surface.pretype binder =
+    { name = "cons"
+    ; bound =
+        Surface.pi
+          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          ; { name = "_"
+            ; bound = Surface.apply (Surface.Var "List") [ Surface.Var "A" ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "List") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         check_strict_positivity
+           ~loc:None
+           ~ind_name:"List"
+           ~params
+           ~deps:[]
+           ~lookup_polarity:(fun _ -> None)
+           [ cons ];
+         "ok")
+  in
+  print_string result;
+  [%expect {| ok |}]
+;;
+
+let%expect_test "SP: negative occurrence rejected" =
+  (* data Bad | b : (Bad -> Bad) -> Bad *)
+  let b : Surface.pretype binder =
+    { name = "b"
+    ; bound =
+        Surface.pi
+          [ { name = "_"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var "Bad"; implicit = false }
+                  , Surface.Var "Bad" )
+            ; implicit = false
+            }
+          ]
+          (Surface.Var "Bad")
+    ; implicit = false
+    }
+  in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         check_strict_positivity
+           ~loc:None
+           ~ind_name:"Bad"
+           ~params:[]
+           ~deps:[]
+           ~lookup_polarity:(fun _ -> None)
+           [ b ];
+         "ok")
+  in
+  print_string result;
+  [%expect {| rejected |}]
+;;
+
+let%expect_test "SP: nested under List positive slot accepted" =
+  (* data Rose (A : U) | node : A -> List (Rose A) -> Rose A
+     Assume List has param_polarity = [StrictlyPositive]. *)
+  let node : Surface.pretype binder =
+    { name = "node"
+    ; bound =
+        Surface.pi
+          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          ; { name = "_"
+            ; bound =
+                Surface.apply
+                  (Surface.Var "List")
+                  [ Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ] ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let lookup name =
+    if String.equal name "List" then Some [ StrictlyPositive ] else None
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         check_strict_positivity
+           ~loc:None
+           ~ind_name:"Rose"
+           ~params
+           ~deps:[]
+           ~lookup_polarity:lookup
+           [ node ];
+         "ok")
+  in
+  print_string result;
+  [%expect {| ok |}]
+;;
+
+let%expect_test "SP: non-uniform recursive use rejected" =
+  (* data Tree (A : U) | node : Tree (A -> A) -> Tree A *)
+  let node : Surface.pretype binder =
+    { name = "node"
+    ; bound =
+        Surface.pi
+          [ { name = "_"
+            ; bound =
+                Surface.apply
+                  (Surface.Var "Tree")
+                  [ Surface.Pi
+                      ( { name = "_"; bound = Surface.Var "A"; implicit = false }
+                      , Surface.Var "A" )
+                  ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         check_strict_positivity
+           ~loc:None
+           ~ind_name:"Tree"
+           ~params
+           ~deps:[]
+           ~lookup_polarity:(fun _ -> None)
+           [ node ];
+         "ok")
+  in
+  print_string result;
+  [%expect {| rejected |}]
+;;
+
+let%expect_test "SP: non-uniform nested self-use produces non-uniform error" =
+  (* data Tree (A : U) | bad : Tree (Tree A) -> Tree A *)
+  let bad : Surface.pretype binder =
+    { name = "bad"
+    ; bound =
+        Surface.pi
+          [ { name = "_"
+            ; bound =
+                Surface.apply
+                  (Surface.Var "Tree")
+                  [ Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ] ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         check_strict_positivity
+           ~loc:None
+           ~ind_name:"Tree"
+           ~params
+           ~deps:[]
+           ~lookup_polarity:(fun _ -> None)
+           [ bad ];
+         "ok")
+  in
+  print_string result;
+  [%expect {| rejected |}]
+;;
+
+(* For each declared param P_i, scan all ctor-arg types and decide whether
+   any occurrence of P_i forces demotion to Unrestricted. Recursive uses of
+   the inductive being defined are skipped (uniformity, enforced by
+   check_strict_positivity, guarantees P_i only appears in its own slot). *)
+let infer_param_polarity
+      ~(ind_name : string)
+      ~(params : Surface.pretype binder list)
+      ~(lookup_polarity : string -> polarity list option)
+      (ctors : Surface.pretype binder list)
+  : polarity list
+  =
+  let param_names = List.map (fun (p : Surface.pretype binder) -> p.name) params in
+  let demoted = ref [] in
+  let is_demoted name = List.exists (String.equal name) !demoted in
+  let demote name = if not (is_demoted name) then demoted := name :: !demoted in
+  let demote_if_in term =
+    List.iter
+      (fun pn -> if (not (is_demoted pn)) && occurs_in pn term then demote pn)
+      param_names
+  in
+  let rec walk t =
+    match t with
+    | Surface.Located { value = u; _ } -> walk u
+    | Surface.Pi (b, body) ->
+      (* Any param occurrence inside b.bound is contravariant → demote. *)
+      demote_if_in b.bound;
+      (* Body: continue walking (binder may shadow but param names are
+         top-level; shadowing inside a ctor binder is unusual and the
+         occurs_in itself respects shadowing for that subterm). *)
+      if not (List.exists (String.equal b.name) param_names) then walk body
+    | _ ->
+      let h, spine = head_and_spine t in
+      (match h with
+       | Surface.Var n when String.equal n ind_name ->
+         (* Skip self-use; uniformity makes it a pure propagation. *)
+         ()
+       | Surface.Var n when List.exists (String.equal n) param_names ->
+         (* Head is a param used directly as a type (e.g. `A` as an arg type).
+            This is a positive occurrence — do nothing. *)
+         ()
+       | Surface.Var n ->
+         (match lookup_polarity n with
+          | Some pols ->
+            let n_pols = List.length pols in
+            List.iteri
+              (fun i si ->
+                 if i < n_pols
+                 then
+                   begin match List.nth pols i with
+                   | StrictlyPositive -> walk si
+                   | Unrestricted -> demote_if_in si
+                   end
+                 else demote_if_in si)
+              spine
+          | None ->
+            (* Unknown head (local, unresolved): any param occurrence demotes. *)
+            demote_if_in t)
+       | _ -> demote_if_in t)
+  in
+  List.iter
+    (fun (ctor : Surface.pretype binder) ->
+       let tele = Surface.telescope ctor.bound in
+       List.iter (fun (b : Surface.pretype binder) -> walk b.bound) tele)
+    ctors;
+  List.map
+    (fun pn -> if is_demoted pn then Unrestricted else StrictlyPositive)
+    param_names
+;;
+
+let%expect_test "polarity: List has all SP params" =
+  let cons : Surface.pretype binder =
+    { name = "cons"
+    ; bound =
+        Surface.pi
+          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          ; { name = "_"
+            ; bound = Surface.apply (Surface.Var "List") [ Surface.Var "A" ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "List") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let pol =
+    infer_param_polarity
+      ~ind_name:"List"
+      ~params
+      ~lookup_polarity:(fun _ -> None)
+      [ cons ]
+  in
+  print_string @@ [%show: polarity list] pol;
+  [%expect {| [ElabData.StrictlyPositive] |}]
+;;
+
+let%expect_test "polarity: param negative under Pi demoted" =
+  (* data D (A : U) | mk : (A -> Bool) -> D A *)
+  let mk : Surface.pretype binder =
+    { name = "mk"
+    ; bound =
+        Surface.pi
+          [ { name = "_"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var "A"; implicit = false }
+                  , Surface.Var "Bool" )
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "D") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let pol =
+    infer_param_polarity ~ind_name:"D" ~params ~lookup_polarity:(fun _ -> None) [ mk ]
+  in
+  print_string @@ [%show: polarity list] pol;
+  [%expect {| [ElabData.Unrestricted] |}]
+;;
+
+let%expect_test "polarity: Rose nested under List positive slot stays SP" =
+  let node : Surface.pretype binder =
+    { name = "node"
+    ; bound =
+        Surface.pi
+          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          ; { name = "_"
+            ; bound =
+                Surface.apply
+                  (Surface.Var "List")
+                  [ Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ] ]
+            ; implicit = false
+            }
+          ]
+          (Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ])
+    ; implicit = false
+    }
+  in
+  let lookup name =
+    if String.equal name "List" then Some [ StrictlyPositive ] else None
+  in
+  let params = [ { name = "A"; bound = Surface.Universe; implicit = false } ] in
+  let pol =
+    infer_param_polarity ~ind_name:"Rose" ~params ~lookup_polarity:lookup [ node ]
+  in
+  print_string @@ [%show: polarity list] pol;
+  [%expect {| [ElabData.StrictlyPositive] |}]
 ;;
