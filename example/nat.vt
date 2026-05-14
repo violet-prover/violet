@@ -5,9 +5,14 @@ data Nat : U
 let motive (x : Nat) : U := Nat -> Nat
 let case-zero (y : Nat) : Nat := y
 let case-suc (x- : Nat) (add-x- : motive x-) (y : Nat) : Nat := suc (add-x- y)
-let add (x : Nat) : Nat -> Nat :=
+let eliminator-add (x : Nat) : Nat -> Nat :=
   Nat-elim
     x
     motive
     case-zero
     case-suc
+
+let add : (m n : Nat) -> Nat where
+  add m n <= elim m
+  | add zero n => n
+  | add (suc m) n => suc (add m n)

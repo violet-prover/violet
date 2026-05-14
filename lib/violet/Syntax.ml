@@ -79,6 +79,23 @@ module Surface = struct
     ; implicit : bool
     }
 
+  type stack_move =
+    | Intro
+    | Split
+  [@@deriving show]
+
+  type pattern =
+    | PVar of string
+    | PCon of string * string list
+  [@@deriving show]
+
+  type clause =
+    { head : string
+    ; patterns : pattern list
+    ; body : preterm
+    }
+  [@@deriving show]
+
   type top =
     | Let of string * pretype binder list * pretype * preterm
     (*
@@ -95,6 +112,36 @@ module Surface = struct
         }
     (* `universe U V W` declares per-module level variables. *)
     | Universe_decl of string list
+    (*
+       let <name> <params> : <signature> where
+         <moves>
+         | <clause>
+         | ...
+    *)
+    | Stack_def of
+        { name : string
+        ; params : pretype binder list
+        ; signature : pretype
+        ; moves : stack_move list
+        ; clauses : clause list
+        }
+    (*
+       let <name> <params> : <signature> where
+         <name> <intros> <= elim <target>
+         | <clause>
+         | ...
+       `params` are the typed binders from the signature; `intros` are the
+       untyped names on the guard line, one per Pi-layer of the signature
+       past `params`. `target` must equal one of `intros`.
+    *)
+    | Elim_def of
+        { name : string
+        ; params : pretype binder list
+        ; signature : pretype
+        ; intros : string list
+        ; target : string
+        ; clauses : clause list
+        }
   [@@deriving show]
 
   type t =

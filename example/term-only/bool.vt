@@ -1,0 +1,10 @@
+data Bool : U
+  | true : Bool
+  | false : Bool
+
+let not (x : Bool) : Bool :=
+  Bool-elim
+    x
+    (\(x : Bool) -> Bool)
+    false
+    true

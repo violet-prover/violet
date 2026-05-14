@@ -1,0 +1,27 @@
+import bool
+import sigma
+
+# Identity in stack style — one `<= intro`, one clause.
+let identity (A : U) : A -> A where
+  <= intro
+  | identity A x => x
+
+# Boolean negation via `<= split` on the intro'd argument.
+let neg : Bool -> Bool where
+  <= intro
+  <= split
+  | neg true => false
+  | neg false => true
+
+# Or we can use `neg2 b <= elim b`
+let neg2 : Bool -> Bool where
+  neg2 b <= elim b
+  | neg2 true => false
+  | neg2 false => true
+
+# Sigma swap — `<= split` on a Sigma pair binds the two field names.
+# Implicits on `mkSigma` are supplied here because Violet's current unifier
+# can't infer them from the case-body context.
+let swap (A : U) (B : U) : Sigma A (\x -> B) -> Sigma B (\y -> A) where
+  swap A B x <= elim x
+  | swap A B (mkSigma a b) => mkSigma {B} {\y -> A} b a

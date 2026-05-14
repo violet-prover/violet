@@ -1,0 +1,9 @@
+import bool
+
+data List (A : U) : U
+  | nil : List A
+  | cons : A -> List A -> List A
+
+let n : List Bool := nil
+let f : List Bool := cons false n
+let tf : List Bool := cons true f

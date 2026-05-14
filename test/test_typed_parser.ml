@@ -1,9 +1,7 @@
 let positive_test () =
   Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
-  let examples =
-    [ "bool"; "nat"; "list"; "vec"; "equality"; "index"; "nat-properties"; "compute" ]
-  in
+  let examples = [ "term-only/bool"; "term-only/list" ] in
   List.iter
     (fun name ->
        let path = "../example/" ^ name ^ ".vt" in

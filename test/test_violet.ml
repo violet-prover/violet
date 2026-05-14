@@ -69,7 +69,6 @@ let run_check_in_child filename =
 
 let outcome_of filename : outcome =
   flush stdout;
-  (* avoid duplicate output via child's inherited buffer *)
   match Unix.fork () with
   | 0 -> run_check_in_child filename
   | pid ->
@@ -116,7 +115,10 @@ let expected : (string * outcome) list =
   ; "../example/universe-explicit.vt", `Ok
   ; "../example/sigma.vt", `Ok
   ; "../example/sigma-multi.vt", `Ok
-  ; "../example/independent-universes-bad.vt", `Fail
+  ; "../example/pterodactyl.vt", `Ok
+  ; "../example/bad/bad-stack-not-pi.vt", `Fail
+  ; "../example/bad/bad-stack-coverage.vt", `Fail
+  ; "../example/bad/independent-universes-bad.vt", `Fail
   ]
 ;;
 

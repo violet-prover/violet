@@ -227,6 +227,21 @@ type ctor_info =
   ; binder_kinds : binder_kind list
   }
 
+(* All information about a declared inductive, stored in Context.S as the
+   tag attached to the inductive type's binding. Replaces the two flat
+   global Hashtbls that were keyed by raw inductive name. *)
+type ind_info =
+  { params : Surface.pretype binder list
+  ; deps : Surface.pretype binder list
+  ; ind_ty : Surface.pretype
+  ; ctors : Surface.pretype binder list
+  ; infos : ctor_info list
+  }
+
+let arities_of (info : ind_info) : (string * int) list =
+  List.map (fun ci -> ci.ctor_name, List.length ci.binder_names) info.infos
+;;
+
 let rec head_of_surface = function
   | Surface.App (_, f, _) -> head_of_surface f
   | Surface.Located { value = t; _ } -> head_of_surface t

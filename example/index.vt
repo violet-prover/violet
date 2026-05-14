@@ -6,6 +6,7 @@ import compute
 import universe-explicit
 import sigma
 import sigma-multi
+import pterodactyl
 
 # whatever
 let id {A : U} (x : A) : A := x

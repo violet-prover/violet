@@ -12,6 +12,7 @@ module TypeContext = struct
   type tag =
     [ `Imported
     | `Constructor
+    | `Inductive of ElabData.ind_info
     ]
 
   type hook = modifier_cmd
@@ -56,6 +57,7 @@ module Handler = struct
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
     | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
+    | x, `Inductive _ -> Format.fprintf fmt "%s (inductive)" ([%show: Core.value_ty] x)
   ;;
 
   let shadow context path x y =

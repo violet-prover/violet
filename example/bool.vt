@@ -2,9 +2,7 @@ data Bool : U
   | true : Bool
   | false : Bool
 
-let not (x : Bool) : Bool :=
-  Bool-elim
-    x
-    (\(x : Bool) -> Bool)
-    false
-    true
+let not : Bool -> Bool where
+  not x <= elim x
+  | not true => false
+  | not false => true

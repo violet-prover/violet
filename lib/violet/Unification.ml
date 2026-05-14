@@ -105,7 +105,6 @@ module PartialRenaming = struct
     let pr = invert gamma sp in
     let rhs_tm = rename m pr rhs in
     let solution = lams pr.dom rhs_tm in
-    Eio.traceln "solution of %s is: %s\n" ([%show: metavar] m) ([%show: term] solution);
     Reporter.tracef "solution is: %s" ([%show: term] solution)
     @@ fun () -> eval Emp solution
   ;;
@@ -123,12 +122,6 @@ let solve (gamma : int) (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.val
 ;;
 
 let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
-  Eio.traceln
-    "unify `%s` and `%s` (or verbose `%s ?= %s`)\n"
-    ([%show: Core.value] a)
-    ([%show: Core.value] b)
-    ([%show: Core.value] (force_head a))
-    ([%show: Core.value] (force_head b));
   Reporter.tracef
     ~loc
     "unify `%s` and `%s`"

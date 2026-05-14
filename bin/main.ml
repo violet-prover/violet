@@ -49,9 +49,7 @@ let load_cmd ~env =
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
-             (fun mod_name ->
-                let m = Hashtbl.find mods mod_name in
-                Violet.Checker.check_module m)
+             (fun mod_name -> Violet.Checker.check_module (Hashtbl.find mods mod_name))
              r
          | ErrorCycle err_list ->
            Violet.Reporter.fatalf Parse_error "Cycle import %s"
@@ -81,9 +79,7 @@ let check_cmd ~env =
         match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
         | Sorted r ->
           List.iter
-            (fun mod_name ->
-               let m = Hashtbl.find mods mod_name in
-               Violet.Checker.check_module m)
+            (fun mod_name -> Violet.Checker.check_module (Hashtbl.find mods mod_name))
             r
         | ErrorCycle err_list ->
           Violet.Reporter.fatalf Parse_error "Cycle import %s"

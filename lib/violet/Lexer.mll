@@ -6,8 +6,11 @@ type token =
   | LET [@printer fun fmt () -> fprintf fmt "let"]
   | IMPORT [@printer fun fmt () -> fprintf fmt "import"]
   | UNIVERSE [@printer fun fmt () -> fprintf fmt "universe"]
+  | WHERE [@printer fun fmt () -> fprintf fmt "where"]
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
+  | STACK_ARROW [@printer fun fmt () -> fprintf fmt "<="]
+  | FAT_ARROW [@printer fun fmt () -> fprintf fmt "=>"]
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
   | LAMBDA [@printer fun fmt () -> fprintf fmt "\\"]
   | DOT [@printer fun fmt () -> fprintf fmt "."]
@@ -36,11 +39,14 @@ rule token =
   parse
   | "#" { comment lexbuf }
   | "universe" { return lexbuf @@ UNIVERSE }
+  | "where" { return lexbuf @@ WHERE }
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
   | "import" { return lexbuf @@ IMPORT }
   | ":=" { return lexbuf @@ ASSIGN }
   | "->" { return lexbuf @@ ARROW }
+  | "<=" { return lexbuf @@ STACK_ARROW }
+  | "=>" { return lexbuf @@ FAT_ARROW }
   | ':' { return lexbuf @@ COLON }
   | "\\" { return lexbuf @@ LAMBDA }
   | '.' { return lexbuf @@ DOT }

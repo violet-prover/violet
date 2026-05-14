@@ -28,6 +28,9 @@ module C : sig
     | T_RBRACKET
     | T_IDENT
     | T_EOF
+    | T_WHERE
+    | T_STACK_ARROW
+    | T_FAT_ARROW
 
   type t
 
@@ -63,6 +66,9 @@ end = struct
     | T_RBRACKET
     | T_IDENT
     | T_EOF
+    | T_WHERE
+    | T_STACK_ARROW
+    | T_FAT_ARROW
 
   let tag_index = function
     | T_DATA -> 0
@@ -82,6 +88,9 @@ end = struct
     | T_RBRACKET -> 14
     | T_IDENT -> 15
     | T_EOF -> 16
+    | T_WHERE -> 17
+    | T_STACK_ARROW -> 18
+    | T_FAT_ARROW -> 19
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -102,17 +111,20 @@ end = struct
     | Lexer.R_BRACKET -> T_RBRACKET
     | Lexer.IDENT _ -> T_IDENT
     | Lexer.EOF -> T_EOF
+    | Lexer.WHERE -> T_WHERE
+    | Lexer.STACK_ARROW -> T_STACK_ARROW
+    | Lexer.FAT_ARROW -> T_FAT_ARROW
   ;;
 
   type t = int
 
   let empty = 0
-  let top = 0x1FFFF
+  let top = 0xFFFFF
   let one t = 1 lsl tag_index t
   let of_list ts = List.fold_left (fun s t -> s lor (1 lsl tag_index t)) 0 ts
   let union = ( lor )
   let inter = ( land )
-  let negate s = lnot s land 0x1FFFF
+  let negate s = lnot s land 0xFFFFF
   let mem_tag t s = s land (1 lsl tag_index t) <> 0
   let mem tok s = mem_tag (tag_of tok) s
   let is_empty s = s = 0
@@ -217,6 +229,36 @@ module P = struct
       else fail_at buf i
     in
     { tp = Tp.tok tag; parse }
+  ;;
+
+  (* Wrap a parser so its result is paired with a range spanning every token
+     it consumed (start of the first, end of the last). Used for top-level
+     constructs so that error reports underline the entire definition rather
+     than just the introducing keyword. Falls back to either endpoint's loc
+     if a merged range cannot be constructed. *)
+  let with_full_range p =
+    let parse buf i =
+      let i', x = p.parse buf i in
+      let last = i' - 1 in
+      let loc =
+        if i < Array.length buf && last >= i && last < Array.length buf
+        then
+          begin match buf.(i).Asai.Range.loc, buf.(last).Asai.Range.loc with
+          | Some lstart, Some lend ->
+            (try
+               let bpos, _ = Asai.Range.split lstart in
+               let _, epos = Asai.Range.split lend in
+               Some (Asai.Range.make (bpos, epos))
+             with
+             | Invalid_argument _ -> Some lstart)
+          | (Some _ as l), None | None, (Some _ as l) -> l
+          | None, None -> None
+          end
+        else None
+      in
+      i', (loc, x)
+    in
+    { tp = p.tp; parse }
   ;;
 
   let map f p =
@@ -544,24 +586,126 @@ module Grammar = struct
     { Syntax.name; bound = ty; implicit = false }
   ;;
 
-  let p_let_top : S.top Asai.Range.located t =
-    let+ loc, _ = tok_loc C.T_LET
-    and+ name = ident
-    and+ bindings = p_bindings_flat
-    and+ _ = tok C.T_COLON
-    and+ ty = p_term
-    and+ _ = tok C.T_ASSIGN
+  let p_stack_move : S.stack_move t =
+    let+ _ = tok C.T_STACK_ARROW
+    and+ name = ident in
+    match name with
+    | "intro" -> S.Intro
+    | "split" -> S.Split
+    | other ->
+      Reporter.fatalf Parse_error "expected `intro` or `split` after `<=`, got `%s`" other
+  ;;
+
+  let p_pattern : S.pattern t =
+    (let+ name = ident in
+     S.PVar name)
+    ||
+    let+ _ = tok C.T_LPAREN
+    and+ ctor = ident
+    and+ vs = star ident
+    and+ _ = tok C.T_RPAREN in
+    S.PCon (ctor, vs)
+  ;;
+
+  let p_clause : S.clause t =
+    let+ _ = tok C.T_VERT
+    and+ head = ident
+    and+ patterns = star p_pattern
+    and+ _ = tok C.T_FAT_ARROW
     and+ body = p_term in
-    { Asai.Range.loc; value = S.Let (name, bindings, ty, body) }
+    { S.head; patterns; body }
+  ;;
+
+  type elim_header_data =
+    { head : string
+    ; intros : string list
+    ; target : string
+    }
+
+  let p_elim_header : elim_header_data t =
+    let+ head = ident
+    and+ intros = star ident
+    and+ _ = tok C.T_STACK_ARROW
+    and+ elim_kw = ident
+    and+ target = ident in
+    match elim_kw with
+    | "elim" -> { head; intros; target }
+    | other ->
+      Reporter.fatalf
+        Parse_error
+        "expected `elim` after intros in `where`-line, got `%s`"
+        other
+  ;;
+
+  type where_head =
+    | WH_Elim of elim_header_data
+    | WH_Moves of S.stack_move list
+
+  type let_body =
+    | LB_Assign of S.preterm
+    | LB_Where of S.stack_move list * S.clause list
+    | LB_Elim of elim_header_data * S.clause list
+
+  let p_let_body : let_body t =
+    (let+ _ = tok C.T_ASSIGN
+     and+ tm = p_term in
+     LB_Assign tm)
+    ||
+    let+ _ = tok C.T_WHERE
+    and+ wh =
+      (let+ hdr = p_elim_header in
+       WH_Elim hdr)
+      ||
+      let+ moves = star p_stack_move in
+      WH_Moves moves
+    and+ clauses = star p_clause in
+    match wh with
+    | WH_Elim hdr -> LB_Elim (hdr, clauses)
+    | WH_Moves moves -> LB_Where (moves, clauses)
+  ;;
+
+  let p_let_top : S.top Asai.Range.located t =
+    let+ loc, (name, bindings, ty, body) =
+      with_full_range
+        (let+ _ = tok C.T_LET
+         and+ name = ident
+         and+ bindings = p_bindings_flat
+         and+ _ = tok C.T_COLON
+         and+ ty = p_term
+         and+ body = p_let_body in
+         name, bindings, ty, body)
+    in
+    match body with
+    | LB_Assign tm -> { Asai.Range.loc; value = S.Let (name, bindings, ty, tm) }
+    | LB_Where (moves, clauses) ->
+      { Asai.Range.loc
+      ; value = S.Stack_def { name; params = bindings; signature = ty; moves; clauses }
+      }
+    | LB_Elim ({ head; intros; target }, clauses) ->
+      if not (String.equal head name)
+      then
+        Reporter.fatalf
+          Parse_error
+          "elim-header head `%s` must match let name `%s`"
+          head
+          name;
+      { Asai.Range.loc
+      ; value =
+          S.Elim_def { name; params = bindings; signature = ty; intros; target; clauses }
+      }
   ;;
 
   let p_data_top : S.top Asai.Range.located t =
-    let+ loc, _ = tok_loc C.T_DATA
-    and+ name = ident
-    and+ params = p_bindings_flat
-    and+ _ = tok C.T_COLON
-    and+ ret = p_term
-    and+ ctors = star p_ctor in
+    let+ loc, (name, params, ret, ctors) =
+      with_full_range
+        (let+ _ = tok C.T_DATA
+         and+ name = ident
+         and+ params = p_bindings_flat
+         and+ _ = tok C.T_COLON
+         and+ ret = p_term
+         and+ ctors = star p_ctor in
+         name, params, ret, ctors)
+    in
     let value =
       S.Data { name; params; deps = S.telescope ret; ind_ty = S.codomain ret; ctors }
     in
@@ -569,10 +713,14 @@ module Grammar = struct
   ;;
 
   let p_universe_top : S.top Asai.Range.located t =
-    let+ loc, _ = tok_loc C.T_UNIVERSE
-    and+ first = ident
-    and+ rest = star ident in
-    { Asai.Range.loc; value = S.Universe_decl (first :: rest) }
+    let+ loc, names =
+      with_full_range
+        (let+ _ = tok C.T_UNIVERSE
+         and+ first = ident
+         and+ rest = star ident in
+         first :: rest)
+    in
+    { Asai.Range.loc; value = S.Universe_decl names }
   ;;
 
   let p_top : S.top Asai.Range.located t = p_let_top || p_data_top || p_universe_top
