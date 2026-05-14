@@ -1,69 +1,20 @@
-let positive_test () =
-  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
-  @@ fun () ->
-  let examples = [ "term-only/bool"; "term-only/list" ] in
-  List.iter
-    (fun name ->
-       let path = "../example/" ^ name ^ ".vt" in
-       let typed_result = Violet.Parser.parse_file path in
-       let legacy_result = OldParser.parse_file path in
-       if List.length typed_result.imports <> List.length legacy_result.imports
-       then begin
-         Format.printf
-           "positive_test FAIL %s: import count typed=%d legacy=%d@."
-           path
-           (List.length typed_result.imports)
-           (List.length legacy_result.imports);
-         exit 1
-       end;
-       if List.length typed_result.tops <> List.length legacy_result.tops
-       then begin
-         Format.printf
-           "positive_test FAIL %s: top count typed=%d legacy=%d@."
-           path
-           (List.length typed_result.tops)
-           (List.length legacy_result.tops);
-         exit 1
-       end;
-       List.iter2
-         (fun (a : Violet.Syntax.Surface.top Asai.Range.located)
-           (b : Violet.Syntax.Surface.top Asai.Range.located) ->
-            let sa = Violet.Syntax.Surface.show_top a.value in
-            let sb = Violet.Syntax.Surface.show_top b.value in
-            if sa <> sb
-            then begin
-              Format.printf
-                "positive_test FAIL %s: top AST diverges@.  typed:  %s@.  legacy: %s@."
-                path
-                sa
-                sb;
-              exit 1
-            end)
-         typed_result.tops
-         legacy_result.tops;
-       Format.printf
-         "positive_test OK  %s (%d imports, %d tops)@."
-         path
-         (List.length typed_result.imports)
-         (List.length typed_result.tops))
-    examples
-;;
+(* Fair benchmark. Compare old parser and Krishnaswami-style on a
+   realistic mix of surface syntax.
 
-(* Fair benchmark.
+   Both parsers run on the same input and build the same Surface.t AST
+   (the show_top comparison below diffs every top). The generated input
+   is split 50/50 between an LL(1) baseline and constructs that exercise
+   the two hand-coded peek disambiguators in the typed parser
+   (lib/violet/Parser.ml:1-10):
 
-   Both parsers run on the same LL(1)-subset input and build the same
-   Surface.t AST. The input exercises:
-     - imports
-     - `let NAME : term := term` (no bindings)
-     - `data NAME : term | ctor : term ...` (no params)
-     - terms with applications, arrows, and parenthesised sub-terms
-
-   We avoid `(x : T) -> body` style binders and typed lambdas, since the
-   typed-algebraic framework is strictly LL(1) and cannot disambiguate
-   them from `(t)`. Restricting to a common subset is what makes the
-   comparison apples-to-apples — both parsers walk the same tokens and
-   allocate the same AST shape. *)
-let benchmark () =
+     - shapes 0-3: LL(1) baseline (lets, data, applications, arrows)
+     - shape 4: `let NAME (x : U) (y : U) : U := x`        -- header binders
+     - shape 5: `let NAME : (x : U) -> U -> U := \(z : U) -> z`
+                                                            -- pi binder peek
+                                                            -- + typed lambda peek
+     - shape 6: `let NAME {A : U} (x : A) : A := x`         -- implicit binder
+     - shape 7: `let NAME : U -> U := \x -> x`              -- untyped lambda *)
+let () =
   Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let n_imports = 2_000 in
@@ -73,9 +24,9 @@ let benchmark () =
     Buffer.add_string buf (Printf.sprintf "import lib%d.utils\n" i)
   done;
   for i = 1 to n_tops do
-    (* alternate between several let/data shapes so spine, arrow, paren,
-       and ctor parsing all get exercised. *)
-    match i mod 4 with
+    (* alternate between let/data shapes so spine, arrow, paren, ctor,
+       binder, lambda, and implicit parsing all get exercised. *)
+    match i mod 8 with
     | 0 ->
       Buffer.add_string
         buf
@@ -96,10 +47,17 @@ let benchmark () =
            i
            i
            i)
-    | _ ->
+    | 3 ->
       Buffer.add_string
         buf
         (Printf.sprintf "let comp%d : U -> U -> U -> U := a%d b%d c%d\n" i i i i)
+    | 4 -> Buffer.add_string buf (Printf.sprintf "let hdr%d (x : U) (y : U) : U := x\n" i)
+    | 5 ->
+      Buffer.add_string
+        buf
+        (Printf.sprintf "let pi%d : (x : U) -> U -> U := \\(z : U) -> z\n" i)
+    | 6 -> Buffer.add_string buf (Printf.sprintf "let imp%d {A : U} (x : A) : A := x\n" i)
+    | _ -> Buffer.add_string buf (Printf.sprintf "let unty%d : U -> U := \\x -> x\n" i)
   done;
   let src = Buffer.contents buf in
   let toks_list =
@@ -158,7 +116,7 @@ let benchmark () =
       let _ = run_typed () in
       ())
   in
-  let cur_min, cur_med =
+  let old_min, old_med =
     bench_one ~warmup:n_warmup ~iters:n_iters (fun () ->
       let _ = run_current () in
       ())
@@ -175,16 +133,11 @@ let benchmark () =
     "benchmark: typed parser   min=%.4f s  median=%.4f s@."
     typed_min
     typed_med;
-  Format.printf "benchmark: old parser min=%.4f s  median=%.4f s@." cur_min cur_med;
+  Format.printf "benchmark: old parser min=%.4f s  median=%.4f s@." old_min old_med;
   Format.printf
-    "benchmark: ratio (typed_min / old_min)       = %.2fx@."
-    (typed_min /. cur_min);
+    "benchmark: ratio (old_min / typed_min)       = %.2fx@."
+    (old_min /. typed_min);
   Format.printf
-    "benchmark: ratio (typed_median / old_median) = %.2fx@."
-    (typed_med /. cur_med)
-;;
-
-let () =
-  positive_test ();
-  benchmark ()
+    "benchmark: ratio (old_median / typed_median) = %.2fx@."
+    (old_med /. typed_med)
 ;;
