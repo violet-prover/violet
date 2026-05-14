@@ -652,12 +652,16 @@ module Grammar = struct
   let p_pattern : S.pattern t =
     (let+ name = ident in
      S.PVar name)
+    || (let+ _ = tok C.T_LPAREN
+        and+ ctor = ident
+        and+ vs = star ident
+        and+ _ = tok C.T_RPAREN in
+        S.PCon (ctor, vs))
     ||
-    let+ _ = tok C.T_LPAREN
-    and+ ctor = ident
-    and+ vs = star ident
-    and+ _ = tok C.T_RPAREN in
-    S.PCon (ctor, vs)
+    let+ _ = tok C.T_LBRACKET
+    and+ name = ident
+    and+ _ = tok C.T_RBRACKET in
+    S.PImpVar name
   ;;
 
   let p_clause : S.clause t =
@@ -671,13 +675,23 @@ module Grammar = struct
 
   type elim_header_data =
     { head : string
-    ; intros : string list
+    ; intros : (string * bool) list
     ; target : string
     }
 
+  let p_intro_atom : (string * bool) t =
+    (let+ name = ident in
+     name, false)
+    ||
+    let+ _ = tok C.T_LBRACKET
+    and+ name = ident
+    and+ _ = tok C.T_RBRACKET in
+    name, true
+  ;;
+
   let p_elim_header : elim_header_data t =
     let+ head = ident
-    and+ intros = star ident
+    and+ intros = star p_intro_atom
     and+ _ = tok C.T_STACK_ARROW
     and+ elim_kw = ident
     and+ target = ident in

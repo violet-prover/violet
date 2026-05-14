@@ -214,6 +214,93 @@ let rewrite_recursive_calls
   rw body
 ;;
 
+(* Walk the function's full Pi tower (params ++ outer Pi-layers of
+   signature) in parallel with the user's intros to produce one entry
+   per Pi-binder: `(name, implicit)`. Implicit Pi-binders the user
+   didn't bracket are auto-filled from the binder's own name; explicit
+   Pi-binders must be matched by a bare intro. *)
+let compute_effective_intros
+      ~(loc : Asai.Range.t)
+      ~(bindings : Surface.pretype binder list)
+      ~(signature : Surface.pretype)
+      ~(intros : (string * bool) list)
+  : (string * bool) list
+  =
+  let rec walk_pi params sig_rem user =
+    match params, user with
+    | (_, true) :: prest, (uname, true) :: urest ->
+      (uname, true) :: walk_pi prest sig_rem urest
+    | (pname, true) :: prest, _ -> (pname, true) :: walk_pi prest sig_rem user
+    | (_, false) :: prest, (uname, false) :: urest ->
+      (uname, false) :: walk_pi prest sig_rem urest
+    | (pname, false) :: _, (uname, true) :: _ ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "intro `{%s}` provided at explicit param `%s`"
+        uname
+        pname
+    | (pname, false) :: _, [] ->
+      Reporter.fatalf ~loc Elab_error "missing intro for explicit param `%s`" pname
+    | [], _ -> walk_sig sig_rem user
+  and walk_sig s user =
+    match s, user with
+    | _, [] -> []
+    | Surface.Located { value; _ }, _ -> walk_sig value user
+    | Surface.Pi (b, cod), (uname, true) :: urest when b.implicit ->
+      (uname, true) :: walk_sig cod urest
+    | Surface.Pi (b, cod), _ when b.implicit -> (b.name, true) :: walk_sig cod user
+    | Surface.Pi (b, cod), (uname, false) :: urest when not b.implicit ->
+      (uname, false) :: walk_sig cod urest
+    | Surface.Pi (b, _), (uname, true) :: _ ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "intro `{%s}` at explicit Pi-binder `%s`"
+        uname
+        b.name
+    | _, (uname, _) :: _ ->
+      Reporter.fatalf ~loc Elab_error "intro `%s` has no matching Pi-layer" uname
+  in
+  let param_binders =
+    List.map (fun (b : Surface.pretype binder) -> b.name, b.implicit) bindings
+  in
+  walk_pi param_binders signature intros
+;;
+
+(* Walk effective intros in parallel with one clause's patterns.
+   Implicit slots may consume a PImpVar (rebind the slot locally) or
+   be skipped (use the function-level slot name). Explicit slots
+   require a bare PVar/PCon. Output length equals len(effective). *)
+let align_clause_patterns
+      ~(loc : Asai.Range.t)
+      (effective : (string * bool) list)
+      (patterns : Surface.pattern list)
+  : Surface.pattern list
+  =
+  let rec go slots pats =
+    match slots, pats with
+    | [], [] -> []
+    | [], _ :: _ -> Reporter.fatalf ~loc Elab_error "clause: too many patterns"
+    | (_, true) :: rest_slots, Surface.PImpVar n :: rest_pats ->
+      Surface.PVar n :: go rest_slots rest_pats
+    | (slot_name, true) :: rest_slots, _ -> Surface.PVar slot_name :: go rest_slots pats
+    | (_, false) :: rest_slots, (Surface.PVar _ as p) :: rest_pats ->
+      p :: go rest_slots rest_pats
+    | (_, false) :: rest_slots, (Surface.PCon _ as p) :: rest_pats ->
+      p :: go rest_slots rest_pats
+    | (_, false) :: _, Surface.PImpVar n :: _ ->
+      Reporter.fatalf ~loc Elab_error "clause: `{%s}` pattern at explicit slot" n
+    | (slot_name, false) :: _, [] ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "clause: missing pattern for explicit slot `%s`"
+        slot_name
+  in
+  go effective patterns
+;;
+
 (* Build a Surface preterm body for an Elim_def. The result represents the
    inner eliminator call; callers (KTopElimDef_HaveType) wrap it with outer
    `\x1 ... \xN ->` lambdas, one per name in `intros`. `intros` lists every
@@ -230,17 +317,23 @@ let build_elim_body
       ~(func_name : string)
       ~(params : Surface.pretype binder list)
       ~(signature : Surface.pretype)
-      ~(intros : string list)
+      ~(intros : (string * bool) list)
       ~(target : string)
       ~(clauses : Surface.clause list)
   : Surface.preterm
   =
+  let intros = compute_effective_intros ~loc ~bindings:params ~signature ~intros in
   let np = List.length params in
   let n_intros = List.length intros in
   let target_pos =
     let rec go i = function
-      | [] -> Reporter.fatalf ~loc Elab_error "elim target `%s` not among intros" target
-      | x :: _ when String.equal x target -> i
+      | [] ->
+        Reporter.fatalf
+          ~loc
+          Elab_error
+          "elim target `%s` not among effective intros"
+          target
+      | (x, _) :: _ when String.equal x target -> i
       | _ :: xs -> go (i + 1) xs
     in
     go 0 intros
@@ -309,7 +402,13 @@ let build_elim_body
            match
              List.find_opt
                (fun (c : Surface.clause) ->
-                  match Option.map normalize (List.nth_opt c.patterns target_pos) with
+                  let aligned =
+                    align_clause_patterns
+                      ~loc:(Option.value (loc_of c.body) ~default:loc)
+                      intros
+                      c.patterns
+                  in
+                  match Option.map normalize (List.nth_opt aligned target_pos) with
                   | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
                   | _ -> false)
                clauses
@@ -324,6 +423,12 @@ let build_elim_body
                ctor_name
          in
          let clause_loc = Option.value (loc_of clause.body) ~default:loc in
+         let aligned_patterns =
+           align_clause_patterns
+             ~loc:(Option.value (loc_of clause.body) ~default:loc)
+             intros
+             clause.patterns
+         in
          if not (String.equal clause.head func_name)
          then
            Reporter.fatalf
@@ -333,7 +438,7 @@ let build_elim_body
              clause.head
              func_name;
          let vs =
-           match Option.map normalize (List.nth_opt clause.patterns target_pos) with
+           match Option.map normalize (List.nth_opt aligned_patterns target_pos) with
            | Some (Surface.PCon (_, vs)) -> vs
            | _ -> []
          in
@@ -355,14 +460,16 @@ let build_elim_body
              (List.combine vs info.binder_kinds)
          in
          let trailing_pattern_names =
-           List.filteri (fun i _ -> i > target_pos) clause.patterns
+           List.filteri (fun i _ -> i > target_pos) aligned_patterns
            |> List.map (function
              | Surface.PVar n -> n
              | Surface.PCon _ ->
                Reporter.fatalf
                  ~loc:clause_loc
                  Elab_error
-                 "elim: pattern at non-target position must be a variable")
+                 "elim: pattern at non-target position must be a variable"
+             | Surface.PImpVar _ ->
+               assert false (* normalized away by align_clause_patterns *))
          in
          if List.length trailing_pattern_names <> List.length trailing_intros
          then
@@ -408,7 +515,7 @@ let build_elim_body
       (data_args @ [ Surface.Var target; motive ] @ case_args)
   in
   List.fold_left
-    (fun acc n -> Surface.App (false, acc, Surface.Var n))
+    (fun acc (n, _) -> Surface.App (false, acc, Surface.Var n))
     elim_call
     trailing_intros
 ;;
@@ -530,7 +637,7 @@ let rec walk_moves
                "constructor `%s` has more than one clause"
                cn;
            Hashtbl.add seen cn ()
-         | Some (Surface.PVar _) ->
+         | Some (Surface.PVar _) | Some (Surface.PImpVar _) ->
            Reporter.fatalf
              ~loc:cloc
              Elab_error
@@ -668,7 +775,7 @@ type goal =
       * string
       * Surface.pretype binder list
       * Surface.pretype
-      * string list
+      * (string * bool) list
       * string
       * Surface.clause list
   | KTopElimDef_HaveType of
@@ -676,7 +783,7 @@ type goal =
       * string
       * Surface.pretype binder list
       * Surface.pretype
-      * string list
+      * (string * bool) list
       * string
       * Surface.clause list
 
@@ -1145,6 +1252,19 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "KTopLet_HaveBody: bad result %s"
          ([%show: produced] other))
   | GTopStackDef (loc, name, bindings, result_ty, moves, clauses) ->
+    List.iter
+      (fun (c : Surface.clause) ->
+         List.iter
+           (function
+             | Surface.PImpVar n ->
+               Reporter.fatalf
+                 ~loc
+                 Elab_error
+                 "`{%s}` patterns are only valid in `<= elim` definitions"
+                 n
+             | _ -> ())
+           c.patterns)
+      clauses;
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -1208,37 +1328,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
            ~target
            ~clauses
        in
-       (* `intros` lists every binder on the guard line — one per Pi-layer
-          of the full function type (params + past-params). Each lambda's
-          implicit-ness must match the corresponding Pi-binder: for intros
-          [0..np-1] take it from `bindings`; for the rest take it from
-          `signature`'s outer Pi-layers. *)
-       let intros_with_modes : (string * bool) list =
-         let np = List.length bindings in
-         let param_modes =
-           List.map (fun (b : Surface.pretype binder) -> b.implicit) bindings
-         in
-         let rec sig_modes n s =
-           if n <= 0
-           then []
-           else (
-             match s with
-             | Surface.Located { value; _ } -> sig_modes n value
-             | Surface.Pi (b, cod) -> b.implicit :: sig_modes (n - 1) cod
-             | _ ->
-               Reporter.fatalf
-                 ~loc
-                 Elab_error
-                 "elim: signature has fewer Pi-layers than intros require")
-         in
-         let n_sig = List.length intros - np in
-         let modes = param_modes @ sig_modes n_sig signature in
-         List.map2 (fun n implicit -> n, implicit) intros modes
-       in
+       let intros = compute_effective_intros ~loc ~bindings ~signature ~intros in
        let term : Surface.preterm =
          List.fold_right
            (fun (n, implicit) body -> Surface.Lambda { name = n; bound = body; implicit })
-           intros_with_modes
+           intros
            elim_inner
        in
        push m (KTopLet_HaveBody (loc, name, typ_val));
@@ -1581,6 +1675,30 @@ let%expect_test "auto-numbered goals" =
       𝓤
     pending=2 counter=2
     |}]
+;;
+
+let%expect_test "compute_effective_intros: bracketed intro at explicit param errors" =
+  let result =
+    try
+      with_handlers (fun () ->
+        let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+        let _ =
+          compute_effective_intros
+            ~loc:dummy_loc
+            ~bindings:
+              [ ({ name = "A"; bound = Surface.Universe; implicit = false }
+                 : Surface.pretype binder)
+              ]
+            ~signature:Surface.Universe
+            ~intros:[ "A", true ]
+        in
+        ());
+      "no error raised"
+    with
+    | Failure msg -> "raised: " ^ msg
+  in
+  Printf.printf "%s" result;
+  [%expect {| raised: Reporter.Message.Elab_error |}]
 ;;
 
 let check_top

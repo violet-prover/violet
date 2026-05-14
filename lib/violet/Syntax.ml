@@ -93,6 +93,7 @@ module Surface = struct
   type pattern =
     | PVar of string
     | PCon of string * string list
+    | PImpVar of string
   [@@deriving show]
 
   type clause =
@@ -144,7 +145,7 @@ module Surface = struct
         { name : string
         ; params : pretype binder list
         ; signature : pretype
-        ; intros : string list
+        ; intros : (string * bool) list
         ; target : string
         ; clauses : clause list
         }

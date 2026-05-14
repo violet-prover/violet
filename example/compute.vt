@@ -11,9 +11,9 @@ let two-plus-z : Id (add two zero) two := refl
 let one-plus-one : Id (add one one) two := refl
 
 let length {A : U} : (xs : List A) -> Nat where
-  length A xs <= elim xs
-  | length A nil => zero
-  | length A (cons x xs) => suc (length A xs)
+  length xs <= elim xs
+  | length nil => zero
+  | length (cons x xs) => suc (length A xs)
 
 let len-nil : Id (length {Nat} nil) zero := refl
 let len-one : Id (length {Nat} (cons zero nil)) one := refl

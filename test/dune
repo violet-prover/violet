@@ -5,3 +5,7 @@
  (preprocess
   (pps ppx_deriving.show))
  (libraries violet asai eio eio_main yuujinchou bwd unix tsort))
+
+(test
+ (name test_typed_parser)
+ (libraries violet asai))
