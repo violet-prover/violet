@@ -123,6 +123,40 @@ let rec loc_of : Surface.preterm -> Asai.Range.t option = function
   | _ -> None
 ;;
 
+(* Rename free Var occurrences in a Surface preterm. Respects binders: when
+   we descend under a Lambda/TypedLambda/Pi whose name shadows a key in the
+   renaming, that key is dropped for the inner scope. *)
+let rec rename_vars_surface (renaming : (string * string) list) (t : Surface.preterm)
+  : Surface.preterm
+  =
+  if renaming = []
+  then t
+  else (
+    match t with
+    | Surface.Located { value; loc } ->
+      Surface.Located { value = rename_vars_surface renaming value; loc }
+    | Surface.Var n ->
+      (match List.assoc_opt n renaming with
+       | Some n' -> Surface.Var n'
+       | None -> t)
+    | Surface.App (impl, f, a) ->
+      Surface.App (impl, rename_vars_surface renaming f, rename_vars_surface renaming a)
+    | Surface.Lambda b ->
+      let renaming' = List.filter (fun (k, _) -> not (String.equal k b.name)) renaming in
+      Surface.Lambda { b with bound = rename_vars_surface renaming' b.bound }
+    | Surface.TypedLambda (b, body) ->
+      let bound' = rename_vars_surface renaming b.bound in
+      let renaming' = List.filter (fun (k, _) -> not (String.equal k b.name)) renaming in
+      Surface.TypedLambda ({ b with bound = bound' }, rename_vars_surface renaming' body)
+    | Surface.Pi (b, body) ->
+      let bound' = rename_vars_surface renaming b.bound in
+      let renaming' = List.filter (fun (k, _) -> not (String.equal k b.name)) renaming in
+      Surface.Pi ({ b with bound = bound' }, rename_vars_surface renaming' body)
+    | Surface.Max (a, b) ->
+      Surface.Max (rename_vars_surface renaming a, rename_vars_surface renaming b)
+    | Surface.Universe | Surface.Hole | Surface.Goal _ -> t)
+;;
+
 (* Peel `n` outer Pi-layers off a Surface pretype, returning the codomain. *)
 let rec peel_pi_surface ~(loc : Asai.Range.t) (n : int) (s : Surface.pretype)
   : Surface.pretype
@@ -383,10 +417,50 @@ let build_elim_body
     | Surface.PVar n when is_ctor n -> Surface.PCon (n, [])
     | p -> p
   in
-  (* Motive: `\<target> -> peel_pi_surface (target_pos - np + 1) signature`. *)
+  (* Index args of the target's type: the spine entries past the explicit
+     params correspond to the inductive's dep telescope. The motive must
+     abstract over those, then over the target itself. For each index given
+     as a Var `v`, bind a fresh name and rename `v -> fresh` in the body. *)
+  let n_explicit_params =
+    List.length
+      (List.filter (fun (p : Surface.pretype binder) -> not p.implicit) info.params)
+  in
+  let dep_args = List.drop n_explicit_params data_args in
+  let n_deps = List.length info.deps in
+  if List.length dep_args <> n_deps
+  then
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "elim: target type spine has %d index arg(s), expected %d"
+      (List.length dep_args)
+      n_deps;
+  let rec strip_loc = function
+    | Surface.Located { value; _ } -> strip_loc value
+    | t -> t
+  in
+  let dep_renaming : (string * string) list =
+    List.mapi
+      (fun i a ->
+         match strip_loc a with
+         | Surface.Var n -> n, Printf.sprintf "__elim_idx_%d" i
+         | _ ->
+           Reporter.fatalf
+             ~loc
+             Elab_error
+             "elim: non-variable index in target type `%s` is not yet supported"
+             ind_head)
+      dep_args
+  in
   let motive : Surface.preterm =
-    let body = peel_pi_surface ~loc (target_pos - np + 1) signature in
-    Surface.Lambda { name = target; bound = body; implicit = false }
+    let body0 = peel_pi_surface ~loc (target_pos - np + 1) signature in
+    let body = rename_vars_surface dep_renaming body0 in
+    let inner = Surface.Lambda { name = target; bound = body; implicit = false } in
+    List.fold_right
+      (fun (_, fresh) acc ->
+         Surface.Lambda { name = fresh; bound = acc; implicit = false })
+      dep_renaming
+      inner
   in
   let trailing_intros = List.filteri (fun i _ -> i > target_pos) intros in
   (* Per-ctor case arm. *)
