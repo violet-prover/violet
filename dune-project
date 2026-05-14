@@ -22,20 +22,22 @@
  (depends
   ocaml
   dune
-  ocamlformat
-  ppxlib
-  ppx_deriving
-  ppx_inline_test
-  ppx_expect
   cmdliner
-  tsort
   eio
   eio_main
-  asai
-  algaeff
-  yuujinchou
-  bwd)
+  violet_kernel
+  violet_elab)
  (tags
   (topics "to describe" your project)))
+
+(package
+ (name violet_kernel)
+ (synopsis "Violet kernel (trusted core)")
+ (depends ocaml dune ppx_deriving bwd))
+
+(package
+ (name violet_elab)
+ (synopsis "Violet elaborator")
+ (depends ocaml dune ppx_deriving asai algaeff yuujinchou bwd eio))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

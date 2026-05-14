@@ -1,3 +1,6 @@
+module Syntax = Violet_kernel.Syntax
+module Evaluation = Wiring.Eval
+module Level = Violet_kernel.Level
 open Syntax
 open Bwd
 open Evaluation

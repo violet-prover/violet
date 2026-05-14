@@ -1,9 +1,11 @@
 (* Legacy combinator parser, kept here so test_typed_parser can benchmark and
    AST-compare against the typed-algebraic parser. Not used in production. *)
 
-open Violet
 open Yuujinchou
-open Syntax
+open Violet_kernel.Syntax
+module Surface = Violet_elab.Surface
+module Lexer = Violet_elab.Lexer
+module Reporter = Violet_elab.Reporter
 
 module Tokens = struct
   type t = Lexer.token Asai.Range.located list
@@ -193,7 +195,7 @@ and p_patom () : Surface.preterm =
   in
   Located (Asai.Range.locate loc tm)
 
-and p_multi_bindings (implicit : bool) () : Surface.preterm binder list =
+and p_multi_bindings (implicit : bool) () : Surface.preterm Surface.binder list =
   let rec collect_names acc =
     let pos = current_position () in
     let tok = next_token () in
@@ -240,7 +242,7 @@ let p_path () : Trie.path =
   first :: rest
 ;;
 
-let p_ind_clause () : Surface.pretype binder =
+let p_ind_clause () : Surface.pretype Surface.binder =
   consume Lexer.VERT;
   let name = ident () in
   consume Lexer.COLON;

@@ -15,7 +15,7 @@
      - shape 6: `let NAME {A : U} (x : A) : A := x`         -- implicit binder
      - shape 7: `let NAME : U -> U := \x -> x`              -- untyped lambda *)
 let () =
-  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let n_imports = 2_000 in
   let n_tops = 4_000 in
@@ -62,11 +62,11 @@ let () =
   let src = Buffer.contents buf in
   let toks_list =
     let lexbuf = Lexing.from_string src in
-    Violet.Parser.tokens "<bench>" lexbuf
+    Violet_elab.Parser.tokens "<bench>" lexbuf
   in
   let toks_arr = Array.of_list toks_list in
-  let typed_parser = Violet.Parser.Grammar.p_module_named "<bench>" in
-  let run_typed () = Violet.Parser.P.parse typed_parser toks_arr 0 in
+  let typed_parser = Violet_elab.Parser.Grammar.p_module_named "<bench>" in
+  let run_typed () = Violet_elab.Parser.P.parse typed_parser toks_arr 0 in
   let run_current () = OldParser.run toks_list (OldParser.p_all "<bench>") in
   (* sanity check: both parsers must produce the same AST. If the typed
      parser were skipping work (as the previous body_stub did), the
@@ -75,8 +75,8 @@ let () =
   let current_result = run_current () in
   assert (List.length typed_result.imports = List.length current_result.imports);
   assert (List.length typed_result.tops = List.length current_result.tops);
-  let show_top (t : Violet.Syntax.Surface.top Asai.Range.located) =
-    Violet.Syntax.Surface.show_top t.value
+  let show_top (t : Violet_elab.Surface.top Asai.Range.located) =
+    Violet_elab.Surface.show_top t.value
   in
   let typed_strs = List.map show_top typed_result.tops in
   let current_strs = List.map show_top current_result.tops in

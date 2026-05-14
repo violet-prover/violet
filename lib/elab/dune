@@ -1,0 +1,9 @@
+(ocamllex lexer)
+
+(library
+ (name violet_elab)
+ (public_name violet_elab)
+ (inline_tests)
+ (preprocess
+  (pps ppx_deriving.show ppx_expect))
+ (libraries violet_kernel eio yuujinchou bwd asai algaeff))

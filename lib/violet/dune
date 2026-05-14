@@ -1,8 +1,0 @@
-(ocamllex Lexer)
-
-(library
- (name violet)
- (inline_tests)
- (preprocess
-  (pps ppx_deriving.show ppx_expect))
- (libraries eio yuujinchou bwd asai algaeff))

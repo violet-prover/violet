@@ -2,13 +2,13 @@
    Tests correctness of specific parsing constructs. *)
 
 let positive_test () =
-  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet.Parser.tokens "<positive_test>" lexbuf) in
-    let m = Violet.Parser.parse_buf ~name:"<positive_test>" toks in
-    m.Violet.Syntax.Surface.tops
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<positive_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<positive_test>" toks in
+    m.Violet_elab.Surface.tops
   in
   (* Basic let binding parses OK *)
   let tops = parse_tops "let f : U -> U := \\x -> x\n" in
@@ -20,13 +20,13 @@ let positive_test () =
 ;;
 
 let goal_test () =
-  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet.Parser.tokens "<goal_test>" lexbuf) in
-    let m = Violet.Parser.parse_buf ~name:"<goal_test>" toks in
-    m.Violet.Syntax.Surface.tops
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<goal_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<goal_test>" toks in
+    m.Violet_elab.Surface.tops
   in
   (* Elim-style where-clause parses OK *)
   let tops =
@@ -40,21 +40,21 @@ let goal_test () =
 ;;
 
 let elim_intro_test () =
-  Violet.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet.Parser.tokens "<elim_test>" lexbuf) in
-    let m = Violet.Parser.parse_buf ~name:"<elim_test>" toks in
-    m.Violet.Syntax.Surface.tops
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<elim_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<elim_test>" toks in
+    m.Violet_elab.Surface.tops
   in
   (* Bare intros — all explicit *)
   let tops1 = parse_tops "let f : (x : U) -> U where\n  f x <= elim x\n  | f x => x\n" in
   (match tops1 with
    | [ { Asai.Range.value =
-           Violet.Syntax.Surface.Elim_def
+           Violet_elab.Surface.Elim_def
              { intros = [ ("x", false) ]
-             ; clauses = [ { patterns = [ Violet.Syntax.Surface.PVar "x" ]; _ } ]
+             ; clauses = [ { patterns = [ Violet_elab.Surface.PVar "x" ]; _ } ]
              ; _
              }
        ; _
@@ -69,7 +69,7 @@ let elim_intro_test () =
   in
   (match tops2 with
    | [ { Asai.Range.value =
-           Violet.Syntax.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
+           Violet_elab.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
        ; _
        }
      ] -> Format.printf "elim_intro_test OK  bracketed intros@."
@@ -82,12 +82,10 @@ let elim_intro_test () =
   in
   match tops3 with
   | [ { Asai.Range.value =
-          Violet.Syntax.Surface.Elim_def
+          Violet_elab.Surface.Elim_def
             { clauses =
                 [ { patterns =
-                      [ Violet.Syntax.Surface.PImpVar "A"
-                      ; Violet.Syntax.Surface.PVar "x"
-                      ]
+                      [ Violet_elab.Surface.PImpVar "A"; Violet_elab.Surface.PVar "x" ]
                   ; _
                   }
                 ]

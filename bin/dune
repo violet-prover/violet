@@ -1,6 +1,7 @@
 (executable
  (public_name violet)
+ (package violet)
  (name main)
  (preprocess
   (pps ppx_deriving.show))
- (libraries violet cmdliner tsort eio eio_main asai))
+ (libraries violet_elab violet_kernel cmdliner tsort eio eio_main asai))

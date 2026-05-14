@@ -1,16 +1,16 @@
 open Cmdliner
-module Tty = Asai.Tty.Make (Violet.Reporter.Message)
+module Tty = Asai.Tty.Make (Violet_elab.Reporter.Message)
 
 let module_name filename = Filename.chop_extension @@ Filename.basename filename
 
 type dependencies = (string, string list) Hashtbl.t
-type modules = (string, Violet.Syntax.Surface.t) Hashtbl.t
+type modules = (string, Violet_elab.Surface.t) Hashtbl.t
 
 let rec prepare_dependencies
           (root : string)
           (mods : modules)
           (deps : dependencies)
-          (m : Violet.Syntax.Surface.t)
+          (m : Violet_elab.Surface.t)
   =
   let key = module_name m.name in
   Hashtbl.add mods key m;
@@ -22,7 +22,7 @@ let rec prepare_dependencies
     List.iter
       (fun library ->
          let filepath = root ^ "/" ^ String.concat "/" library ^ ".vt" in
-         let m = Violet.Parser.parse_file filepath in
+         let m = Violet_elab.Parser.parse_file filepath in
          prepare_dependencies root mods deps m)
       m.imports
 ;;
@@ -44,15 +44,15 @@ let load_cmd ~env =
       const (fun filename ->
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
-        let m = Violet.Parser.parse_file filename in
+        let m = Violet_elab.Parser.parse_file filename in
         prepare_dependencies (Filename.dirname m.name) mods deps m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
-             (fun mod_name -> Violet.Checker.check_module (Hashtbl.find mods mod_name))
+             (fun mod_name -> Violet_elab.Elab.check_module (Hashtbl.find mods mod_name))
              r
          | ErrorCycle err_list ->
-           Violet.Reporter.fatalf Parse_error "Cycle import %s"
+           Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
            @@ String.concat ", " err_list);
         (* TODO: load module into a REPL *)
         ())
@@ -74,15 +74,15 @@ let check_cmd ~env =
       const (fun filename ->
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
-        let m = Violet.Parser.parse_file filename in
+        let m = Violet_elab.Parser.parse_file filename in
         prepare_dependencies (Filename.dirname m.name) mods deps m;
         match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
         | Sorted r ->
           List.iter
-            (fun mod_name -> Violet.Checker.check_module (Hashtbl.find mods mod_name))
+            (fun mod_name -> Violet_elab.Elab.check_module (Hashtbl.find mods mod_name))
             r
         | ErrorCycle err_list ->
-          Violet.Reporter.fatalf Parse_error "Cycle import %s"
+          Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
           @@ String.concat ", " err_list)
       $ arg_file)
 ;;
@@ -102,12 +102,12 @@ let () =
   Printexc.record_backtrace true;
   Eio_main.run
   @@ fun env ->
-  Violet.Reporter.run ~emit:Tty.display ~fatal
+  Violet_elab.Reporter.run ~emit:Tty.display ~fatal
   @@ fun () ->
-  let open Violet.Context.Handler in
-  Violet.Context.S.run ~shadow ~not_found ~hook
+  let open Violet_elab.Context.Handler in
+  Violet_elab.Context.S.run ~shadow ~not_found ~hook
   @@ fun () ->
-  let open Violet.Env.Handler in
-  Violet.Env.S.run ~shadow ~not_found ~hook
+  let open Violet_elab.Env.Handler in
+  Violet_elab.Env.S.run ~shadow ~not_found ~hook
   @@ fun () -> exit @@ Cmd.eval ~catch:false @@ cmd ~env
 ;;
