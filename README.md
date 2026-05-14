@@ -8,7 +8,7 @@ This project develop violet using nameful context (library Yuujinchou).
   - import statement
   - inductive types (view `nat`, `list`, `vec`, `equality` in `example/`)
     - generated eliminator (type and computation) (e.g. `Nat-elim`)
-    - (TODO) pattern matching (rely on eliminator)
+    - stack based syntax (`<= elim`, `<= intro`, `<= split`)
     - (TODO) strictly positive check
     - (?) sized type for termination checker
   - (TODO) export keyword for top-level let definition
