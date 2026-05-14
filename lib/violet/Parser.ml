@@ -506,16 +506,31 @@ module Grammar = struct
         in
         { tp; parse }
       in
-      (* QMARK atom: `?` optionally followed by IDENT. The `tp.first` is
-         only T_QMARK, so the dispatcher in `||` only enters here when the
-         current token IS a QMARK — we just need to peek the next token to
-         decide whether an IDENT follows. *)
+      (* QMARK atom: `?` optionally followed by an IDENT that is IMMEDIATELY
+         adjacent (no whitespace gap). The `tp.first` is only T_QMARK, so the
+         dispatcher in `||` only enters here when the current token IS a QMARK.
+         If there's a space between `?` and the next IDENT, the IDENT is left
+         for the surrounding `spine` to consume as a separate argument. *)
       let goal_atom : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_QMARK; follow = C.empty } in
         let parse buf i =
           let qmark_loc = buf.(i).Asai.Range.loc in
           let after = i + 1 in
-          if after < Array.length buf && C.tag_of buf.(after).Asai.Range.value = C.T_IDENT
+          let adjacent_ident =
+            after < Array.length buf
+            && C.tag_of buf.(after).Asai.Range.value = C.T_IDENT
+            &&
+            match qmark_loc, buf.(after).Asai.Range.loc with
+            | Some q, Some j ->
+              (try
+                 let _, q_end = Asai.Range.split q in
+                 let j_start, _ = Asai.Range.split j in
+                 q_end.offset = j_start.offset
+               with
+               | Invalid_argument _ -> false)
+            | _ -> false
+          in
+          if adjacent_ident
           then (
             match buf.(after).Asai.Range.value with
             | Lexer.IDENT s ->

@@ -19,6 +19,10 @@ let azr-step (n : Nat) (ih : azr-motive n) : azr-motive (suc n) :=
   cong suc (add n zero) n ih
 let add-zero-r (n : Nat) : Id (add n zero) n :=
   Nat-elim n azr-motive azr-base azr-step
+let add-zero-r : (n : Nat) -> Id (add n zero) n where
+  add-zero-r n <= elim n
+  | add-zero-r zero => refl
+  | add-zero-r (suc n) => cong suc (add n zero) n (add-zero-r n)
 
 let asr-motive (m : Nat) : U := (n : Nat) -> Id (add m (suc n)) (suc (add m n))
 let asr-base (n : Nat) : Id (add zero (suc n)) (suc (add zero n)) := refl
