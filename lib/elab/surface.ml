@@ -20,7 +20,8 @@ type preterm =
       match n with
       | Some s -> fprintf fmt "?%s" s
       | None -> fprintf fmt "?"]
-  | Var of string [@printer fun fmt name -> fprintf fmt "%s" name]
+  | Var of string list
+  [@printer fun fmt path -> fprintf fmt "%s" (String.concat "/" path)]
   | App of bool * preterm * preterm
   [@printer
     fun fmt (implicit, a, b) ->
@@ -132,17 +133,21 @@ type top =
       }
   (*
      let <name> <params> : <signature> where
+       open <Inductive>     # optional, repeatable
+       ...
        <name> <intros> <= elim <target>
        | <clause>
        | ...
      `params` are the typed binders from the signature; `intros` are the
      untyped names on the guard line, one per Pi-layer of the signature
-     past `params`. `target` must equal one of `intros`.
+     past `params`. `target` must equal one of `intros`. `opens` lists
+     inductive names whose ctors are usable unqualified in clause bodies.
   *)
   | Elim_def of
       { name : string
       ; params : pretype binder list
       ; signature : pretype
+      ; opens : string list
       ; intros : (string * bool) list
       ; target : string
       ; clauses : clause list
@@ -200,11 +205,11 @@ let rec apply (f : preterm) (args : preterm list) : preterm =
 let rec apply_tele (f : preterm) (tele : preterm binder list) : preterm =
   match f, tele with
   | f, [] -> f
-  | f, { name; implicit; _ } :: xs -> apply_tele (App (implicit, f, Var name)) xs
+  | f, { name; implicit; _ } :: xs -> apply_tele (App (implicit, f, Var [ name ])) xs
 ;;
 
 let%expect_test "applied spine" =
-  let result = applied_spine (apply (Var "a") [ Var "b"; Var "c" ]) in
+  let result = applied_spine (apply (Var [ "a" ]) [ Var [ "b" ]; Var [ "c" ] ]) in
   print_string @@ [%show: preterm list] result;
   [%expect {| [b; c] |}]
 ;;

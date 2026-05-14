@@ -25,14 +25,14 @@ let eliminator_params ~name ~params ~deps ~ind_ty =
 let eliminator_target_binding ~name ~params ~deps ~ind_ty =
   let params = eliminator_params ~name ~params ~deps ~ind_ty in
   { name = "target"
-  ; bound = Surface.apply_tele (Surface.Var name) params
+  ; bound = Surface.apply_tele (Surface.Var [ name ]) params
   ; implicit = false
   }
 ;;
 
 let eliminator_motive_type ~name ~params ~deps ~ind_ty =
   let good_deps = rename_tele deps in
-  let final_ty = Surface.apply_tele (Surface.Var name) (params @ good_deps) in
+  let final_ty = Surface.apply_tele (Surface.Var [ name ]) (params @ good_deps) in
   let final_bind = { name = "_"; bound = final_ty; implicit = false } in
   Surface.pi (good_deps @ [ final_bind ]) ind_ty
 ;;
@@ -42,8 +42,8 @@ let eliminator_result_type ~name ~params ~deps ~ind_ty =
   let _ = params in
   let _ = ind_ty in
   let good_deps = rename_tele deps in
-  let t = Surface.apply_tele (Surface.Var "motive") good_deps in
-  Surface.apply t [ Surface.Var "target" ]
+  let t = Surface.apply_tele (Surface.Var [ "motive" ]) good_deps in
+  Surface.apply t [ Surface.Var [ "target" ] ]
 ;;
 
 let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
@@ -59,7 +59,7 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
   let patch_delta delta =
     List.concat_map
       (fun bind ->
-         if head bind.bound = Surface.Var name
+         if head bind.bound = Surface.Var [ name ]
          then (
            (* Motive takes (deps ... , target), so the IH must mirror that
               shape — supply the recursive point's dep arguments, not just
@@ -70,8 +70,8 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
            ; { name = "ih-" ^ bind.name
              ; bound =
                  Surface.apply
-                   (Surface.Var "motive")
-                   (dep_args @ [ Surface.Var bind.name ])
+                   (Surface.Var [ "motive" ])
+                   (dep_args @ [ Surface.Var [ bind.name ] ])
              ; implicit = false
              }
            ])
@@ -91,12 +91,14 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
      `close_ctor_type`, so applying it requires those params up front. They
      resolve to the eliminator's outer params (which are in scope here). *)
   let param_args = List.map (fun p -> { p with implicit = true }) params in
-  let final = Surface.apply_tele (Surface.Var ctor.name) (param_args @ renamed_delta) in
+  let final =
+    Surface.apply_tele (Surface.Var [ name; ctor.name ]) (param_args @ renamed_delta)
+  in
   { name = "case-" ^ ctor.name
   ; bound =
       Surface.pi
         (patch_delta renamed_delta)
-        (Surface.apply (Surface.Var "motive") (spine @ [ final ]))
+        (Surface.apply (Surface.Var [ "motive" ]) (spine @ [ final ]))
   ; implicit = false
   }
 ;;
@@ -145,7 +147,7 @@ let%expect_test "Vec motive" =
     eliminator_motive_type
       ~name:"Vec"
       ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var "Nat"; implicit = false } ]
+      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype] result;
@@ -157,17 +159,20 @@ let%expect_test "Vec case nil" =
     eliminator_case
       ~name:"Vec"
       ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var "Nat"; implicit = false } ]
+      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
       { name = "nil"
-      ; bound = Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "zero" ]
+      ; bound =
+          Surface.apply
+            (Surface.Var [ "Vec" ])
+            [ Surface.Var [ "A" ]; Surface.Var [ "zero" ] ]
       ; implicit = false
       }
   in
   print_string @@ [%show: Surface.pretype binder] result;
   [%expect
     {|
-    { Syntax.name = "case-nil"; bound = ((motive zero) (nil {A}));
+    { Syntax.name = "case-nil"; bound = ((motive zero) (Vec/nil {A}));
       implicit = false }
     |}]
 ;;
@@ -177,22 +182,26 @@ let%expect_test "Vec case cons" =
     eliminator_case
       ~name:"Vec"
       ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var "Nat"; implicit = false } ]
+      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
       { name = "cons"
       ; bound =
           Surface.pi
-            [ { name = "k"; bound = Surface.Var "Nat"; implicit = true }
-            ; { name = "x"; bound = Surface.Var "A"; implicit = false }
+            [ { name = "k"; bound = Surface.Var [ "Nat" ]; implicit = true }
+            ; { name = "x"; bound = Surface.Var [ "A" ]; implicit = false }
             ; { name = "xs"
               ; bound =
-                  Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "k" ]
+                  Surface.apply
+                    (Surface.Var [ "Vec" ])
+                    [ Surface.Var [ "A" ]; Surface.Var [ "k" ] ]
               ; implicit = false
               }
             ]
             (Surface.apply
-               (Surface.Var "Vec")
-               [ Surface.Var "A"; Surface.apply (Surface.Var "suc") [ Surface.Var "k" ] ])
+               (Surface.Var [ "Vec" ])
+               [ Surface.Var [ "A" ]
+               ; Surface.apply (Surface.Var [ "suc" ]) [ Surface.Var [ "k" ] ]
+               ])
       ; implicit = false
       }
   in
@@ -201,7 +210,7 @@ let%expect_test "Vec case cons" =
     {|
     { Syntax.name = "case-cons";
       bound =
-      Π{k : Nat} -> Π(x : A) -> Π(xs : ((Vec A) k)) -> Π(ih-xs : ((motive k) xs)) -> ((motive (suc k)) ((((cons {A}) {k}) x) xs));
+      Π{k : Nat} -> Π(x : A) -> Π(xs : ((Vec A) k)) -> Π(ih-xs : ((motive k) xs)) -> ((motive (suc k)) ((((Vec/cons {A}) {k}) x) xs));
       implicit = false }
     |}]
 ;;
@@ -211,7 +220,7 @@ let%expect_test "Vec result type" =
     eliminator_result_type
       ~name:"Vec"
       ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var "Nat"; implicit = false } ]
+      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype] result;
@@ -260,7 +269,8 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
   let rec go t =
     match t with
     | Surface.Located { value = u; _ } -> go u
-    | Surface.Var n -> String.equal n target
+    | Surface.Var [ n ] -> String.equal n target
+    | Surface.Var _ -> false
     | Surface.App (_, f, x) -> go f || go x
     | Surface.Pi (b, body) -> go b.bound || ((not (String.equal b.name target)) && go body)
     (* Surface.Lambda has no type annotation; `b.bound` is the body. *)
@@ -285,19 +295,19 @@ let head_and_spine (t : Surface.preterm) : Surface.preterm * Surface.preterm lis
 ;;
 
 let%expect_test "occurs_in: Var present" =
-  let t = Surface.Var "Bad" in
+  let t = Surface.Var [ "Bad" ] in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   [%expect {| true |}]
 ;;
 
 let%expect_test "occurs_in: Var absent" =
-  let t = Surface.Var "Other" in
+  let t = Surface.Var [ "Other" ] in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   [%expect {| false |}]
 ;;
 
 let%expect_test "occurs_in: under App argument" =
-  let t = Surface.apply (Surface.Var "List") [ Surface.Var "Bad" ] in
+  let t = Surface.apply (Surface.Var [ "List" ]) [ Surface.Var [ "Bad" ] ] in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   [%expect {| true |}]
 ;;
@@ -305,7 +315,8 @@ let%expect_test "occurs_in: under App argument" =
 let%expect_test "occurs_in: under Pi domain" =
   let t =
     Surface.Pi
-      ({ name = "_"; bound = Surface.Var "Bad"; implicit = false }, Surface.Var "X")
+      ( { name = "_"; bound = Surface.Var [ "Bad" ]; implicit = false }
+      , Surface.Var [ "X" ] )
   in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   [%expect {| true |}]
@@ -314,7 +325,7 @@ let%expect_test "occurs_in: under Pi domain" =
 let%expect_test "occurs_in: shadowed by inner binder" =
   let t =
     Surface.Pi
-      ({ name = "Bad"; bound = Surface.Universe; implicit = false }, Surface.Var "Bad")
+      ({ name = "Bad"; bound = Surface.Universe; implicit = false }, Surface.Var [ "Bad" ])
   in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   (* Bad in domain (Universe) doesn't match; in body, Bad is shadowed → no. *)
@@ -322,20 +333,24 @@ let%expect_test "occurs_in: shadowed by inner binder" =
 ;;
 
 let%expect_test "occurs_in: Lambda shadows" =
-  let t = Surface.Lambda { name = "Bad"; bound = Surface.Var "Bad"; implicit = false } in
+  let t =
+    Surface.Lambda { name = "Bad"; bound = Surface.Var [ "Bad" ]; implicit = false }
+  in
   print_string @@ string_of_bool (occurs_in "Bad" t);
   (* Body's `Bad` is shadowed by the lambda binder → no. *)
   [%expect {| false |}]
 ;;
 
 let%expect_test "head_and_spine: bare var" =
-  let h, sp = head_and_spine (Surface.Var "Nat") in
+  let h, sp = head_and_spine (Surface.Var [ "Nat" ]) in
   Format.printf "%s/%d" ([%show: Surface.preterm] h) (List.length sp);
   [%expect {| Nat/0 |}]
 ;;
 
 let%expect_test "head_and_spine: applied" =
-  let t = Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "n" ] in
+  let t =
+    Surface.apply (Surface.Var [ "Vec" ]) [ Surface.Var [ "A" ]; Surface.Var [ "n" ] ]
+  in
   let h, sp = head_and_spine t in
   Format.printf "%s/%d" ([%show: Surface.preterm] h) (List.length sp);
   [%expect {| Vec/2 |}]
@@ -349,7 +364,7 @@ let analyze_ctor ~ind_name ~params (ctor : Surface.pretype binder) : ctor_info =
   let kinds =
     List.map
       (fun (b : Surface.pretype binder) ->
-         if head_of_surface b.bound = Surface.Var ind_name
+         if head_of_surface b.bound = Surface.Var [ ind_name ]
          then (
            let rec_spine = Surface.applied_spine b.bound in
            let dep_args = List.drop n_explicit_params rec_spine in
@@ -357,8 +372,8 @@ let analyze_ctor ~ind_name ~params (ctor : Surface.pretype binder) : ctor_info =
              List.map
                (fun a ->
                   match a with
-                  | Surface.Var n -> n
-                  | Surface.Located { value = Surface.Var n; _ } -> n
+                  | Surface.Var [ n ] -> n
+                  | Surface.Located { value = Surface.Var [ n ]; _ } -> n
                   | _ -> "_")
                dep_args
            in
@@ -466,11 +481,12 @@ let build_elim_reducer
 ;;
 
 let nat_ctors : Surface.pretype binder list =
-  [ { name = "zero"; bound = Surface.Var "Nat"; implicit = false }
+  [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
   ; { name = "suc"
     ; bound =
         Surface.Pi
-          ({ name = "_"; bound = Surface.Var "Nat"; implicit = false }, Surface.Var "Nat")
+          ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          , Surface.Var [ "Nat" ] )
     ; implicit = false
     }
   ]
@@ -478,7 +494,7 @@ let nat_ctors : Surface.pretype binder list =
 
 let%expect_test "Nat-elim reduces target=zero to case-zero" =
   let reducer =
-    build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat-elim" ~params:[] ~deps:[] nat_ctors
+    build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat/elim" ~params:[] ~deps:[] nat_ctors
   in
   let target = Core.Label ("zero", Emp) in
   let motive = Core.Universe Level.LZero in
@@ -491,7 +507,7 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
 
 let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
   let reducer =
-    build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat-elim" ~params:[] ~deps:[] nat_ctors
+    build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat/elim" ~params:[] ~deps:[] nat_ctors
   in
   let n = Core.Var ("n", Emp) in
   let target = Core.Label ("suc", Emp <: n) in
@@ -500,28 +516,35 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
   let cs = Core.Var ("cs", Emp) in
   let spine = Emp <: target <: motive <: cz <: cs in
   print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some cs n Nat-elim n M cz cs) |}]
+  [%expect {| (Some cs n Nat/elim n M cz cs) |}]
 ;;
 
 let vec_ctors : Surface.pretype binder list =
   [ { name = "nil"
-    ; bound = Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "zero" ]
+    ; bound =
+        Surface.apply
+          (Surface.Var [ "Vec" ])
+          [ Surface.Var [ "A" ]; Surface.Var [ "zero" ] ]
     ; implicit = false
     }
   ; { name = "cons"
     ; bound =
         Surface.pi
-          [ { name = "n"; bound = Surface.Var "Nat"; implicit = true }
-          ; { name = "_"; bound = Surface.Var "A"; implicit = false }
+          [ { name = "n"; bound = Surface.Var [ "Nat" ]; implicit = true }
+          ; { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
           ; { name = "_"
             ; bound =
-                Surface.apply (Surface.Var "Vec") [ Surface.Var "A"; Surface.Var "n" ]
+                Surface.apply
+                  (Surface.Var [ "Vec" ])
+                  [ Surface.Var [ "A" ]; Surface.Var [ "n" ] ]
             ; implicit = false
             }
           ]
           (Surface.apply
-             (Surface.Var "Vec")
-             [ Surface.Var "A"; Surface.apply (Surface.Var "suc") [ Surface.Var "n" ] ])
+             (Surface.Var [ "Vec" ])
+             [ Surface.Var [ "A" ]
+             ; Surface.apply (Surface.Var [ "suc" ]) [ Surface.Var [ "n" ] ]
+             ])
     ; implicit = false
     }
   ]
@@ -531,9 +554,9 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let reducer =
     build_elim_reducer
       ~ind_name:"Vec"
-      ~elim_name:"Vec-elim"
+      ~elim_name:"Vec/elim"
       ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var "Nat"; implicit = false } ]
+      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       vec_ctors
   in
   let aV = Core.Var ("A", Emp) in
@@ -547,7 +570,7 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let ccons = Core.Var ("ccons", Emp) in
   let spine = Emp <: aV <: depN <: target <: motive <: cnil <: ccons in
   print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some ccons k x xs Vec-elim A k xs M cnil ccons) |}]
+  [%expect {| (Some ccons k x xs Vec/elim A k xs M cnil ccons) |}]
 ;;
 
 (* Strict positivity check for a single inductive declaration.
@@ -627,7 +650,7 @@ let check_strict_positivity
     | _ ->
       let h, spine = head_and_spine t in
       (match h with
-       | Surface.Var n when String.equal n ind_name ->
+       | Surface.Var [ n ] when String.equal n ind_name ->
          (* Recursive self-use. Param slots must match the declared param
             names (uniform recursion); index slots are values that must
             not mention the inductive being defined. *)
@@ -641,13 +664,13 @@ let check_strict_positivity
               then begin
                 let expected = List.nth param_names i in
                 match strip si with
-                | Surface.Var n when String.equal n expected -> ()
+                | Surface.Var [ n ] when String.equal n expected -> ()
                 | got -> fail_non_uniform ~ctor_name ~arg_ty ~slot:(i + 1) ~expected ~got
               end
               else if occurs_in ind_name si
               then fail_neg ~ctor_name ~arg_ty)
            spine
-       | Surface.Var n ->
+       | Surface.Var [ n ] ->
          (match lookup_polarity n with
           | Some pols ->
             let n_pols = List.length pols in
@@ -665,6 +688,10 @@ let check_strict_positivity
                  then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1))
               spine
           | None -> if occurs_in ind_name t then fail_neg ~ctor_name ~arg_ty)
+       | Surface.Var _ ->
+         (* Multi-segment path: treat as an unknown external type; if ind_name
+            appears anywhere in this subterm then it's a negative occurrence. *)
+         if occurs_in ind_name t then fail_neg ~ctor_name ~arg_ty
        | _ -> if occurs_in ind_name t then fail_neg ~ctor_name ~arg_ty)
   in
   List.iter
@@ -683,13 +710,13 @@ let%expect_test "SP: List-shaped clean ctor accepted" =
     { name = "cons"
     ; bound =
         Surface.pi
-          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          [ { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
           ; { name = "_"
-            ; bound = Surface.apply (Surface.Var "List") [ Surface.Var "A" ]
+            ; bound = Surface.apply (Surface.Var [ "List" ]) [ Surface.Var [ "A" ] ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "List") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "List" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -721,12 +748,12 @@ let%expect_test "SP: negative occurrence rejected" =
           [ { name = "_"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var "Bad"; implicit = false }
-                  , Surface.Var "Bad" )
+                  ( { name = "_"; bound = Surface.Var [ "Bad" ]; implicit = false }
+                  , Surface.Var [ "Bad" ] )
             ; implicit = false
             }
           ]
-          (Surface.Var "Bad")
+          (Surface.Var [ "Bad" ])
     ; implicit = false
     }
   in
@@ -755,16 +782,16 @@ let%expect_test "SP: nested under List positive slot accepted" =
     { name = "node"
     ; bound =
         Surface.pi
-          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          [ { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
           ; { name = "_"
             ; bound =
                 Surface.apply
-                  (Surface.Var "List")
-                  [ Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ] ]
+                  (Surface.Var [ "List" ])
+                  [ Surface.apply (Surface.Var [ "Rose" ]) [ Surface.Var [ "A" ] ] ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "Rose" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -799,15 +826,15 @@ let%expect_test "SP: non-uniform recursive use rejected" =
           [ { name = "_"
             ; bound =
                 Surface.apply
-                  (Surface.Var "Tree")
+                  (Surface.Var [ "Tree" ])
                   [ Surface.Pi
-                      ( { name = "_"; bound = Surface.Var "A"; implicit = false }
-                      , Surface.Var "A" )
+                      ( { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
+                      , Surface.Var [ "A" ] )
                   ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "Tree" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -839,12 +866,12 @@ let%expect_test "SP: non-uniform nested self-use produces non-uniform error" =
           [ { name = "_"
             ; bound =
                 Surface.apply
-                  (Surface.Var "Tree")
-                  [ Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ] ]
+                  (Surface.Var [ "Tree" ])
+                  [ Surface.apply (Surface.Var [ "Tree" ]) [ Surface.Var [ "A" ] ] ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "Tree") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "Tree" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -900,14 +927,14 @@ let infer_param_polarity
     | _ ->
       let h, spine = head_and_spine t in
       (match h with
-       | Surface.Var n when String.equal n ind_name ->
+       | Surface.Var [ n ] when String.equal n ind_name ->
          (* Skip self-use; uniformity makes it a pure propagation. *)
          ()
-       | Surface.Var n when List.exists (String.equal n) param_names ->
+       | Surface.Var [ n ] when List.exists (String.equal n) param_names ->
          (* Head is a param used directly as a type (e.g. `A` as an arg type).
             This is a positive occurrence — do nothing. *)
          ()
-       | Surface.Var n ->
+       | Surface.Var [ n ] ->
          (match lookup_polarity n with
           | Some pols ->
             let n_pols = List.length pols in
@@ -924,6 +951,10 @@ let infer_param_polarity
           | None ->
             (* Unknown head (local, unresolved): any param occurrence demotes. *)
             demote_if_in t)
+       | Surface.Var _ ->
+         (* Multi-segment qualified name: treat as unknown external; demote if
+            any param appears in the whole subterm. *)
+         demote_if_in t
        | _ -> demote_if_in t)
   in
   List.iter
@@ -941,13 +972,13 @@ let%expect_test "polarity: List has all SP params" =
     { name = "cons"
     ; bound =
         Surface.pi
-          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          [ { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
           ; { name = "_"
-            ; bound = Surface.apply (Surface.Var "List") [ Surface.Var "A" ]
+            ; bound = Surface.apply (Surface.Var [ "List" ]) [ Surface.Var [ "A" ] ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "List") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "List" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -972,12 +1003,12 @@ let%expect_test "polarity: param negative under Pi demoted" =
           [ { name = "_"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var "A"; implicit = false }
-                  , Surface.Var "Bool" )
+                  ( { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
+                  , Surface.Var [ "Bool" ] )
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "D") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "D" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in
@@ -994,16 +1025,16 @@ let%expect_test "polarity: Rose nested under List positive slot stays SP" =
     { name = "node"
     ; bound =
         Surface.pi
-          [ { name = "_"; bound = Surface.Var "A"; implicit = false }
+          [ { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
           ; { name = "_"
             ; bound =
                 Surface.apply
-                  (Surface.Var "List")
-                  [ Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ] ]
+                  (Surface.Var [ "List" ])
+                  [ Surface.apply (Surface.Var [ "Rose" ]) [ Surface.Var [ "A" ] ] ]
             ; implicit = false
             }
           ]
-          (Surface.apply (Surface.Var "Rose") [ Surface.Var "A" ])
+          (Surface.apply (Surface.Var [ "Rose" ]) [ Surface.Var [ "A" ] ])
     ; implicit = false
     }
   in

@@ -36,7 +36,9 @@ module TypeContext = struct
      local_ctx with de Bruijn indices.  Only globals remain here. *)
   type tag =
     [ `Imported
+    | `Defn
     | `Constructor
+    | `Eliminator
     | `Inductive of ind_info
     ]
 
@@ -66,6 +68,18 @@ let lookup (x : string) : Core.value_ty =
       (String.concat " " [ x ])
 ;;
 
+let lookup_path (xs : string list) : Core.value_ty =
+  match S.resolve xs with
+  | Some (v, _) -> v
+  | None ->
+    Reporter.fatalf
+      NoVar_error
+      "cannot find type of `%s` in context"
+      (String.concat "/" xs)
+;;
+
+let has_path (xs : string list) : bool = Option.is_some (S.resolve xs)
+
 (* Handle scoping effects *)
 module Handler = struct
   let pp_path fmt = function
@@ -81,7 +95,9 @@ module Handler = struct
 
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
+    | x, `Defn -> Format.fprintf fmt "%s (defn)" ([%show: Core.value_ty] x)
     | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
+    | x, `Eliminator -> Format.fprintf fmt "%s (eliminator)" ([%show: Core.value_ty] x)
     | x, `Inductive _ -> Format.fprintf fmt "%s (inductive)" ([%show: Core.value_ty] x)
   ;;
 

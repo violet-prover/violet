@@ -157,7 +157,7 @@ and p_patom () : Surface.preterm =
   let loc = Option.get tok.loc in
   let tm : Surface.preterm =
     match tok.value with
-    | Lexer.IDENT s -> Var s
+    | Lexer.IDENT s -> Var [ s ]
     | Lexer.L_PAREN ->
       (match catch_parse_error (p_multi_bindings false) with
        | Some binders ->

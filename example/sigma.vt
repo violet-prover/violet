@@ -1,4 +1,4 @@
 universe U
 
 data Sigma (A : U) (B : A -> U) : U
-  | mkSigma : (a : A) -> B a -> Sigma A B
+  | mk : (a : A) -> B a -> Sigma A B

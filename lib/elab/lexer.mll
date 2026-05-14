@@ -7,6 +7,7 @@ type token =
   | IMPORT [@printer fun fmt () -> fprintf fmt "import"]
   | UNIVERSE [@printer fun fmt () -> fprintf fmt "universe"]
   | WHERE [@printer fun fmt () -> fprintf fmt "where"]
+  | OPEN [@printer fun fmt () -> fprintf fmt "open"]
   | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | STACK_ARROW [@printer fun fmt () -> fprintf fmt "<="]
@@ -14,6 +15,7 @@ type token =
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
   | LAMBDA [@printer fun fmt () -> fprintf fmt "\\"]
   | DOT [@printer fun fmt () -> fprintf fmt "."]
+  | SLASH [@printer fun fmt () -> fprintf fmt "/"]
   | VERT [@printer fun fmt () -> fprintf fmt "|"]
   | JOIN [@printer fun fmt () -> fprintf fmt "\xe2\x8a\x94"]
   | L_PAREN [@printer fun fmt () -> fprintf fmt "("]
@@ -41,6 +43,7 @@ rule token =
   | "#" { comment lexbuf }
   | "universe" { return lexbuf @@ UNIVERSE }
   | "where" { return lexbuf @@ WHERE }
+  | "open" { return lexbuf @@ OPEN }
   | "data" { return lexbuf @@ DATA }
   | "let" { return lexbuf @@ LET }
   | "import" { return lexbuf @@ IMPORT }
@@ -51,6 +54,7 @@ rule token =
   | ':' { return lexbuf @@ COLON }
   | "\\" { return lexbuf @@ LAMBDA }
   | '.' { return lexbuf @@ DOT }
+  | '/' { return lexbuf @@ SLASH }
   | '|' { return lexbuf @@ VERT }
   | "⊔" { return lexbuf @@ JOIN }
   | '(' { return lexbuf @@ L_PAREN }

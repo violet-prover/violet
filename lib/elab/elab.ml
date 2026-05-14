@@ -141,10 +141,11 @@ let rec rename_vars_surface (renaming : (string * string) list) (t : Surface.pre
     match t with
     | Surface.Located { value; loc } ->
       Surface.Located { value = rename_vars_surface renaming value; loc }
-    | Surface.Var n ->
+    | Surface.Var [ n ] ->
       (match List.assoc_opt n renaming with
-       | Some n' -> Surface.Var n'
+       | Some n' -> Surface.Var [ n' ]
        | None -> t)
+    | Surface.Var _ -> t (* multi-segment names aren't subject to local renaming *)
     | Surface.App (impl, f, a) ->
       Surface.App (impl, rename_vars_surface renaming f, rename_vars_surface renaming a)
     | Surface.Lambda b ->
@@ -182,6 +183,43 @@ let rec peel_pi_surface ~(loc : Asai.Range.t) (n : int) (s : Surface.pretype)
         n)
 ;;
 
+(* Promote bare references to constructors of `ind_head` to their qualified
+   form `Var [ind_head; n]`. Used to auto-open the scrutinee's namespace
+   inside `elim` clause bodies, so users can write `suc (add m n)` instead
+   of `Nat/suc (add m n)`. Lambda/TypedLambda/Pi binders shadow promotions
+   within their scope; the initial `shadowed` set names the binders that
+   already wrap the body from above (intros, params, ctor field-binders,
+   IH names, trailing pattern names). *)
+let qualify_ctor_names
+      ~(ind_head : string)
+      ~(ctor_names : string list)
+      ~(shadowed : string list)
+      (body : Surface.preterm)
+  : Surface.preterm
+  =
+  let is_ctor n = List.mem n ctor_names in
+  let rec walk shadowed t =
+    match t with
+    | Surface.Located { value; loc } ->
+      Surface.Located { value = walk shadowed value; loc }
+    | Surface.Var [ n ] when is_ctor n && not (List.mem n shadowed) ->
+      Surface.Var [ ind_head; n ]
+    | Surface.Var _ -> t
+    | Surface.App (impl, f, a) -> Surface.App (impl, walk shadowed f, walk shadowed a)
+    | Surface.Lambda b ->
+      Surface.Lambda { b with bound = walk (b.name :: shadowed) b.bound }
+    | Surface.TypedLambda (b, body) ->
+      let bound' = walk shadowed b.bound in
+      Surface.TypedLambda ({ b with bound = bound' }, walk (b.name :: shadowed) body)
+    | Surface.Pi (b, body) ->
+      let bound' = walk shadowed b.bound in
+      Surface.Pi ({ b with bound = bound' }, walk (b.name :: shadowed) body)
+    | Surface.Max (a, b) -> Surface.Max (walk shadowed a, walk shadowed b)
+    | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+  in
+  walk shadowed body
+;;
+
 (* In a clause body, rewrite calls to the function being defined where the
    target-position argument is a recursive case-arg, replacing the call with
    the corresponding IH applied to the trailing args. Errors on non-structural
@@ -211,7 +249,7 @@ let rewrite_recursive_calls
       let here = Option.value (loc_of t) ~default:loc in
       let head, args = spine_of [] t in
       (match strip head with
-       | Surface.Var n when String.equal n func_name ->
+       | Surface.Var [ n ] when String.equal n func_name ->
          if List.length args <> arity
          then
            Reporter.fatalf
@@ -223,7 +261,7 @@ let rewrite_recursive_calls
              (List.length args);
          let _, target_arg = List.nth args target_pos in
          (match strip target_arg with
-          | Surface.Var v when List.mem_assoc v rec_arg_to_ih ->
+          | Surface.Var [ v ] when List.mem_assoc v rec_arg_to_ih ->
             let ih = List.assoc v rec_arg_to_ih in
             let trailing =
               List.filteri (fun i _ -> i > target_pos) args
@@ -231,7 +269,7 @@ let rewrite_recursive_calls
             in
             List.fold_left
               (fun acc (impl, a) -> Surface.App (impl, acc, a))
-              (Surface.Var ih)
+              (Surface.Var [ ih ])
               trailing
           | _ ->
             Reporter.fatalf
@@ -357,6 +395,7 @@ let build_elim_body
       ~(func_name : string)
       ~(params : Surface.pretype binder list)
       ~(signature : Surface.pretype)
+      ~(opens : string list)
       ~(intros : (string * bool) list)
       ~(target : string)
       ~(clauses : Surface.clause list)
@@ -400,7 +439,12 @@ let build_elim_body
     let rec head = function
       | Surface.App (_, f, _) -> head f
       | Surface.Located { value = t; _ } -> head t
-      | Surface.Var n -> n
+      | Surface.Var [ n ] -> n
+      | Surface.Var _ ->
+        Reporter.fatalf
+          ~loc:(Option.value (loc_of target_type_surface) ~default:loc)
+          Elab_error
+          "elim: target's type head must be a bare inductive name"
       | _ ->
         Reporter.fatalf
           ~loc:(Option.value (loc_of target_type_surface) ~default:loc)
@@ -449,7 +493,12 @@ let build_elim_body
     List.mapi
       (fun i a ->
          match strip_loc a with
-         | Surface.Var n -> n, Printf.sprintf "__elim_idx_%d" i
+         | Surface.Var [ n ] -> n, Printf.sprintf "__elim_idx_%d" i
+         | Surface.Var _ ->
+           Reporter.fatalf
+             ~loc
+             Elab_error
+             "elim: qualified path in index position is not yet supported"
          | _ ->
            Reporter.fatalf
              ~loc
@@ -569,11 +618,44 @@ let build_elim_body
              ~rec_arg_to_ih
              clause.body
          in
+         let qualified_body =
+           let ih_names = List.map snd rec_arg_to_ih in
+           let param_names =
+             List.map (fun (b : Surface.pretype binder) -> b.name) params
+           in
+           let intro_names = List.map fst intros in
+           let shadowed =
+             vs @ ih_names @ trailing_pattern_names @ intro_names @ param_names
+           in
+           let opened_namespaces =
+             (* Scrutinee's namespace is auto-opened; then user-listed `open`s. *)
+             (ind_head, List.map fst ctors)
+             :: List.map
+                  (fun open_name ->
+                     let opened_info : ElabData.ind_info =
+                       match Context.S.resolve [ open_name ] with
+                       | Some (_, `Inductive i) -> i
+                       | _ ->
+                         Reporter.fatalf
+                           ~loc:clause_loc
+                           Elab_error
+                           "`open %s`: not an inductive"
+                           open_name
+                     in
+                     open_name, List.map fst (ElabData.arities_of opened_info))
+                  opens
+           in
+           List.fold_left
+             (fun body (head, ctor_names) ->
+                qualify_ctor_names ~ind_head:head ~ctor_names ~shadowed body)
+             rewritten_body
+             opened_namespaces
+         in
          let with_trailing =
            List.fold_right
              (fun n body -> Surface.Lambda { name = n; bound = body; implicit = false })
              trailing_pattern_names
-             rewritten_body
+             qualified_body
          in
          List.fold_right
            (fun (v, kind) body ->
@@ -591,11 +673,11 @@ let build_elim_body
   let elim_call =
     List.fold_left
       (fun acc a -> Surface.App (false, acc, a))
-      (Surface.Var (ind_head ^ "-elim"))
-      (data_args @ [ Surface.Var target; motive ] @ case_args)
+      (Surface.Var [ ind_head; "elim" ])
+      (data_args @ [ Surface.Var [ target ]; motive ] @ case_args)
   in
   List.fold_left
-    (fun acc (n, _) -> Surface.App (false, acc, Surface.Var n))
+    (fun acc (n, _) -> Surface.App (false, acc, Surface.Var [ n ]))
     elim_call
     trailing_intros
 ;;
@@ -797,8 +879,8 @@ let rec walk_moves
     let data_args : Surface.preterm list = Surface.applied_spine target_type_surface in
     List.fold_left
       (fun acc arg -> Surface.App (false, acc, arg))
-      (Surface.Var (ind_head ^ "-elim"))
-      (data_args @ [ Surface.Var target_name; motive ] @ case_args)
+      (Surface.Var [ ind_head; "elim" ])
+      (data_args @ [ Surface.Var [ target_name ]; motive ] @ case_args)
 ;;
 
 type produced =
@@ -855,6 +937,7 @@ type goal =
       * string
       * Surface.pretype binder list
       * Surface.pretype
+      * string list
       * (string * bool) list
       * string
       * Surface.clause list
@@ -863,6 +946,7 @@ type goal =
       * string
       * Surface.pretype binder list
       * Surface.pretype
+      * string list
       * (string * bool) list
       * string
       * Surface.clause list
@@ -1071,7 +1155,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
     m.result
     <- Some
          (PTermType (Core.Universe Level.LZero, Core.Universe (Level.LSuc Level.LZero)))
-  | GInfer (_, Var x) ->
+  | GInfer (_, Var [ x ]) ->
     (match resolve_local m.ctx x with
      | Some i -> m.result <- Some (PTermType (Core.LocalVar i, local_type m.ctx i))
      | None ->
@@ -1079,6 +1163,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
         | Some l ->
           m.result <- Some (PTermType (Core.Universe l, Core.Universe (Level.lsuc l)))
         | None -> m.result <- Some (PTermType (Core.Var x, Context.lookup x))))
+  | GInfer (loc, Var path) ->
+    let _ = loc in
+    let ty = Context.lookup_path path in
+    let joined = String.concat "/" path in
+    m.result <- Some (PTermType (Core.Var joined, ty))
   | GInferType (loc, Goal name_opt) ->
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:(Core.Universe Level.LZero);
@@ -1273,6 +1362,21 @@ let rec dispatch (m : machine) (g : goal) : unit =
          Elab_error
          "KMax_HaveRight: bad result %s"
          ([%show: produced] other))
+  | GCheck (loc, Var [ x ], expected) when Option.is_none (resolve_local m.ctx x) ->
+    (* Type-directed resolution: if expected forces to IndType(ind, _) and
+       [ind; x] is bound in Context, use the namespaced binding.
+       Otherwise fall through to standard inference. *)
+    let head = Evaluation.force_head expected in
+    (match head with
+     | Core.IndType (ind, _) when Context.has_path [ ind; x ] ->
+       (* Build the namespaced term: kernel eval resolves "ind/x" via E.lookup *)
+       let ty = Context.lookup_path [ ind; x ] in
+       let tm : Core.term = Core.Var (ind ^ "/" ^ x) in
+       push m (KCheckBy_Infer (loc, expected));
+       m.result <- Some (PTermType (tm, ty))
+     | _ ->
+       push m (KCheckBy_Infer (loc, expected));
+       push m (GInfer (loc, Var [ x ])))
   | GCheck (loc, other, expected) ->
     push m (KCheckBy_Infer (loc, expected));
     push m (GInfer (loc, other))
@@ -1326,12 +1430,12 @@ let rec dispatch (m : machine) (g : goal) : unit =
        Context.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export
-         ([ name ], (typ_val, `Constructor));
+         ([ name ], (typ_val, `Defn));
        let body_val = Evaluation.eval m.ctx.env term in
        Env.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export
-         ([ name ], (body_val, `Constructor));
+         ([ name ], (body_val, `Defn));
        Env.register_definition name body_val;
        let qname = m.module_name ^ "." ^ name in
        Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term;
@@ -1393,7 +1497,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          Elab_error
          "KTopStackDef_HaveType: bad result %s"
          ([%show: produced] other))
-  | GTopElimDef (loc, name, bindings, result_ty, intros, target, clauses) ->
+  | GTopElimDef (loc, name, bindings, result_ty, opens, intros, target, clauses) ->
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -1402,9 +1506,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
     in
     push
       m
-      (KTopElimDef_HaveType (loc, name, bindings, result_ty, intros, target, clauses));
+      (KTopElimDef_HaveType
+         (loc, name, bindings, result_ty, opens, intros, target, clauses));
     push m (GInferType (loc, typ))
-  | KTopElimDef_HaveType (loc, name, bindings, signature, intros, target, clauses) ->
+  | KTopElimDef_HaveType (loc, name, bindings, signature, opens, intros, target, clauses)
+    ->
     (match take_result m with
      | PType (typ_tm, _) ->
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -1414,6 +1520,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
            ~func_name:name
            ~params:bindings
            ~signature
+           ~opens
            ~intros
            ~target
            ~clauses
@@ -1498,12 +1605,15 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ([ name ], (Core.IndType (name, Bwd.Emp), `Constructor));
        let ctor_names = List.map (fun (b : Surface.pretype binder) -> b.name) ctors in
        let qname = m.module_name ^ "." ^ name in
-       let qctor_names = List.map (fun cn -> m.module_name ^ "." ^ cn) ctor_names in
+       let qctor_names =
+         List.map (fun cn -> m.module_name ^ "." ^ name ^ "." ^ cn) ctor_names
+       in
        Check.accept_data m.kernel_module ~name:qname ~ty:typ_tm ~ctor_names:qctor_names;
        List.iter
          (bind_constructor
             ~loc
-            ~ind_name:qname
+            ~ind_name:name (* bare *)
+            ~ind_qname:qname (* module.Nat for kernel *)
             ~module_name:m.module_name
             ~kernel_module:m.kernel_module
             m.ctx
@@ -1512,23 +1622,34 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let elim_typ : Surface.pretype =
          ElabData.eliminator_type ~name ~params ~deps ~ind_ty ctors
        in
-       let elim_name = name ^ "-elim" in
+       let elim_name = "elim" in
+       (* Two-segment path used for namespace resolution in the type context *)
+       let elim_path = [ name; elim_name ] in
+       (* Flat key used for kernel-level env lookup: Core.Var carries this string *)
+       let elim_flat = name ^ "/" ^ elim_name in
        let elim_typ_tm = check_type ~loc m.ctx elim_typ in
        let elim_typ_val = Evaluation.eval m.ctx.env elim_typ_tm in
        Context.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export
-         ([ elim_name ], (elim_typ_val, `Constructor));
+         (elim_path, (elim_typ_val, `Eliminator));
+       let reducer_label = elim_flat in
        let reducer =
-         ElabData.build_elim_reducer ~ind_name:name ~elim_name ~params ~deps ctors
+         ElabData.build_elim_reducer
+           ~ind_name:name
+           ~elim_name:reducer_label
+           ~params
+           ~deps
+           ctors
        in
-       let elim_head : Core.elim_head = { elim_name; reducer } in
+       let elim_head : Core.elim_head = { elim_name = reducer_label; reducer } in
        let elim_value = Core.Elim (elim_head, Bwd.Emp) in
+       (* Register in env under the flat key so kernel eval can find it *)
        Env.S.include_singleton
          ~context_visible:`Visible
          ~context_export:`Export
-         ([ elim_name ], (elim_value, `Constructor));
-       let qelim_name = m.module_name ^ "." ^ elim_name in
+         ([ elim_flat ], (elim_value, `Eliminator));
+       let qelim_name = m.module_name ^ "." ^ name ^ "." ^ elim_name in
        Check.accept_elim
          m.kernel_module
          ~name:qelim_name
@@ -1572,6 +1693,9 @@ and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
 and bind_constructor
       ~loc
       ~(ind_name : string)
+      (* bare inductive name for surface scope *)
+      ~(ind_qname : string)
+      (* module-qualified for kernel *)
       ~(module_name : string)
       ~(kernel_module : Violet_kernel.Module.t)
       (ctx : local_ctx)
@@ -1582,10 +1706,27 @@ and bind_constructor
   let typ = close_ctor_type params typ in
   let ctor_ty_tm = check_type ~loc ctx typ in
   let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
-  Context.S.include_singleton ([ name ], (ctor_ty, `Constructor));
-  Env.S.include_singleton ([ name ], (Core.Label (name, Bwd.Emp), `Constructor));
-  let qctor_name = module_name ^ "." ^ name in
-  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_name ~ty:ctor_ty_tm
+  let ctor_flat = ind_name ^ "/" ^ name in
+  (* Context: multi-segment for type-directed surface resolution *)
+  Context.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ ind_name; name ], (ctor_ty, `Constructor));
+  (* Env: flat key matching the kernel's E.lookup string.
+     The Label value carries the BARE name so the eliminator reducer's
+     find_ctor_index (which compares against info.ctor_name = bare name) works. *)
+  Env.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ ctor_flat ], (Core.Label (name, Bwd.Emp), `Constructor));
+  (* Also register under the bare name so that the unifier's rename/eval
+     round-trip (Label x -> Var x -> eval -> lookup x) still finds Label x. *)
+  Env.S.include_singleton
+    ~context_visible:`Visible
+    ~context_export:`Export
+    ([ name ], (Core.Label (name, Bwd.Emp), `Constructor));
+  let qctor_name = module_name ^ "." ^ ind_name ^ "." ^ name in
+  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_ty_tm
 ;;
 
 (* Internal: run a thunk under all elaboration effect handlers. *)
@@ -1662,7 +1803,8 @@ let%expect_test "infer Var bound locally" =
     push
       m
       (GInfer
-         (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), Surface.Var "x"));
+         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+         , Surface.Var [ "x" ] ));
     let tm, ty =
       match drive m with
       | PTermType (a, b) -> a, b
@@ -1684,7 +1826,7 @@ let%expect_test "infer Pi" =
 ;;
 
 let%expect_test "check Lambda against Pi" =
-  let p = Surface.Lambda { name = "x"; bound = Surface.Var "x"; implicit = false } in
+  let p = Surface.Lambda { name = "x"; bound = Surface.Var [ "x" ]; implicit = false } in
   let expected_ty =
     Core.VPi
       ( { name = "x"; bound = Core.Universe Level.LZero; implicit = false }
@@ -1732,7 +1874,7 @@ let%expect_test "infer App" =
         , fun _ -> Core.Universe Level.LZero )
     in
     m.ctx <- bind m.ctx "f" f_ty;
-    push m (GInfer (loc, Surface.App (false, Surface.Var "f", Surface.Var "x")));
+    push m (GInfer (loc, Surface.App (false, Surface.Var [ "f" ], Surface.Var [ "x" ])));
     match drive m with
     | PTermType (tm, ty) ->
       Printf.printf "tm: %s\nty: %s" ([%show: Core.term] tm) ([%show: Core.value] ty)
@@ -1748,7 +1890,9 @@ let%expect_test "rewrite_recursive_calls: case-suc of add" =
   (* Body: `add' m n` with `m` being a recursive case-arg. *)
   let body =
     Surface.App
-      (false, Surface.App (false, Surface.Var "add'", Surface.Var "m"), Surface.Var "n")
+      ( false
+      , Surface.App (false, Surface.Var [ "add'" ], Surface.Var [ "m" ])
+      , Surface.Var [ "n" ] )
   in
   let rewritten =
     rewrite_recursive_calls
@@ -1766,7 +1910,9 @@ let%expect_test "rewrite_recursive_calls: case-suc of add" =
 let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
   let body =
     Surface.App
-      (false, Surface.App (false, Surface.Var "foo", Surface.Var "m"), Surface.Var "n")
+      ( false
+      , Surface.App (false, Surface.Var [ "foo" ], Surface.Var [ "m" ])
+      , Surface.Var [ "n" ] )
   in
   let rewritten =
     rewrite_recursive_calls
@@ -1891,8 +2037,8 @@ let check_top
     | Surface.Data _ as d -> GTopData (loc, d)
     | Surface.Stack_def { name; params; signature; moves; clauses } ->
       GTopStackDef (loc, name, params, signature, moves, clauses)
-    | Surface.Elim_def { name; params; signature; intros; target; clauses } ->
-      GTopElimDef (loc, name, params, signature, intros, target, clauses)
+    | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
+      GTopElimDef (loc, name, params, signature, opens, intros, target, clauses)
   in
   push m g;
   ignore (drive m);
@@ -1936,4 +2082,40 @@ let check_module (file : Surface.t) : unit =
        let loc = Option.get top.loc in
        check_top ~module_name ~kernel_module ~goal_counter ~loc top.value)
     file.tops
+;;
+
+let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc top = Asai.Range.locate dummy_loc top in
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let let_zero : Surface.top =
+    Surface.Let ("x", [], Surface.Var [ "Nat" ], Surface.Var [ "zero" ])
+  in
+  let ast : Surface.t =
+    { name = "td-test.vt"; imports = []; tops = [ loc nat_data; loc let_zero ] }
+  in
+  with_handlers (fun () -> check_module ast);
+  print_endline "ok";
+  [%expect
+    {|
+    +checking [module] td-test (td-test.vt)
+    ok
+    |}]
 ;;
