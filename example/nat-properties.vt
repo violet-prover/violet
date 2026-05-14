@@ -16,21 +16,17 @@ let eq-2 : Id (add one one) two := refl
 let add-zero-r : (n : Nat) -> Id (add n zero) n where
   add-zero-r n <= elim n
   | add-zero-r zero => refl
-  | add-zero-r (suc n) => cong suc (add n zero) n (add-zero-r n)
+  | add-zero-r (suc n) => cong suc (add-zero-r n)
 
 let add-suc-r : (m n : Nat) -> Id (add m (suc n)) (suc (add m n)) where
   add-suc-r m n <= elim m
   | add-suc-r zero n => refl
   | add-suc-r (suc m) n =>
-    cong suc (add m (suc n)) (suc (add m n)) (add-suc-r m n)
+    cong suc (add-suc-r m n)
 
 let add-comm : (m n : Nat) -> Id (add m n) (add n m) where
   add-comm m n <= elim m
-  | add-comm zero n => sym (add n zero) n (add-zero-r n)
+  | add-comm zero n => sym (add-zero-r n)
   | add-comm (suc m) n =>
-    trans
-      (suc (add m n))
-      (suc (add n m))
-      (add n (suc m))
-      (cong suc (add m n) (add n m) (add-comm m n))
-      (sym (add n (suc m)) (suc (add n m)) (add-suc-r n m))
+    trans (cong suc (add-comm m n))
+          (sym (add-suc-r n m))
