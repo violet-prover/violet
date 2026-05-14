@@ -730,6 +730,106 @@ let resolve_goal_name (m : machine) (n : string option) : string =
     string_of_int i
 ;;
 
+(* Context-aware pretty-printer for Core.value used by goal reports.
+   Replaces de Bruijn levels (`$N`) with the surface name from ctx.names,
+   and renders levels and universes in a user-facing form. Falls back to
+   `$N` when a level escapes the supplied context (e.g. closure-feed
+   placeholders used while descending into VPi/VLambda). *)
+let pretty_local_name (ctx : local_ctx) (lvl : int) : string =
+  if lvl >= 0 && lvl < ctx.lvl
+  then Bwd.nth ctx.names (ctx.lvl - 1 - lvl)
+  else Printf.sprintf "$%d" lvl
+;;
+
+let rec pretty_level_atom (l : Level.level) : string =
+  match l with
+  | Level.LZero -> "0"
+  | Level.LVar v -> v
+  | Level.LSuc _ | Level.LMax _ -> "(" ^ pretty_level l ^ ")"
+
+and pretty_level (l : Level.level) : string =
+  match l with
+  | Level.LZero -> "0"
+  | Level.LVar v -> v
+  | Level.LSuc l' -> "S " ^ pretty_level_atom l'
+  | Level.LMax (a, b) -> pretty_level_atom a ^ " ⊔ " ^ pretty_level_atom b
+;;
+
+let pretty_universe (l : Level.level) : string =
+  match l with
+  | Level.LZero -> "𝓤"
+  | _ -> "𝓤(" ^ pretty_level l ^ ")"
+;;
+
+let pretty_metavar (Core.MetaVar i : Core.metavar) : string = Printf.sprintf "?%d" i
+
+let rec pretty_value (ctx : local_ctx) (v : Core.value) : string =
+  match v with
+  | Core.Universe l -> pretty_universe l
+  | Core.RigidLocal (lvl, spine) -> pretty_neutral ctx (pretty_local_name ctx lvl) spine
+  | Core.Var (n, spine) -> pretty_neutral ctx n spine
+  | Core.IndType (n, spine) -> pretty_neutral ctx n spine
+  | Core.Label (n, spine) -> pretty_neutral ctx n spine
+  | Core.Flex (m, spine) -> pretty_neutral ctx (pretty_metavar m) spine
+  | Core.Elim ({ elim_name; _ }, spine) -> pretty_neutral ctx elim_name spine
+  | Core.VPi ({ name; bound; implicit }, closure) ->
+    let body = closure (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
+    let ctx' = bind ctx name bound in
+    let l, r = if implicit then "{", "}" else "(", ")" in
+    Printf.sprintf
+      "%s%s : %s%s -> %s"
+      l
+      name
+      (pretty_value ctx bound)
+      r
+      (pretty_value ctx' body)
+  | Core.VLambda { name; bound = closure; implicit } ->
+    let body = closure (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
+    (* Binder type is not stored on VLambda; placeholder type doesn't affect
+       the printed body. *)
+    let ctx' = bind ctx name (Core.Universe Level.LZero) in
+    if implicit
+    then Printf.sprintf "(fun {%s} => %s)" name (pretty_value ctx' body)
+    else Printf.sprintf "(fun %s => %s)" name (pretty_value ctx' body)
+  | Core.VLift { from_lvl; to_lvl; ty } ->
+    Printf.sprintf
+      "lift[%s→%s] %s"
+      (pretty_level from_lvl)
+      (pretty_level to_lvl)
+      (pretty_value ctx ty)
+  | Core.VLiftTerm { from_lvl; to_lvl; ty; tm } ->
+    Printf.sprintf
+      "liftₜ[%s→%s] (%s : %s)"
+      (pretty_level from_lvl)
+      (pretty_level to_lvl)
+      (pretty_value ctx tm)
+      (pretty_value ctx ty)
+  | Core.VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
+    Printf.sprintf
+      "unliftₜ[%s→%s] (%s : %s)"
+      (pretty_level from_lvl)
+      (pretty_level to_lvl)
+      (pretty_value ctx tm)
+      (pretty_value ctx ty)
+
+and pretty_neutral (ctx : local_ctx) (head : string) (spine : Core.value bwd) : string =
+  if Bwd.is_empty spine
+  then head
+  else (
+    let args = List.map (pretty_arg ctx) (Bwd.to_list spine) in
+    head ^ " " ^ String.concat " " args)
+
+and pretty_arg (ctx : local_ctx) (v : Core.value) : string =
+  match v with
+  | Core.Universe _
+  | Core.RigidLocal (_, Emp)
+  | Core.Var (_, Emp)
+  | Core.IndType (_, Emp)
+  | Core.Label (_, Emp)
+  | Core.Flex (_, Emp) -> pretty_value ctx v
+  | _ -> "(" ^ pretty_value ctx v ^ ")"
+;;
+
 let emit_goal_report
       ~(loc : Asai.Range.t)
       (m : machine)
@@ -738,20 +838,18 @@ let emit_goal_report
   : unit
   =
   let buf = Buffer.create 128 in
-  Buffer.add_string buf (Printf.sprintf "?%s/%s\n" m.module_name name);
+  Buffer.add_string buf (Printf.sprintf "%s/?%s\n" m.module_name name);
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
   let names = Bwd.to_list m.ctx.names in
   let types = Bwd.to_list m.ctx.types in
   List.iter2
     (fun n ty ->
-       Buffer.add_string buf
-         (Printf.sprintf "  %s : %s\n" n ([%show: Core.value] ty)))
+       Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n (pretty_value m.ctx ty)))
     names
     types;
   Buffer.add_string buf "  --- target ---\n";
-  Buffer.add_string buf
-    (Printf.sprintf "  %s" ([%show: Core.value] target));
+  Buffer.add_string buf (Printf.sprintf "  %s" (pretty_value m.ctx target));
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
 ;;
 
@@ -1259,9 +1357,7 @@ let with_handlers (k : unit -> 'a) : 'a =
 let with_handlers_emitting (k : unit -> 'a) : 'a =
   Reporter.run
     ~emit:(fun (d : Reporter.Message.t Asai.Diagnostic.t) ->
-       Format.printf "[%s] %t@."
-         (Reporter.Message.show d.message)
-         d.explanation.value)
+      Format.printf "[%s] %t@." (Reporter.Message.show d.message) d.explanation.value)
     ~fatal:(fun d -> failwith ([%show: Reporter.Message.t] d.message))
   @@ fun () ->
   Context.S.run
@@ -1420,13 +1516,14 @@ let%expect_test "report named goal in check mode" =
          , Core.RigidLocal (0, Bwd.Emp) ));
     ignore (drive m);
     Printf.printf "pending=%d" !(m.pending_goals));
-  [%expect {|
+  [%expect
+    {|
     [Reporter.Message.Goal_report] ?nat/here
       --- context ---
       A : 𝓤
-      x : $0
+      x : A
       --- target ---
-      $0
+      A
     pending=1
     |}]
 ;;
@@ -1449,7 +1546,8 @@ let%expect_test "auto-numbered goals" =
          , Core.Universe Level.LZero ));
     ignore (drive m);
     Printf.printf "pending=%d counter=%d" !(m.pending_goals) !counter);
-  [%expect {|
+  [%expect
+    {|
     [Reporter.Message.Goal_report] ?nat/0
       --- context ---
       --- target ---
