@@ -76,6 +76,18 @@ type preterm =
           (show_pretype b)]
   | Max of preterm * preterm
   [@printer fun fmt (a, b) -> fprintf fmt "(%s ⊔ %s)" (show_preterm a) (show_preterm b)]
+  (* Flat sequence of soup items emitted by the parser before operator
+     resolution. The resolver walks the whole module and rewrites every
+     Op_soup into App/Var/etc.; nothing downstream should ever see it. *)
+  | Op_soup of soup_item list
+  [@printer
+    fun fmt items ->
+      fprintf fmt "<soup:[%s]>" (String.concat "; " (List.map show_soup_item items))]
+
+and soup_item =
+  | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
+  | SI_Name of string [@printer fun fmt s -> fprintf fmt "N(%s)" s]
+  | SI_Imp_arg of preterm [@printer fun fmt p -> fprintf fmt "I{%s}" (show_preterm p)]
 
 and pretype = preterm [@@deriving show]
 
@@ -100,6 +112,25 @@ type clause =
   ; patterns : pattern list
   ; body : preterm
   }
+[@@deriving show]
+
+(* A name path naming another operator in cross-reference position: the
+   referenced operator's literal parts, in template order. E.g., template
+   `"~x + ~y"` is referenced as `["+"]`; template `"if ~x then ~y else ~z"`
+   as `["if"; "then"; "else"]`. *)
+type op_name_path = string list [@@deriving show]
+
+type op_assoc =
+  | OA_Left
+  | OA_Right
+  | OA_None
+[@@deriving show]
+
+type op_option =
+  | OO_Weaker_than of op_name_path list
+  | OO_Stronger_than of op_name_path list
+  | OO_Same_as of op_name_path list
+  | OO_Associativity of op_assoc
 [@@deriving show]
 
 type top =
@@ -151,6 +182,19 @@ type top =
       ; intros : (string * bool) list
       ; target : string
       ; clauses : clause list
+      }
+  (*
+     operator "~x + ~y" := add
+       ~associativity: ~left
+       ~stronger_than: *
+     The template is a raw string with whitespace-separated parts; the body
+     is an arbitrary preterm whose free vars include the hole names from
+     the template; options control precedence / associativity.
+  *)
+  | Operator_decl of
+      { template : string
+      ; body : preterm
+      ; options : op_option list
       }
 [@@deriving show]
 

@@ -279,6 +279,10 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
       go b.bound || ((not (String.equal b.name target)) && go body)
     | Surface.Max (a, b) -> go a || go b
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> false
+    | Surface.Op_soup _ ->
+      Reporter.fatalf
+        Elab_error
+        "internal: Op_soup reached occurs_in (resolver should have lowered it)"
   in
   go t
 ;;

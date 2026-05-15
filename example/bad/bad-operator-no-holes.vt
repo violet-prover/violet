@@ -1,0 +1,2 @@
+# Operator template must contain at least one hole.
+operator "++" := whatever

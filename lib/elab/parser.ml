@@ -42,6 +42,10 @@ module C : sig
     | T_FAT_ARROW
     | T_QMARK
     | T_OPEN
+    | T_OPERATOR
+    | T_SYMBOL
+    | T_STRING
+    | T_TILDE_NAME
 
   type t
 
@@ -83,6 +87,10 @@ end = struct
     | T_FAT_ARROW
     | T_QMARK
     | T_OPEN
+    | T_OPERATOR
+    | T_SYMBOL
+    | T_STRING
+    | T_TILDE_NAME
 
   let tag_index = function
     | T_DATA -> 0
@@ -108,6 +116,10 @@ end = struct
     | T_FAT_ARROW -> 19
     | T_QMARK -> 20
     | T_OPEN -> 22
+    | T_OPERATOR -> 23
+    | T_SYMBOL -> 24
+    | T_STRING -> 25
+    | T_TILDE_NAME -> 26
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -134,17 +146,23 @@ end = struct
     | Lexer.FAT_ARROW -> T_FAT_ARROW
     | Lexer.QMARK -> T_QMARK
     | Lexer.OPEN -> T_OPEN
+    | Lexer.OPERATOR -> T_OPERATOR
+    | Lexer.SYMBOL _ -> T_SYMBOL
+    | Lexer.STRING _ -> T_STRING
+    | Lexer.TILDE_NAME _ -> T_TILDE_NAME
   ;;
 
   type t = int
 
+  (* 27 tags → mask of 27 bits = 0x7FFFFFF *)
+  let mask = 0x7FFFFFF
   let empty = 0
-  let top = 0x7FFFFF
+  let top = mask
   let one t = 1 lsl tag_index t
   let of_list ts = List.fold_left (fun s t -> s lor (1 lsl tag_index t)) 0 ts
   let union = ( lor )
   let inter = ( land )
-  let negate s = lnot s land 0x7FFFFF
+  let negate s = lnot s land mask
   let mem_tag t s = s land (1 lsl tag_index t) <> 0
   let mem tok s = mem_tag (tag_of tok) s
   let is_empty s = s = 0
@@ -313,6 +331,27 @@ module P = struct
     let loc, v = lv in
     match v with
     | Lexer.IDENT s -> loc, s
+    | _ -> assert false
+  ;;
+
+  let string_lit =
+    let+ t = tok C.T_STRING in
+    match t with
+    | Lexer.STRING s -> s
+    | _ -> assert false
+  ;;
+
+  let symbol =
+    let+ t = tok C.T_SYMBOL in
+    match t with
+    | Lexer.SYMBOL s -> s
+    | _ -> assert false
+  ;;
+
+  let tilde_name =
+    let+ t = tok C.T_TILDE_NAME in
+    match t with
+    | Lexer.TILDE_NAME s -> s
     | _ -> assert false
   ;;
 
@@ -586,33 +625,77 @@ module Grammar = struct
         in
         { tp; parse }
       in
-      (* atom_no_bracket is used in the "explicit" branch of `arg` so the alt
-         with `{ atom }` doesn't double-claim LBRACKET. *)
+      (* `atom` covers all single-token structural forms PLUS bare
+         identifiers (used as Var atoms in legacy spine positions). Kept
+         around for the `arg` rule inside a soup tail's `{ atom }`. *)
       let atom_no_bracket : S.preterm t =
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
       let atom : S.preterm t = atom_no_bracket || p_atom_lbracket in
-      let arg : (bool * S.preterm) t =
-        (let+ _ = tok C.T_LBRACKET
-         and+ a = atom
-         and+ _ = tok C.T_RBRACKET in
-         true, a)
+      (* Structural soup atoms: paren-term, lambda, hole/goal, and the
+         binder form `{x:T} -> body`. IDENT and SYMBOL are NOT here — they
+         become SI_Name and are interpreted by the resolver. *)
+      let structural_atom_no_lbracket : S.preterm t =
+        goal_atom || p_atom_lparen || p_atom_lambda
+      in
+      (* SYMBOL token as a name. *)
+      let p_symbol_name : string t = symbol in
+      (* IDENT, optionally followed by `/`-separated continuation segments.
+         A bare ident becomes SI_Name (so it can match operator literals);
+         a qualified name like `Nat/suc` becomes SI_Atom (Var [...]) since
+         qualified names are never operator tokens. *)
+      let p_ident_soup_item : S.soup_item t =
+        let+ loc, first = ident_loc
+        and+ rest =
+          star
+            (let+ _ = tok C.T_SLASH
+             and+ x = ident in
+             x)
+        in
+        match rest with
+        | [] -> S.SI_Name first
+        | _ -> S.SI_Atom (wrap_loc loc (S.Var (first :: rest)))
+      in
+      (* Soup-head item. First sets: T_IDENT, T_SYMBOL, T_QMARK, T_LPAREN,
+         T_LAMBDA, T_LBRACKET — disjoint. *)
+      let soup_head_item : S.soup_item t =
+        p_ident_soup_item
+        || (let+ n = p_symbol_name in
+            S.SI_Name n)
+        || (let+ a = structural_atom_no_lbracket in
+            S.SI_Atom a)
         ||
-        let+ a = atom_no_bracket in
-        false, a
+        let+ a = p_atom_lbracket in
+        S.SI_Atom a
       in
-      let spine : S.preterm t =
-        let+ head = atom
-        and+ args = star arg in
-        List.fold_left (fun acc (impl, x) -> S.App (impl, acc, x)) head args
+      (* Soup-tail item. In tail position, `{...}` is ALWAYS an implicit
+         argument (`{ atom }`); the binder form is illegal here, matching
+         the legacy `arg` rule. First sets disjoint with each other. *)
+      let soup_tail_item : S.soup_item t =
+        p_ident_soup_item
+        || (let+ n = p_symbol_name in
+            S.SI_Name n)
+        || (let+ a = structural_atom_no_lbracket in
+            S.SI_Atom a)
+        ||
+        let+ _ = tok C.T_LBRACKET
+        and+ a = atom
+        and+ _ = tok C.T_RBRACKET in
+        S.SI_Imp_arg a
       in
-      (* max_level: spine ('⊔' spine)*, right-associative to match legacy *)
+      (* A single op-soup: one head followed by zero-or-more tail items. *)
+      let op_soup : S.preterm t =
+        let+ head = soup_head_item
+        and+ rest = star soup_tail_item in
+        S.Op_soup (head :: rest)
+      in
+      (* `max_level: op_soup ('⊔' op_soup)*`, right-associative as before. *)
       let max_level : S.preterm t =
-        let+ head = spine
+        let+ head = op_soup
         and+ tail =
           star
             (let+ _ = tok C.T_JOIN
-             and+ s = spine in
+             and+ s = op_soup in
              s)
         in
         match List.rev (head :: tail) with
@@ -837,7 +920,98 @@ module Grammar = struct
     { Asai.Range.loc; value = S.Universe_decl names }
   ;;
 
-  let p_top : S.top Asai.Range.located t = p_let_top || p_data_top || p_universe_top
+  (* A "name path" referencing another operator in `~weaker_than:` / etc.
+     Consumes a maximal run of consecutive IDENT and SYMBOL tokens. Stops at
+     anything else (TILDE_NAME, top keyword, EOF). At least one token. *)
+  let p_name_path : S.op_name_path P.t =
+    let tp =
+      Tp.{ null = false; first = C.of_list [ C.T_IDENT; C.T_SYMBOL ]; follow = C.empty }
+    in
+    let parse buf i =
+      let n = Array.length buf in
+      let rec loop i acc =
+        if i < n
+        then
+          begin match buf.(i).Asai.Range.value with
+          | Lexer.IDENT s -> loop (i + 1) (s :: acc)
+          | Lexer.SYMBOL s -> loop (i + 1) (s :: acc)
+          | _ -> i, List.rev acc
+          end
+        else i, List.rev acc
+      in
+      let i', path = loop i [] in
+      if List.length path = 0 then P.fail_at buf i else i', path
+    in
+    { tp; parse }
+  ;;
+
+  (* One operator option. Hand-coded because the value-level dispatch on the
+     TILDE_NAME payload (`~weaker_than` vs `~stronger_than` vs ...) doesn't
+     fit the static FIRST-set discipline of `||`. *)
+  let p_op_option : S.op_option P.t =
+    let tp = Tp.tok C.T_TILDE_NAME in
+    let parse buf i =
+      let n = Array.length buf in
+      if i >= n then P.fail_at buf i;
+      let kw_tok = buf.(i) in
+      let kw =
+        match kw_tok.Asai.Range.value with
+        | Lexer.TILDE_NAME s -> s
+        | _ -> P.fail_at buf i
+      in
+      let i = i + 1 in
+      let i, _ = (tok C.T_COLON).parse buf i in
+      match kw with
+      | "~weaker_than" ->
+        let i, path = p_name_path.parse buf i in
+        i, S.OO_Weaker_than [ path ]
+      | "~stronger_than" ->
+        let i, path = p_name_path.parse buf i in
+        i, S.OO_Stronger_than [ path ]
+      | "~same_as" ->
+        let i, path = p_name_path.parse buf i in
+        i, S.OO_Same_as [ path ]
+      | "~associativity" ->
+        if i >= n then P.fail_at buf i;
+        let a =
+          match buf.(i).Asai.Range.value with
+          | Lexer.TILDE_NAME "~left" -> S.OA_Left
+          | Lexer.TILDE_NAME "~right" -> S.OA_Right
+          | Lexer.TILDE_NAME "~none" -> S.OA_None
+          | _ ->
+            Reporter.fatalf
+              ?loc:buf.(i).Asai.Range.loc
+              Parse_error
+              "expected `~left`, `~right`, or `~none` after `~associativity:`"
+        in
+        i + 1, S.OO_Associativity a
+      | other ->
+        Reporter.fatalf
+          ?loc:kw_tok.Asai.Range.loc
+          Parse_error
+          "unknown operator option `%s` (expected ~weaker_than, ~stronger_than, \
+           ~same_as, or ~associativity)"
+          other
+    in
+    { tp; parse }
+  ;;
+
+  let p_operator_top : S.top Asai.Range.located t =
+    let+ loc, (template, body, options) =
+      with_full_range
+        (let+ _ = tok C.T_OPERATOR
+         and+ template = string_lit
+         and+ _ = tok C.T_ASSIGN
+         and+ body = p_term
+         and+ options = star p_op_option in
+         template, body, options)
+    in
+    { Asai.Range.loc; value = S.Operator_decl { template; body; options } }
+  ;;
+
+  let p_top : S.top Asai.Range.located t =
+    p_let_top || p_data_top || p_universe_top || p_operator_top
+  ;;
 
   let p_tops_loop : S.top Asai.Range.located list t =
     fix (fun self ->
@@ -899,4 +1073,161 @@ let parse_channel filename ch =
 let parse_file filename =
   let ch = open_in filename in
   Fun.protect ~finally:(fun _ -> close_in ch) @@ fun _ -> parse_channel filename ch
+;;
+
+(* Lex a source string to a list of tokens (location-stripped, EOF dropped) for
+   inline tests of the lexer. *)
+let lex_to_list src =
+  let lexbuf = Lexing.from_string src in
+  let rec loop acc =
+    match Lexer.token lexbuf with
+    | Lexer.EOF -> List.rev acc
+    | t -> loop (t :: acc)
+  in
+  loop []
+;;
+
+let%expect_test "lex symbol: +" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "+");
+  [%expect {| [<symbol:+>] |}]
+;;
+
+let%expect_test "lex symbol: <*>" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "<*>");
+  [%expect {| [<symbol:<*>>] |}]
+;;
+
+let%expect_test "lex symbol vs reserved: -> stays ARROW" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "->");
+  [%expect {| [->] |}]
+;;
+
+let%expect_test "lex symbol vs reserved: <= stays STACK_ARROW" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "<=");
+  [%expect {| [<=] |}]
+;;
+
+let%expect_test "lex symbol: longest-match beats reserved (-->>)" =
+  (* ->> contains -> as prefix; longest-match makes the whole run a SYMBOL. *)
+  print_string @@ [%show: Lexer.token list] (lex_to_list "->>");
+  [%expect {| [<symbol:->>>] |}]
+;;
+
+let%expect_test "lex symbol: comma is a SYMBOL char" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list ",");
+  [%expect {| [<symbol:,>] |}]
+;;
+
+let%expect_test "lex symbols mixed with idents" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "x + y");
+  [%expect {| [<identifier:x>; <symbol:+>; <identifier:y>] |}]
+;;
+
+let%expect_test "lex string: simple" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\"hello\"");
+  [%expect {| [<string:hello>] |}]
+;;
+
+let%expect_test "lex string: template" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\"~x + ~y\"");
+  [%expect {| [<string:~x + ~y>] |}]
+;;
+
+let%expect_test "lex tilde-name: keyword" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "~weaker_than");
+  [%expect {| [<tilde:~weaker_than>] |}]
+;;
+
+let%expect_test "lex tilde-name: hole" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "~x");
+  [%expect {| [<tilde:~x>] |}]
+;;
+
+let%expect_test "lex operator keyword" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "operator");
+  [%expect {| [operator] |}]
+;;
+
+let%expect_test "lex full operator decl" =
+  print_string
+  @@ [%show: Lexer.token list] (lex_to_list "operator \"~x + ~y\" := add ~weaker_than: *");
+  [%expect
+    {|
+    [operator; <string:~x + ~y>; :=; <identifier:add>; <tilde:~weaker_than>; :;
+      <symbol:*>]
+    |}]
+;;
+
+(* Parse a complete source string into its top-level forms (location-stripped
+   for compact display in expect-test output). *)
+let parse_tops_for_test src =
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let lexbuf = Lexing.from_string src in
+  let toks = Array.of_list (tokens "<parser-test>" lexbuf) in
+  let m = parse_buf ~name:"<parser-test>" toks in
+  List.map (fun lt -> lt.Asai.Range.value) m.Surface.tops
+;;
+
+let%expect_test "parse: bare operator decl, no options" =
+  print_string
+  @@ [%show: Surface.top list] (parse_tops_for_test "operator \"~x + ~y\" := add\n");
+  [%expect
+    {|
+    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+       options = []}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: operator with ~stronger_than" =
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test "operator \"~x * ~y\" := mul\n  ~stronger_than: +\n");
+  [%expect
+    {|
+    [Surface.Operator_decl {template = "~x * ~y"; body = <soup:[N(mul)]>;
+       options = [(Surface.OO_Stronger_than [["+"]])]}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: operator with ~associativity" =
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test "operator \"~x + ~y\" := add\n  ~associativity: ~left\n");
+  [%expect
+    {|
+    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+       options = [(Surface.OO_Associativity Surface.OA_Left)]}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: operator mixfix with multi-part name in option" =
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test
+          "operator \"if ~x then ~y else ~z\" := ite\n  ~weaker_than: +\n");
+  [%expect
+    {|
+    [Surface.Operator_decl {template = "if ~x then ~y else ~z";
+       body = <soup:[N(ite)]>; options = [(Surface.OO_Weaker_than [["+"]])]}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: operator decl alongside let" =
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test
+          "operator \"~x + ~y\" := add\nlet two : Nat := add zero zero\n");
+  [%expect
+    {|
+    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+       options = []};
+      (Surface.Let ("two", [], <soup:[N(Nat)]>, <soup:[N(add); N(zero); N(zero)]>
+         ))
+      ]
+    |}]
 ;;
