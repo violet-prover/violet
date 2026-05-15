@@ -1,0 +1,51 @@
+# Comprehensive demo of inductive namespacing & type-directed resolution.
+
+data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+data List (A : U) : U
+  | nil : List A
+  | cons : A -> List A -> List A
+
+data Vec (A : U) : Nat -> U
+  | nil : Vec A zero
+  | cons : {n : Nat} -> A -> Vec A n -> Vec A (Nat/suc n)
+
+# Type-directed: bare `zero` against expected `Nat` resolves to Nat/zero.
+let n0 : Nat := zero
+
+# Type-directed: bare `nil` against expected `List Nat` resolves to List/nil.
+let l0 : List Nat := nil
+
+# Type-directed: bare `nil` against expected `Vec Nat zero` resolves to Vec/nil
+# — not List/nil, because the inductive head determines the namespace.
+let v0 : Vec Nat zero := nil
+
+# Fully qualified: works without type direction.
+let n1 : Nat := Nat/suc Nat/zero
+
+# Mixed: head qualified, arg type-directed.
+let n2 : Nat := Nat/suc zero
+
+# Eliminator usage: compute successor of a number via elim.
+let pred-motive (x : Nat) : U := Nat
+let pred-case-zero : Nat := zero
+let pred-case-suc (n- : Nat) (ih : pred-motive n-) : Nat := n-
+let pred : Nat -> Nat := \ x -> Nat/elim x pred-motive pred-case-zero pred-case-suc
+
+# Pattern position: bare ctor names in pattern lookup against scrutinee's namespace.
+let double : (n : Nat) -> Nat where
+  double n <= elim n
+  | double zero => zero
+  | double (suc m) => suc (suc (double m))
+
+# Per-call-site type-directed disambiguation: both List and Vec are in scope
+# simultaneously. Bare `nil` in the body is checked against the declared return
+# type List Nat — so type-direction picks List/nil. The qualified List/cons is
+# used for the head since applied constructors are inferred, not checked.
+let mk-list (n : Nat) : List Nat := List/cons n nil
+
+# Same qualified head, different namespace: Vec/cons. The `nil` arg is checked
+# against Vec Nat 0, so type-direction resolves it to Vec/nil automatically.
+let mk-vec : Vec Nat (Nat/suc Nat/zero) := Vec/cons Nat/zero nil

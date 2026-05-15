@@ -24,4 +24,4 @@ let neg2 : Bool -> Bool where
 # can't infer them from the case-body context.
 let swap (A : U) (B : U) : Sigma A (\x -> B) -> Sigma B (\y -> A) where
   swap A B x <= elim x
-  | swap A B (mkSigma a b) => mkSigma {B} {\y -> A} b a
+  | swap A B (mk a b) => mk {B} {\y -> A} b a

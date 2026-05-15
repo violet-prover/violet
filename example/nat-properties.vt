@@ -1,14 +1,14 @@
 import nat
 import equality
 
-let one : Nat := suc zero
-let two : Nat := suc one
+let one : Nat := Nat/suc zero
+let two : Nat := Nat/suc one
 
-let add1 (x : Nat) : Nat := suc x
+let add1 (x : Nat) : Nat := Nat/suc x
 
-let eq-1 : Id (add1 zero) (suc zero) := refl
+let eq-1 : Id (add1 zero) (Nat/suc zero) := refl
 
-let eq-0 : Id zero zero := refl
+let eq-0 : Id {Nat} zero zero := refl
 let eq-0-implicit : Id {Nat} zero zero := refl
 
 let eq-2 : Id (add one one) two := refl
@@ -18,7 +18,7 @@ let add-zero-r : (n : Nat) -> Id (add n zero) n where
   | add-zero-r zero => refl
   | add-zero-r (suc n) => cong suc (add-zero-r n)
 
-let add-suc-r : (m n : Nat) -> Id (add m (suc n)) (suc (add m n)) where
+let add-suc-r : (m n : Nat) -> Id (add m (Nat/suc n)) (Nat/suc (add m n)) where
   add-suc-r m n <= elim m
   | add-suc-r zero n => refl
   | add-suc-r (suc m) n =>

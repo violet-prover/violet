@@ -12,7 +12,9 @@ module ValueEnvironment = struct
      local_ctx with de Bruijn indices.  Only globals remain here. *)
   type tag =
     [ `Imported
+    | `Defn
     | `Constructor
+    | `Eliminator
     ]
 
   type hook = modifier_cmd
@@ -33,6 +35,13 @@ let lookup (x : string) : Core.value =
       NoVar_error
       "cannot find `%s` in environment"
       (String.concat "." [ x ])
+;;
+
+let lookup_path (xs : string list) : Core.value =
+  match S.resolve xs with
+  | Some (v, _) -> v
+  | None ->
+    Reporter.fatalf NoVar_error "cannot find `%s` in environment" (String.concat "/" xs)
 ;;
 
 (* Top-level let definitions, keyed by name.  Unification consults this when
@@ -61,7 +70,9 @@ module Handler = struct
 
   let pp_item fmt = function
     | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value] x)
+    | x, `Defn -> Format.fprintf fmt "%s (defn)" ([%show: Core.value] x)
     | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
+    | x, `Eliminator -> Format.fprintf fmt "%s (eliminator)" ([%show: Core.value] x)
   ;;
 
   let shadow context path x y =
@@ -104,7 +115,13 @@ module Handler = struct
   ;;
 end
 
+let lookup_or_var (x : string) : Core.value =
+  match S.resolve [ x ] with
+  | Some (v, _) -> v
+  | None -> Core.Var (x, Bwd.Emp)
+;;
+
 module View : Violet_kernel.Views.ENV_VIEW = struct
-  let lookup = lookup
+  let lookup = lookup_or_var
   let unfold = unfold_def
 end

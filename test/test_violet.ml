@@ -115,6 +115,7 @@ let expected : (string * outcome) list =
   ; "../example/universe-explicit.vt", `Ok
   ; "../example/sigma.vt", `Ok
   ; "../example/sigma-multi.vt", `Ok
+  ; "../example/ind-namespacing.vt", `Ok
   ; "../example/pterodactyl.vt", `Ok
   ; "../example/bad/bad-stack-not-pi.vt", `Fail
   ; "../example/bad/bad-stack-coverage.vt", `Fail

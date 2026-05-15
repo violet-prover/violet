@@ -28,6 +28,7 @@ module C : sig
     | T_COLON
     | T_LAMBDA
     | T_DOT
+    | T_SLASH
     | T_VERT
     | T_JOIN
     | T_LPAREN
@@ -40,6 +41,7 @@ module C : sig
     | T_STACK_ARROW
     | T_FAT_ARROW
     | T_QMARK
+    | T_OPEN
 
   type t
 
@@ -67,6 +69,7 @@ end = struct
     | T_COLON
     | T_LAMBDA
     | T_DOT
+    | T_SLASH
     | T_VERT
     | T_JOIN
     | T_LPAREN
@@ -79,6 +82,7 @@ end = struct
     | T_STACK_ARROW
     | T_FAT_ARROW
     | T_QMARK
+    | T_OPEN
 
   let tag_index = function
     | T_DATA -> 0
@@ -90,6 +94,7 @@ end = struct
     | T_COLON -> 6
     | T_LAMBDA -> 7
     | T_DOT -> 8
+    | T_SLASH -> 21
     | T_VERT -> 9
     | T_JOIN -> 10
     | T_LPAREN -> 11
@@ -102,6 +107,7 @@ end = struct
     | T_STACK_ARROW -> 18
     | T_FAT_ARROW -> 19
     | T_QMARK -> 20
+    | T_OPEN -> 22
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -114,6 +120,7 @@ end = struct
     | Lexer.COLON -> T_COLON
     | Lexer.LAMBDA -> T_LAMBDA
     | Lexer.DOT -> T_DOT
+    | Lexer.SLASH -> T_SLASH
     | Lexer.VERT -> T_VERT
     | Lexer.JOIN -> T_JOIN
     | Lexer.L_PAREN -> T_LPAREN
@@ -126,17 +133,18 @@ end = struct
     | Lexer.STACK_ARROW -> T_STACK_ARROW
     | Lexer.FAT_ARROW -> T_FAT_ARROW
     | Lexer.QMARK -> T_QMARK
+    | Lexer.OPEN -> T_OPEN
   ;;
 
   type t = int
 
   let empty = 0
-  let top = 0x1FFFFF
+  let top = 0x7FFFFF
   let one t = 1 lsl tag_index t
   let of_list ts = List.fold_left (fun s t -> s lor (1 lsl tag_index t)) 0 ts
   let union = ( lor )
   let inter = ( land )
-  let negate s = lnot s land 0x1FFFFF
+  let negate s = lnot s land 0x7FFFFF
   let mem_tag t s = s land (1 lsl tag_index t) <> 0
   let mem tok s = mem_tag (tag_of tok) s
   let is_empty s = s = 0
@@ -388,6 +396,17 @@ module Grammar = struct
     first :: rest
   ;;
 
+  let p_qname : string list t =
+    let+ first = ident
+    and+ rest =
+      star
+        (let+ _ = tok C.T_SLASH
+         and+ x = ident in
+         x)
+    in
+    first :: rest
+  ;;
+
   let p_import : string list t =
     let+ _ = tok C.T_IMPORT
     and+ path = p_path in
@@ -458,8 +477,14 @@ module Grammar = struct
       in
       (* atoms *)
       let ident_atom : S.preterm t =
-        let+ loc, name = ident_loc in
-        wrap_loc loc (S.Var name)
+        let+ loc, first = ident_loc
+        and+ rest =
+          star
+            (let+ _ = tok C.T_SLASH
+             and+ x = ident in
+             x)
+        in
+        wrap_loc loc (S.Var (first :: rest))
       in
       (* LPAREN atom: disambiguate binder vs paren-term via 2-token peek *)
       let parens_binder_atom : S.preterm t =
@@ -719,7 +744,13 @@ module Grammar = struct
   type let_body =
     | LB_Assign of S.preterm
     | LB_Where of S.stack_move list * S.clause list
-    | LB_Elim of elim_header_data * S.clause list
+    | LB_Elim of string list * elim_header_data * S.clause list
+
+  let p_open_clause : string t =
+    let+ _ = tok C.T_OPEN
+    and+ name = ident in
+    name
+  ;;
 
   let p_let_body : let_body t =
     (let+ _ = tok C.T_ASSIGN
@@ -727,6 +758,7 @@ module Grammar = struct
      LB_Assign tm)
     ||
     let+ _ = tok C.T_WHERE
+    and+ opens = star p_open_clause
     and+ wh =
       (let+ hdr = p_elim_header in
        WH_Elim hdr)
@@ -735,8 +767,14 @@ module Grammar = struct
       WH_Moves moves
     and+ clauses = star p_clause in
     match wh with
-    | WH_Elim hdr -> LB_Elim (hdr, clauses)
-    | WH_Moves moves -> LB_Where (moves, clauses)
+    | WH_Elim hdr -> LB_Elim (opens, hdr, clauses)
+    | WH_Moves moves ->
+      if opens <> []
+      then
+        Reporter.fatalf
+          Parse_error
+          "`open` clauses are only supported inside `elim`-style `where` blocks";
+      LB_Where (moves, clauses)
   ;;
 
   let p_let_top : S.top Asai.Range.located t =
@@ -756,7 +794,7 @@ module Grammar = struct
       { Asai.Range.loc
       ; value = S.Stack_def { name; params = bindings; signature = ty; moves; clauses }
       }
-    | LB_Elim ({ head; intros; target }, clauses) ->
+    | LB_Elim (opens, { head; intros; target }, clauses) ->
       if not (String.equal head name)
       then
         Reporter.fatalf
@@ -766,7 +804,8 @@ module Grammar = struct
           name;
       { Asai.Range.loc
       ; value =
-          S.Elim_def { name; params = bindings; signature = ty; intros; target; clauses }
+          S.Elim_def
+            { name; params = bindings; signature = ty; opens; intros; target; clauses }
       }
   ;;
 
