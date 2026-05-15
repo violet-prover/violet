@@ -1,0 +1,12 @@
+data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+let add : (m n : Nat) -> Nat where
+  add m n <= elim m
+  | add zero n => n
+  | add (suc m) n => suc (add m n)
+
+# Duplicate template — the second `operator` declaration must be rejected.
+operator "~x + ~y" := add
+operator "~x + ~y" := add

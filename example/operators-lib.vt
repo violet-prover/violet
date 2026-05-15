@@ -1,0 +1,20 @@
+data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+let add : (m n : Nat) -> Nat where
+  add m n <= elim m
+  | add zero n => n
+  | add (suc m) n => suc (add m n)
+
+let mul : (m n : Nat) -> Nat where
+  mul m n <= elim m
+  | mul zero n => zero
+  | mul (suc m) n => add n (mul m n)
+
+operator "~x + ~y" := add
+  ~associativity: ~left
+
+operator "~x * ~y" := mul
+  ~stronger_than: +
+  ~associativity: ~left

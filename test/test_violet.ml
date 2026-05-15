@@ -117,12 +117,17 @@ let expected : (string * outcome) list =
   ; "../example/sigma-multi.vt", `Ok
   ; "../example/ind-namespacing.vt", `Ok
   ; "../example/pterodactyl.vt", `Ok
+  ; "../example/operators.vt", `Ok
+  ; "../example/operators-user.vt", `Ok
   ; "../example/bad/bad-stack-not-pi.vt", `Fail
   ; "../example/bad/bad-stack-coverage.vt", `Fail
   ; "../example/bad/independent-universes-bad.vt", `Fail
   ; "../example/bad/bad-positivity-negative.vt", `Fail
   ; "../example/bad/bad-positivity-nested.vt", `Fail
   ; "../example/bad/bad-positivity-non-uniform.vt", `Fail
+  ; "../example/bad/bad-operator-no-holes.vt", `Fail
+  ; "../example/bad/bad-operator-duplicate.vt", `Fail
+  ; "../example/bad/bad-operator-cycle.vt", `Fail
   ]
 ;;
 

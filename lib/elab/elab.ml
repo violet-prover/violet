@@ -161,7 +161,11 @@ let rec rename_vars_surface (renaming : (string * string) list) (t : Surface.pre
       Surface.Pi ({ b with bound = bound' }, rename_vars_surface renaming' body)
     | Surface.Max (a, b) ->
       Surface.Max (rename_vars_surface renaming a, rename_vars_surface renaming b)
-    | Surface.Universe | Surface.Hole | Surface.Goal _ -> t)
+    | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+    | Surface.Op_soup _ ->
+      Reporter.fatalf
+        Elab_error
+        "internal: Op_soup reached rename_vars_surface (resolver should have lowered it)")
 ;;
 
 (* Peel `n` outer Pi-layers off a Surface pretype, returning the codomain. *)
@@ -216,6 +220,10 @@ let qualify_ctor_names
       Surface.Pi ({ b with bound = bound' }, walk (b.name :: shadowed) body)
     | Surface.Max (a, b) -> Surface.Max (walk shadowed a, walk shadowed b)
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+    | Surface.Op_soup _ ->
+      Reporter.fatalf
+        Elab_error
+        "internal: Op_soup reached qualify_ctor_names (resolver should have lowered it)"
   in
   walk shadowed body
 ;;
@@ -288,6 +296,10 @@ let rewrite_recursive_calls
     | Surface.Pi (b, body) -> Surface.Pi ({ b with bound = rw b.bound }, rw body)
     | Surface.Max (a, b) -> Surface.Max (rw a, rw b)
     | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+    | Surface.Op_soup _ ->
+      Reporter.fatalf
+        Elab_error
+        "internal: Op_soup reached clause-body rewrite (resolver should have lowered it)"
   in
   rw body
 ;;
@@ -1138,6 +1150,7 @@ let name_of_top : Surface.top -> string = function
   | Surface.Stack_def { name; _ } -> name
   | Surface.Elim_def { name; _ } -> name
   | Surface.Universe_decl _ -> "<universe_decl>"
+  | Surface.Operator_decl _ -> "<operator_decl>"
 ;;
 
 let rec dispatch (m : machine) (g : goal) : unit =
@@ -1312,6 +1325,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
        m.result <- Some (PTermType (Core.App (f_tm, arg_tm), b arg_val))
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveArg: bad result %s" ([%show: produced] other))
+  | GInfer (loc, Op_soup _) | GCheck (loc, Op_soup _, _) ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "internal: Op_soup reached elaborator (resolver should have lowered it)"
   | GInfer (loc, Lambda _) -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
   | GCheck (_loc, Hole, _) -> m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
   | GInfer (_loc, Hole) ->
@@ -2039,6 +2057,11 @@ let check_top
       GTopStackDef (loc, name, params, signature, moves, clauses)
     | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
       GTopElimDef (loc, name, params, signature, opens, intros, target, clauses)
+    | Surface.Operator_decl _ ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "internal: Operator_decl reached elaboration (resolver should have consumed it)"
   in
   push m g;
   ignore (drive m);
@@ -2053,6 +2076,11 @@ let check_top
 ;;
 
 let check_module (file : Surface.t) : unit =
+  (* Run the operator-resolution pass first. It walks every preterm and
+     rewrites Op_soup nodes into normal App / Var spines using the in-scope
+     operator table. With no `operator` declarations, this is a structural
+     no-op that just collapses each soup to a left-associative App. *)
+  let file = Op_resolver.resolve_module file in
   let module_name = Filename.chop_extension @@ Filename.basename file.name in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
