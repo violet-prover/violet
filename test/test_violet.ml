@@ -22,7 +22,13 @@ let timeout_sec = 30
 let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
   let mods = Hashtbl.create 16 in
   let deps = Hashtbl.create 16 in
-  let root = Filename.dirname filename in
+  let mode =
+    match Violet_project.Root.find_root (Filename.dirname filename) with
+    | Some root ->
+      (try `Project (Violet_project.Resolve.load root) with
+       | Violet_project.Resolve.Project_error msg -> failwith msg)
+    | None -> `Single_file (Filename.dirname filename)
+  in
   let rec walk key m =
     if Hashtbl.mem deps key
     then ()
@@ -35,7 +41,11 @@ let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
       List.iter
         (fun library ->
            let import_key = String.concat "/" library in
-           let filepath = root ^ "/" ^ import_key ^ ".vt" in
+           let filepath =
+             match mode with
+             | `Project proj -> Violet_project.Resolve.resolve_import proj library
+             | `Single_file root -> root ^ "/" ^ import_key ^ ".vt"
+           in
            walk import_key (Violet_elab.Parser.parse_file filepath))
         m.imports
     end
@@ -112,21 +122,21 @@ let outcome_str = function
    Refactor goal is to keep OK/OK working, and (eventually) push the FAIL/HUNG
    entries toward OK as unification improves. *)
 let expected : (string * outcome) list =
-  [ "../example/bool.vt", `Ok
-  ; "../example/nat.vt", `Ok
-  ; "../example/list.vt", `Ok
-  ; "../example/vec.vt", `Ok
-  ; "../example/equality.vt", `Ok
-  ; "../example/index.vt", `Ok
-  ; "../example/compute.vt", `Ok
-  ; "../example/universe-explicit.vt", `Ok
-  ; "../example/sigma.vt", `Ok
-  ; "../example/sigma-multi.vt", `Ok
-  ; "../example/ind-namespacing.vt", `Ok
-  ; "../example/pterodactyl.vt", `Ok
-  ; "../example/operators.vt", `Ok
-  ; "../example/operators-user.vt", `Ok
-  ; "../example/goal_demo.vt", `Ok
+  [ "../example/src/bool.vt", `Ok
+  ; "../example/src/nat.vt", `Ok
+  ; "../example/src/list.vt", `Ok
+  ; "../example/src/vec.vt", `Ok
+  ; "../example/src/equality.vt", `Ok
+  ; "../example/src/index.vt", `Ok
+  ; "../example/src/compute.vt", `Ok
+  ; "../example/src/universe-explicit.vt", `Ok
+  ; "../example/src/sigma.vt", `Ok
+  ; "../example/src/sigma-multi.vt", `Ok
+  ; "../example/src/ind-namespacing.vt", `Ok
+  ; "../example/src/pterodactyl.vt", `Ok
+  ; "../example/src/operators.vt", `Ok
+  ; "../example/src/operators-user.vt", `Ok
+  ; "../example/src/goal_demo.vt", `Ok
   ; "../example/bad/bad-stack-not-pi.vt", `Fail
   ; "../example/bad/bad-stack-coverage.vt", `Fail
   ; "../example/bad/independent-universes-bad.vt", `Fail
