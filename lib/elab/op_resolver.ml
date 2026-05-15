@@ -1402,8 +1402,12 @@ let merge_table (target : op_table) (source : op_table) : op_table =
    declarations are consumed by this pass (validated and added to the
    table) and dropped from the output — downstream elab never sees them.
    Imports contribute their exported tables to the starting table. *)
-let resolve_module (file : Surface.t) : Surface.t =
-  let module_name = Filename.chop_extension @@ Filename.basename file.name in
+let resolve_module ?module_name (file : Surface.t) : Surface.t =
+  let module_name =
+    match module_name with
+    | Some n -> n
+    | None -> Filename.chop_extension @@ Filename.basename file.name
+  in
   let init_table =
     List.fold_left
       (fun acc import_path ->

@@ -2077,13 +2077,18 @@ let check_top
       !(m.pending_goals)
 ;;
 
-let check_module (file : Surface.t) : unit =
+let check_module ?module_path (file : Surface.t) : unit =
+  let module_path =
+    match module_path with
+    | Some p -> p
+    | None -> [ Filename.chop_extension @@ Filename.basename file.name ]
+  in
+  let module_name = String.concat "/" module_path in
   (* Run the operator-resolution pass first. It walks every preterm and
      rewrites Op_soup nodes into normal App / Var spines using the in-scope
      operator table. With no `operator` declarations, this is a structural
      no-op that just collapses each soup to a left-associative App. *)
-  let file = Op_resolver.resolve_module file in
-  let module_name = Filename.chop_extension @@ Filename.basename file.name in
+  let file = Op_resolver.resolve_module ~module_name file in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
   Context.clear_level_vars ();
@@ -2102,9 +2107,9 @@ let check_module (file : Surface.t) : unit =
     h
   in
   let is_exported name = Hashtbl.mem exports_set name in
-  Context.S.section [ module_name ]
+  Context.S.section module_path
   @@ fun () ->
-  Env.S.section [ module_name ]
+  Env.S.section module_path
   @@ fun () ->
   List.iter
     (fun library ->

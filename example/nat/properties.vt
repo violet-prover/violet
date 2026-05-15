@@ -1,6 +1,8 @@
 \import nat
 \import equality
 
+\export add-comm
+
 \let one : Nat => Nat/suc zero
 \let two : Nat => Nat/suc one
 

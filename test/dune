@@ -16,5 +16,5 @@
   tsort))
 
 (test
- (name test_typed_parser)
+ (name test_parser)
  (libraries violet_elab violet_kernel asai))

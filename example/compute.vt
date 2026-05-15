@@ -2,6 +2,8 @@
 \import list
 \import equality
 
+\export length
+
 \let one : Nat => Nat/suc zero
 \let two : Nat => Nat/suc one
 

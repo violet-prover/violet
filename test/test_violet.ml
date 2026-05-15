@@ -19,29 +19,32 @@ let timeout_sec = 30
 (* Topologically load the file and its imports, mirroring what bin/main.ml's
    `prepare_dependencies` does. Without this, examples that `import nat` fail
    to find Nat / zero / suc when checked alone. *)
-let load_with_deps (filename : string) : Violet_elab.Surface.t list =
+let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
   let mods = Hashtbl.create 16 in
   let deps = Hashtbl.create 16 in
-  let rec walk m =
-    let key = Filename.chop_extension @@ Filename.basename m.Violet_elab.Surface.name in
+  let root = Filename.dirname filename in
+  let rec walk key m =
     if Hashtbl.mem deps key
     then ()
     else begin
       Hashtbl.add mods key m;
-      let values = List.map (fun path -> String.concat "/" path) m.imports in
+      let values =
+        List.map (fun path -> String.concat "/" path) m.Violet_elab.Surface.imports
+      in
       Hashtbl.add deps key values;
       List.iter
         (fun library ->
-           let filepath =
-             Filename.dirname m.name ^ "/" ^ String.concat "/" library ^ ".vt"
-           in
-           walk (Violet_elab.Parser.parse_file filepath))
+           let import_key = String.concat "/" library in
+           let filepath = root ^ "/" ^ import_key ^ ".vt" in
+           walk import_key (Violet_elab.Parser.parse_file filepath))
         m.imports
     end
   in
-  walk (Violet_elab.Parser.parse_file filename);
+  let m = Violet_elab.Parser.parse_file filename in
+  let root_key = Filename.chop_extension @@ Filename.basename m.name in
+  walk root_key m;
   match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
-  | Sorted r -> List.map (Hashtbl.find mods) r
+  | Sorted r -> List.map (fun k -> k, Hashtbl.find mods k) r
   | ErrorCycle _ -> failwith "import cycle"
 ;;
 
@@ -61,7 +64,12 @@ let run_check_in_child filename =
      @@ fun () ->
      let open Violet_elab.Env.Handler in
      Violet_elab.Env.S.run ~shadow ~not_found ~hook
-     @@ fun () -> List.iter Violet_elab.Elab.check_module (load_with_deps filename)
+     @@ fun () ->
+     List.iter
+       (fun (key, m) ->
+          let module_path = String.split_on_char '/' key in
+          Violet_elab.Elab.check_module ~module_path m)
+       (load_with_deps filename)
    with
    | _ -> exit_code := 1);
   exit !exit_code
@@ -110,7 +118,6 @@ let expected : (string * outcome) list =
   ; "../example/vec.vt", `Ok
   ; "../example/equality.vt", `Ok
   ; "../example/index.vt", `Ok
-  ; "../example/nat-properties.vt", `Ok
   ; "../example/compute.vt", `Ok
   ; "../example/universe-explicit.vt", `Ok
   ; "../example/sigma.vt", `Ok

@@ -1,9 +1,9 @@
 \import nat
+\import nat/properties
 \import list
 \import vec
 \import equality
 \import compute
-\import universe-explicit
 \import sigma
 \import sigma-multi
 \import pterodactyl

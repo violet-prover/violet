@@ -10,9 +10,9 @@ let rec prepare_dependencies
           (root : string)
           (mods : modules)
           (deps : dependencies)
+          (key : string)
           (m : Violet_elab.Surface.t)
   =
-  let key = module_name m.name in
   Hashtbl.add mods key m;
   let values = List.map (fun path -> String.concat "/" path) m.imports in
   match Hashtbl.find_opt deps key with
@@ -21,9 +21,10 @@ let rec prepare_dependencies
     Hashtbl.add deps key values;
     List.iter
       (fun library ->
-         let filepath = root ^ "/" ^ String.concat "/" library ^ ".vt" in
+         let import_key = String.concat "/" library in
+         let filepath = root ^ "/" ^ import_key ^ ".vt" in
          let m = Violet_elab.Parser.parse_file filepath in
-         prepare_dependencies root mods deps m)
+         prepare_dependencies root mods deps import_key m)
       m.imports
 ;;
 
@@ -45,11 +46,13 @@ let load_cmd ~env =
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet_elab.Parser.parse_file filename in
-        prepare_dependencies (Filename.dirname m.name) mods deps m;
+        prepare_dependencies (Filename.dirname m.name) mods deps (module_name m.name) m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
-             (fun mod_name -> Violet_elab.Elab.check_module (Hashtbl.find mods mod_name))
+             (fun mod_name ->
+                let module_path = String.split_on_char '/' mod_name in
+                Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
              r
          | ErrorCycle err_list ->
            Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
@@ -75,11 +78,13 @@ let check_cmd ~env =
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet_elab.Parser.parse_file filename in
-        prepare_dependencies (Filename.dirname m.name) mods deps m;
+        prepare_dependencies (Filename.dirname m.name) mods deps (module_name m.name) m;
         match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
         | Sorted r ->
           List.iter
-            (fun mod_name -> Violet_elab.Elab.check_module (Hashtbl.find mods mod_name))
+            (fun mod_name ->
+               let module_path = String.split_on_char '/' mod_name in
+               Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
             r
         | ErrorCycle err_list ->
           Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"

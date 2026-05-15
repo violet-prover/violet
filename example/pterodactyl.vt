@@ -1,6 +1,8 @@
 \import bool
 \import sigma
 
+\export swap
+
 # Identity in stack style — one `<= \intro`, one clause.
 \let identity (A : U) : A -> A \where
   <= \intro
