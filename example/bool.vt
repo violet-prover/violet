@@ -1,3 +1,5 @@
+\export Bool
+
 \data Bool : U
   | true : Bool
   | false : Bool

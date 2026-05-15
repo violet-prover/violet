@@ -286,7 +286,7 @@ let p_all (name : string) () : Surface.t =
   let imports = many p_import () in
   let tops = many p_top () in
   consume Lexer.EOF;
-  { name; imports; tops }
+  { name; imports; exports = []; tops }
 ;;
 
 let rec tokens filename lexbuf =

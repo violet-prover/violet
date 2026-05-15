@@ -1,3 +1,5 @@
+\export SigmaM
+
 \universe U V
 
 \data SigmaM (A : U) (B : A -> V) : U ⊔ V

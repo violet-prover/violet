@@ -972,12 +972,14 @@ type machine =
   ; kernel_module : Violet_kernel.Module.t
   ; goal_counter : int ref
   ; pending_goals : int ref
+  ; is_exported : string -> bool
   }
 
 let make_machine
       ~(module_name : string)
       ~(kernel_module : Violet_kernel.Module.t)
       ~(goal_counter : int ref)
+      ?(is_exported = fun _ -> false)
       ()
   : machine
   =
@@ -989,6 +991,7 @@ let make_machine
   ; kernel_module
   ; goal_counter
   ; pending_goals = ref 0
+  ; is_exported
   }
 ;;
 
@@ -1151,6 +1154,26 @@ let name_of_top : Surface.top -> string = function
   | Surface.Elim_def { name; _ } -> name
   | Surface.Universe_decl _ -> "<universe_decl>"
   | Surface.Operator_decl _ -> "<operator_decl>"
+;;
+
+(* Publish to Yuujinchou: visible-only if private, visible+export if public.
+   Switches the API based on the export flag without changing the binding
+   data, modifier contexts, or path. *)
+let publish_to_context ~exported path datum =
+  if exported
+  then
+    Context.S.include_singleton
+      ~context_visible:`Visible
+      ~context_export:`Export
+      (path, datum)
+  else Context.S.import_singleton ~context_visible:`Visible (path, datum)
+;;
+
+let publish_to_env ~exported path datum =
+  if exported
+  then
+    Env.S.include_singleton ~context_visible:`Visible ~context_export:`Export (path, datum)
+  else Env.S.import_singleton ~context_visible:`Visible (path, datum)
 ;;
 
 let rec dispatch (m : machine) (g : goal) : unit =
@@ -1445,15 +1468,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | KTopLet_HaveBody (_loc, name, typ_tm, typ_val) ->
     (match take_result m with
      | PTerm term ->
-       Context.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         ([ name ], (typ_val, `Defn));
+       let exported = m.is_exported name in
+       publish_to_context ~exported [ name ] (typ_val, `Defn);
        let body_val = Evaluation.eval m.ctx.env term in
-       Env.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         ([ name ], (body_val, `Defn));
+       publish_to_env ~exported [ name ] (body_val, `Defn);
        Env.register_definition name body_val;
        let qname = m.module_name ^ "." ^ name in
        Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term;
@@ -1613,14 +1631,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let ind_info : ElabData.ind_info =
          { params; deps; ind_ty; ctors; infos; param_polarity }
        in
-       Context.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         ([ name ], (typ_val, `Inductive ind_info));
-       Env.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         ([ name ], (Core.IndType (name, Bwd.Emp), `Constructor));
+       let exported = m.is_exported name in
+       publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);
+       publish_to_env ~exported [ name ] (Core.IndType (name, Bwd.Emp), `Constructor);
        let ctor_names = List.map (fun (b : Surface.pretype binder) -> b.name) ctors in
        let qname = m.module_name ^ "." ^ name in
        let qctor_names =
@@ -1630,6 +1643,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        List.iter
          (bind_constructor
             ~loc
+            ~exported
             ~ind_name:name (* bare *)
             ~ind_qname:qname (* module.Nat for kernel *)
             ~module_name:m.module_name
@@ -1647,10 +1661,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let elim_flat = name ^ "/" ^ elim_name in
        let elim_typ_tm = check_type ~loc m.ctx elim_typ in
        let elim_typ_val = Evaluation.eval m.ctx.env elim_typ_tm in
-       Context.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         (elim_path, (elim_typ_val, `Eliminator));
+       publish_to_context ~exported elim_path (elim_typ_val, `Eliminator);
        let reducer_label = elim_flat in
        let reducer =
          ElabData.build_elim_reducer
@@ -1663,10 +1674,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let elim_head : Core.elim_head = { elim_name = reducer_label; reducer } in
        let elim_value = Core.Elim (elim_head, Bwd.Emp) in
        (* Register in env under the flat key so kernel eval can find it *)
-       Env.S.include_singleton
-         ~context_visible:`Visible
-         ~context_export:`Export
-         ([ elim_flat ], (elim_value, `Eliminator));
+       publish_to_env ~exported [ elim_flat ] (elim_value, `Eliminator);
        let qelim_name = m.module_name ^ "." ^ name ^ "." ^ elim_name in
        Check.accept_elim
          m.kernel_module
@@ -1697,6 +1705,7 @@ and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
       ~module_name:"_internal"
       ~kernel_module:(Violet_kernel.Module.create ())
       ~goal_counter:(ref 0)
+      ~is_exported:(fun _ -> false)
       ()
   in
   m.ctx <- ctx;
@@ -1710,6 +1719,7 @@ and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
 
 and bind_constructor
       ~loc
+      ~exported
       ~(ind_name : string)
       (* bare inductive name for surface scope *)
       ~(ind_qname : string)
@@ -1726,23 +1736,14 @@ and bind_constructor
   let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
   let ctor_flat = ind_name ^ "/" ^ name in
   (* Context: multi-segment for type-directed surface resolution *)
-  Context.S.include_singleton
-    ~context_visible:`Visible
-    ~context_export:`Export
-    ([ ind_name; name ], (ctor_ty, `Constructor));
+  publish_to_context ~exported [ ind_name; name ] (ctor_ty, `Constructor);
   (* Env: flat key matching the kernel's E.lookup string.
      The Label value carries the BARE name so the eliminator reducer's
      find_ctor_index (which compares against info.ctor_name = bare name) works. *)
-  Env.S.include_singleton
-    ~context_visible:`Visible
-    ~context_export:`Export
-    ([ ctor_flat ], (Core.Label (name, Bwd.Emp), `Constructor));
+  publish_to_env ~exported [ ctor_flat ] (Core.Label (name, Bwd.Emp), `Constructor);
   (* Also register under the bare name so that the unifier's rename/eval
      round-trip (Label x -> Var x -> eval -> lookup x) still finds Label x. *)
-  Env.S.include_singleton
-    ~context_visible:`Visible
-    ~context_export:`Export
-    ([ name ], (Core.Label (name, Bwd.Emp), `Constructor));
+  publish_to_env ~exported [ name ] (Core.Label (name, Bwd.Emp), `Constructor);
   let qctor_name = module_name ^ "." ^ ind_name ^ "." ^ name in
   Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_ty_tm
 ;;
@@ -2042,11 +2043,12 @@ let check_top
       ~(module_name : string)
       ~(kernel_module : Violet_kernel.Module.t)
       ~(goal_counter : int ref)
+      ~(is_exported : string -> bool)
       ~(loc : Asai.Range.t)
       (top : Surface.top)
   : unit
   =
-  let m = make_machine ~module_name ~kernel_module ~goal_counter () in
+  let m = make_machine ~module_name ~kernel_module ~goal_counter ~is_exported () in
   let g =
     match top with
     | Surface.Universe_decl names -> GTopUniverseDecl names
@@ -2094,6 +2096,12 @@ let check_module (file : Surface.t) : unit =
       file.tops
   in
   if not has_explicit_universe_decl then Context.declare_level_var "U";
+  let exports_set =
+    let h = Hashtbl.create 16 in
+    List.iter (fun n -> Hashtbl.replace h n ()) file.exports;
+    h
+  in
+  let is_exported name = Hashtbl.mem exports_set name in
   Context.S.section [ module_name ]
   @@ fun () ->
   Env.S.section [ module_name ]
@@ -2108,8 +2116,24 @@ let check_module (file : Surface.t) : unit =
   List.iter
     (fun (top : Surface.top Asai.Range.located) ->
        let loc = Option.get top.loc in
-       check_top ~module_name ~kernel_module ~goal_counter ~loc top.value)
-    file.tops
+       check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value)
+    file.tops;
+  (* Validate that every name listed in \export was actually defined. *)
+  let bound_names : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  Yuujinchou.Trie.iter
+    (fun path _ ->
+       match Bwd.to_list path with
+       | [] -> ()
+       | seg :: _ -> Hashtbl.replace bound_names seg ())
+    (Context.S.get_export ());
+  let undefined = List.filter (fun n -> not (Hashtbl.mem bound_names n)) file.exports in
+  match undefined with
+  | [] -> ()
+  | names ->
+    Reporter.fatalf
+      Export_error
+      "the following names are listed in \\export but never defined: %s"
+      (String.concat ", " names)
 ;;
 
 let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
@@ -2137,13 +2161,179 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
     Surface.Let ("x", [], Surface.Var [ "Nat" ], Surface.Var [ "zero" ])
   in
   let ast : Surface.t =
-    { name = "td-test.vt"; imports = []; tops = [ loc nat_data; loc let_zero ] }
+    { name = "td-test.vt"
+    ; imports = []
+    ; exports = []
+    ; tops = [ loc nat_data; loc let_zero ]
+    }
   in
   with_handlers (fun () -> check_module ast);
   print_endline "ok";
   [%expect
     {|
     +checking [module] td-test (td-test.vt)
+    ok
+    |}]
+;;
+
+let%expect_test "module: \\export-less let stays private from importers" =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc top = Asai.Range.locate dummy_loc top in
+  (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
+  let foo_def =
+    Surface.Let
+      ( "foo"
+      , []
+      , Surface.Pi
+          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          , Surface.Universe )
+      , Surface.Lambda
+          { Syntax.name = "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+  in
+  (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
+  let uses_foo_def =
+    Surface.Let
+      ( "uses_foo"
+      , []
+      , Surface.Pi
+          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          , Surface.Universe )
+      , Surface.Var [ "foo" ] )
+  in
+  let mod_a : Surface.t =
+    { name = "a.vt"; imports = []; exports = []; tops = [ loc foo_def ] }
+  in
+  let mod_b : Surface.t =
+    { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
+  in
+  (try
+     with_handlers (fun () ->
+       check_module mod_a;
+       check_module mod_b);
+     print_endline "UNEXPECTED: importer saw private name"
+   with
+   | _ -> print_endline "rejected as expected (foo is private)");
+  [%expect
+    {|
+    +checking [module] a (a.vt)
+    +checking [module] b (b.vt)
+    +[Warning] Could not find any data within the subtree at (root).
+    +
+    +[Warning] Could not find any data within the subtree at a.
+    +
+    +[Warning] Could not find any data within the subtree at (root).
+    +
+    +[Warning] Could not find any data within the subtree at a.
+    +
+    rejected as expected (foo is private)
+    |}]
+;;
+
+let%expect_test "module: \\export-listed let is visible to importers" =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc top = Asai.Range.locate dummy_loc top in
+  (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
+  let foo_def =
+    Surface.Let
+      ( "foo"
+      , []
+      , Surface.Pi
+          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          , Surface.Universe )
+      , Surface.Lambda
+          { Syntax.name = "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+  in
+  (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
+  let uses_foo_def =
+    Surface.Let
+      ( "uses_foo"
+      , []
+      , Surface.Pi
+          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          , Surface.Universe )
+      , Surface.Var [ "foo" ] )
+  in
+  let mod_a : Surface.t =
+    { name = "a.vt"; imports = []; exports = [ "foo" ]; tops = [ loc foo_def ] }
+  in
+  let mod_b : Surface.t =
+    { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
+  in
+  with_handlers (fun () ->
+    check_module mod_a;
+    check_module mod_b);
+  print_endline "ok";
+  [%expect
+    {|
+    +checking [module] a (a.vt)
+    +checking [module] b (b.vt)
+    ok
+    |}]
+;;
+
+let%expect_test "module: \\export of an undefined name fails" =
+  let mod_a : Surface.t =
+    { name = "a.vt"; imports = []; exports = [ "ghost" ]; tops = [] }
+  in
+  (try
+     with_handlers (fun () -> check_module mod_a);
+     print_endline "UNEXPECTED: undefined export accepted"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect
+    {|
+    +checking [module] a (a.vt)
+    rejected as expected
+    |}]
+;;
+
+let%expect_test
+    "module: \\export of an inductive bundle: Nat, ctors, elim visible cross-module"
+  =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc top = Asai.Range.locate dummy_loc top in
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let mod_a : Surface.t =
+    { name = "a.vt"; imports = []; exports = [ "Nat" ]; tops = [ loc nat_data ] }
+  in
+  (* uses_bundle : Nat => Nat/zero — references both the type and a constructor,
+     proving the inductive bundle (type + ctors) is visible cross-module. *)
+  let mod_b : Surface.t =
+    { name = "b.vt"
+    ; imports = [ [ "a" ] ]
+    ; exports = []
+    ; tops =
+        [ loc
+            (Surface.Let
+               ("uses_bundle", [], Surface.Var [ "Nat" ], Surface.Var [ "Nat"; "zero" ]))
+        ]
+    }
+  in
+  with_handlers (fun () ->
+    check_module mod_a;
+    check_module mod_b);
+  print_endline "ok";
+  [%expect
+    {|
+    +checking [module] a (a.vt)
+    +checking [module] b (b.vt)
     ok
     |}]
 ;;

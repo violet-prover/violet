@@ -4,6 +4,7 @@ exception SyntaxError of string
 type token =
   | DATA [@printer fun fmt () -> fprintf fmt "\\data"]
   | LET [@printer fun fmt () -> fprintf fmt "\\let"]
+  | EXPORT [@printer fun fmt () -> fprintf fmt "\\export"]
   | IMPORT [@printer fun fmt () -> fprintf fmt "\\import"]
   | UNIVERSE [@printer fun fmt () -> fprintf fmt "\\universe"]
   | WHERE [@printer fun fmt () -> fprintf fmt "\\where"]
@@ -70,6 +71,7 @@ rule token =
   | "\\open" { return lexbuf @@ OPEN }
   | "\\data" { return lexbuf @@ DATA }
   | "\\let" { return lexbuf @@ LET }
+  | "\\export" { return lexbuf @@ EXPORT }
   | "\\import" { return lexbuf @@ IMPORT }
   | "\\operator" { return lexbuf @@ OPERATOR }
   | "\\elim" { return lexbuf @@ ELIM }

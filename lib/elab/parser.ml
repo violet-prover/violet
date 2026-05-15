@@ -53,6 +53,7 @@ module C : sig
     | T_LEFT
     | T_RIGHT
     | T_NONE
+    | T_EXPORT
 
   type t
 
@@ -105,6 +106,7 @@ end = struct
     | T_LEFT
     | T_RIGHT
     | T_NONE
+    | T_EXPORT
 
   let tag_index = function
     | T_DATA -> 0
@@ -141,12 +143,14 @@ end = struct
     | T_LEFT -> 31
     | T_RIGHT -> 32
     | T_NONE -> 33
+    | T_EXPORT -> 34
   ;;
 
   let tag_of : Lexer.token -> tag = function
     | Lexer.DATA -> T_DATA
     | Lexer.LET -> T_LET
     | Lexer.IMPORT -> T_IMPORT
+    | Lexer.EXPORT -> T_EXPORT
     | Lexer.UNIVERSE -> T_UNIVERSE
     | Lexer.ARROW -> T_ARROW
     | Lexer.COLON -> T_COLON
@@ -182,7 +186,7 @@ end = struct
 
   type t = int
 
-  (* 35 tags → mask of 35 bits *)
+  (* 35 tags (indices 0–34) → mask of 35 bits *)
   let mask = (1 lsl 35) - 1
   let empty = 0
   let top = mask
@@ -460,6 +464,13 @@ module Grammar = struct
     let+ _ = tok C.T_IMPORT
     and+ path = p_qname in
     path
+  ;;
+
+  let p_export : string list t =
+    let+ _ = tok C.T_EXPORT
+    and+ first = ident
+    and+ rest = star ident in
+    first :: rest
   ;;
 
   (* Peek helpers used by the two hand-coded disambiguators. *)
@@ -1031,12 +1042,20 @@ module Grammar = struct
   ;;
 
   let p_module_named (name : string) : S.t t =
+    let after_imports =
+      fix (fun self ->
+        (let+ ns = p_export
+         and+ rest = self in
+         { rest with S.exports = ns @ rest.S.exports })
+        ||
+        let+ tops = p_tops_loop in
+        { S.name; imports = []; exports = []; tops })
+    in
     fix (fun self ->
       (let+ i = p_import
        and+ rest = self in
        { rest with S.imports = i :: rest.S.imports })
-      || let+ tops = p_tops_loop in
-         { S.name; imports = []; tops })
+      || after_imports)
   ;;
 end
 
@@ -1050,7 +1069,15 @@ let rec tokens filename lexbuf =
 
 let parse_buf ~name buf =
   match P.parse (Grammar.p_module_named name) buf 0 with
-  | _, m -> m
+  | _, m ->
+    let seen = Hashtbl.create 16 in
+    List.iter
+      (fun nm ->
+         if Hashtbl.mem seen nm
+         then Reporter.fatalf Export_error "duplicate name in \\export: `%s`" nm
+         else Hashtbl.add seen nm ())
+      m.Surface.exports;
+    m
   | exception P.ParseFailure { offset; loc; found } ->
     (match loc with
      | Some loc ->
@@ -1159,6 +1186,14 @@ let%expect_test "lex full operator decl" =
 
 (* Parse a complete source string into its top-level forms (location-stripped
    for compact display in expect-test output). *)
+let parse_module_for_test src =
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let lexbuf = Lexing.from_string src in
+  let toks = Array.of_list (tokens "<parser-test>" lexbuf) in
+  parse_buf ~name:"<parser-test>" toks
+;;
+
 let parse_tops_for_test src =
   Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
@@ -1166,6 +1201,15 @@ let parse_tops_for_test src =
   let toks = Array.of_list (tokens "<parser-test>" lexbuf) in
   let m = parse_buf ~name:"<parser-test>" toks in
   List.map (fun lt -> lt.Asai.Range.value) m.Surface.tops
+;;
+
+let%expect_test "parse: single \\export line, no decls" =
+  let m = parse_module_for_test "\\export foo bar\n" in
+  Printf.printf
+    "exports=[%s] tops=%d"
+    (String.concat ";" m.Surface.exports)
+    (List.length m.Surface.tops);
+  [%expect {| exports=[foo;bar] tops=0 |}]
 ;;
 
 let%expect_test "parse: bare operator decl, no options" =
@@ -1237,6 +1281,71 @@ let%expect_test "reject: legacy := syntax" =
   (try
      let _ = parse_buf ~name:"<reject-legacy>" toks in
      print_endline "UNEXPECTED: legacy := parsed successfully"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect {| rejected as expected |}]
+;;
+
+let%expect_test "lex export keyword" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\\export foo bar");
+  [%expect {| [\export; <identifier:foo>; <identifier:bar>] |}]
+;;
+
+let%expect_test "parse: multiple \\export lines concatenated in source order" =
+  let m = parse_module_for_test "\\export foo\n\\export bar baz\n" in
+  Printf.printf "exports=[%s]" (String.concat ";" m.Surface.exports);
+  [%expect {| exports=[foo;bar;baz] |}]
+;;
+
+let%expect_test "parse: imports then exports then tops" =
+  let m = parse_module_for_test "\\import nat\n\\export id\n\\let id : U => U\n" in
+  Printf.printf
+    "imports=%d exports=[%s] tops=%d"
+    (List.length m.Surface.imports)
+    (String.concat ";" m.Surface.exports)
+    (List.length m.Surface.tops);
+  [%expect {| imports=1 exports=[id] tops=1 |}]
+;;
+
+let%expect_test "reject: \\export after a top is a parse error" =
+  let lexbuf = Lexing.from_string "\\let x : U => U\n\\export x\n" in
+  let toks = Array.of_list (tokens "<reject-late-export>" lexbuf) in
+  (try
+     let _ = parse_buf ~name:"<reject-late-export>" toks in
+     print_endline "UNEXPECTED: late \\export parsed successfully"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect {| rejected as expected |}]
+;;
+
+let%expect_test "reject: qualified path in \\export" =
+  let lexbuf = Lexing.from_string "\\export Nat/zero\n" in
+  let toks = Array.of_list (tokens "<reject-qual>" lexbuf) in
+  (try
+     let _ = parse_buf ~name:"<reject-qual>" toks in
+     print_endline "UNEXPECTED: qualified export parsed"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect {| rejected as expected |}]
+;;
+
+let%expect_test "reject: duplicate name within one \\export line" =
+  let lexbuf = Lexing.from_string "\\export foo foo\n" in
+  let toks = Array.of_list (tokens "<reject-dup-line>" lexbuf) in
+  (try
+     let _ = parse_buf ~name:"<reject-dup-line>" toks in
+     print_endline "UNEXPECTED: duplicate parsed"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect {| rejected as expected |}]
+;;
+
+let%expect_test "reject: duplicate name across two \\export lines" =
+  let lexbuf = Lexing.from_string "\\export foo\n\\export foo\n" in
+  let toks = Array.of_list (tokens "<reject-dup-cross>" lexbuf) in
+  (try
+     let _ = parse_buf ~name:"<reject-dup-cross>" toks in
+     print_endline "UNEXPECTED: cross-line duplicate parsed"
    with
    | _ -> print_endline "rejected as expected");
   [%expect {| rejected as expected |}]

@@ -1,5 +1,7 @@
 \import nat
 
+\export Vec
+
 \data Vec (A : U) : Nat -> U
   | nil : Vec A zero
   | cons : {n : Nat} -> A -> Vec A n -> Vec A (Nat/suc n)

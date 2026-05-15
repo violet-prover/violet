@@ -1,3 +1,5 @@
+\export Nat add mul
+
 \data Nat : U
   | zero : Nat
   | suc : Nat -> Nat

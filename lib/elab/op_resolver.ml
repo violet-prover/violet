@@ -1461,7 +1461,9 @@ let%expect_test "resolve_module: operator then let — soup uses operator, decl 
               [ Surface.SI_Name "one"; Surface.SI_Name "+"; Surface.SI_Name "one" ] )
     }
   in
-  let file : Surface.t = { name = "test.vt"; imports = []; tops = [ mk_op; mk_let ] } in
+  let file : Surface.t =
+    { name = "test.vt"; imports = []; exports = []; tops = [ mk_op; mk_let ] }
+  in
   let result = resolve_module file in
   let printed = List.map (fun lt -> lt.Asai.Range.value) result.tops in
   print_string @@ [%show: Surface.top list] printed;
@@ -1481,16 +1483,22 @@ let%expect_test "resolve_module: diamond import of common library does not dupli
     }
   in
   (* Module A: declares the operator. *)
-  let a : Surface.t = { name = "diamond_a.vt"; imports = []; tops = [ mk_op ] } in
+  let a : Surface.t =
+    { name = "diamond_a.vt"; imports = []; exports = []; tops = [ mk_op ] }
+  in
   let _ = resolve_module a in
   (* Module B: imports A; inherits the operator transitively. *)
   let b : Surface.t =
-    { name = "diamond_b.vt"; imports = [ [ "diamond_a" ] ]; tops = [] }
+    { name = "diamond_b.vt"; imports = [ [ "diamond_a" ] ]; exports = []; tops = [] }
   in
   let _ = resolve_module b in
   (* Module C: imports BOTH A and B — same operator arrives via two paths. *)
   let c : Surface.t =
-    { name = "diamond_c.vt"; imports = [ [ "diamond_a" ]; [ "diamond_b" ] ]; tops = [] }
+    { name = "diamond_c.vt"
+    ; imports = [ [ "diamond_a" ]; [ "diamond_b" ] ]
+    ; exports = []
+    ; tops = []
+    }
   in
   let _ = resolve_module c in
   print_string "ok";
@@ -1511,17 +1519,18 @@ let%expect_test "resolve_module: same template from two distinct modules still c
   in
   (* Two unrelated modules each declare `~x + ~y` for different operations. *)
   let a : Surface.t =
-    { name = "conflict_a.vt"; imports = []; tops = [ mk_op "add_a" ] }
+    { name = "conflict_a.vt"; imports = []; exports = []; tops = [ mk_op "add_a" ] }
   in
   let _ = resolve_module a in
   let b : Surface.t =
-    { name = "conflict_b.vt"; imports = []; tops = [ mk_op "add_b" ] }
+    { name = "conflict_b.vt"; imports = []; exports = []; tops = [ mk_op "add_b" ] }
   in
   let _ = resolve_module b in
   (* Importing both should be a genuine conflict, not a silent dedupe. *)
   let c : Surface.t =
     { name = "conflict_c.vt"
     ; imports = [ [ "conflict_a" ]; [ "conflict_b" ] ]
+    ; exports = []
     ; tops = []
     }
   in

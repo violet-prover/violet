@@ -1,3 +1,5 @@
+\export Sigma
+
 \universe U
 
 \data Sigma (A : U) (B : A -> U) : U

@@ -201,6 +201,7 @@ type top =
 type t =
   { name : string
   ; imports : Trie.path list (* import libraries *)
+  ; exports : string list (* names listed in \export; module-public *)
   ; tops : top Asai.Range.located list
   }
 

@@ -1,3 +1,5 @@
+\export Id sym trans cong subst
+
 \data Id {A : U} (x : A) : A -> U
   | refl : Id x x
 
