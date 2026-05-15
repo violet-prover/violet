@@ -1,17 +1,17 @@
-import nat
-import list
-import vec
-import equality
-import compute
-import universe-explicit
-import sigma
-import sigma-multi
-import pterodactyl
+\import nat
+\import list
+\import vec
+\import equality
+\import compute
+\import universe-explicit
+\import sigma
+\import sigma-multi
+\import pterodactyl
 
 # whatever
-let id {A : U} (x : A) : A := x
-let id2 {B : U} (x : B) : B := id x
+\let id {A : U} (x : A) : A => x
+\let id2 {B : U} (x : B) : B => id x
 
-let z : Nat := zero
-let one : Nat := Nat/suc zero
-let s : Nat -> Nat := Nat/suc
+\let z : Nat => zero
+\let one : Nat => Nat/suc zero
+\let s : Nat -> Nat => Nat/suc

@@ -1,4 +1,4 @@
-universe U V
+\universe U V
 
-let id (A : U) (x : A) : A := x
-let t-id (A : U) : U := A
+\let id (A : U) (x : A) : A => x
+\let t-id (A : U) : U => A

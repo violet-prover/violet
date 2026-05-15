@@ -1,6 +1,6 @@
-import operators-lib
+\import operators-lib
 
 # Operators `+` and `*` come in via the import. Use them directly.
-let two : Nat := Nat/suc (Nat/suc Nat/zero)
-let three : Nat := Nat/suc two
-let seven : Nat := two * three + Nat/suc Nat/zero
+\let two : Nat => Nat/suc (Nat/suc Nat/zero)
+\let three : Nat => Nat/suc two
+\let seven : Nat => two * three + Nat/suc Nat/zero

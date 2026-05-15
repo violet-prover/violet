@@ -1,20 +1,20 @@
-import nat
-import list
-import equality
+\import nat
+\import list
+\import equality
 
-let one : Nat := Nat/suc zero
-let two : Nat := Nat/suc one
+\let one : Nat => Nat/suc zero
+\let two : Nat => Nat/suc one
 
-let z-plus-z : Id (add zero zero) zero := refl
-let z-plus-one : Id (add zero one) one := refl
-let two-plus-z : Id (add two zero) two := refl
-let one-plus-one : Id (add one one) two := refl
+\let z-plus-z : Id (add zero zero) zero => refl
+\let z-plus-one : Id (add zero one) one => refl
+\let two-plus-z : Id (add two zero) two => refl
+\let one-plus-one : Id (add one one) two => refl
 
-let length {A : U} : (xs : List A) -> Nat where
-  open Nat
-  length xs <= elim xs
+\let length {A : U} : (xs : List A) -> Nat \where
+  \open Nat
+  length xs <= \elim xs
   | length nil => zero
   | length (cons x xs) => suc (length A xs)
 
-let len-nil : Id (length nil) zero := refl
-let len-one : Id (length (List/cons Nat/zero List/nil)) one := refl
+\let len-nil : Id (length nil) zero => refl
+\let len-one : Id (length (List/cons Nat/zero List/nil)) one => refl

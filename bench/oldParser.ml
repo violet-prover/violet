@@ -225,7 +225,7 @@ let p_let () : Surface.top =
   let bindings = List.concat bindings_lists in
   consume Lexer.COLON;
   let ty = p_preterm () in
-  consume Lexer.ASSIGN;
+  consume Lexer.FAT_ARROW;
   let tm = p_preterm () in
   Let (name, bindings, ty, tm)
 ;;

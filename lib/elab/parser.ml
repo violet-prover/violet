@@ -23,7 +23,6 @@ module C : sig
     | T_LET
     | T_IMPORT
     | T_UNIVERSE
-    | T_ASSIGN
     | T_ARROW
     | T_COLON
     | T_LAMBDA
@@ -45,7 +44,16 @@ module C : sig
     | T_OPERATOR
     | T_SYMBOL
     | T_STRING
-    | T_TILDE_NAME
+    | T_ELIM
+    | T_INTRO
+    | T_SPLIT
+    | T_STRONGER_THAN
+    | T_WEAKER_THAN
+    | T_SAME_AS
+    | T_ASSOCIATIVITY
+    | T_LEFT
+    | T_RIGHT
+    | T_NONE
 
   type t
 
@@ -68,7 +76,6 @@ end = struct
     | T_LET
     | T_IMPORT
     | T_UNIVERSE
-    | T_ASSIGN
     | T_ARROW
     | T_COLON
     | T_LAMBDA
@@ -90,36 +97,53 @@ end = struct
     | T_OPERATOR
     | T_SYMBOL
     | T_STRING
-    | T_TILDE_NAME
+    | T_ELIM
+    | T_INTRO
+    | T_SPLIT
+    | T_STRONGER_THAN
+    | T_WEAKER_THAN
+    | T_SAME_AS
+    | T_ASSOCIATIVITY
+    | T_LEFT
+    | T_RIGHT
+    | T_NONE
 
   let tag_index = function
     | T_DATA -> 0
     | T_LET -> 1
     | T_IMPORT -> 2
     | T_UNIVERSE -> 3
-    | T_ASSIGN -> 4
-    | T_ARROW -> 5
-    | T_COLON -> 6
-    | T_LAMBDA -> 7
-    | T_DOT -> 8
-    | T_SLASH -> 21
-    | T_VERT -> 9
-    | T_JOIN -> 10
-    | T_LPAREN -> 11
-    | T_RPAREN -> 12
-    | T_LBRACKET -> 13
-    | T_RBRACKET -> 14
-    | T_IDENT -> 15
-    | T_EOF -> 16
-    | T_WHERE -> 17
-    | T_STACK_ARROW -> 18
-    | T_FAT_ARROW -> 19
-    | T_QMARK -> 20
-    | T_OPEN -> 22
-    | T_OPERATOR -> 23
-    | T_SYMBOL -> 24
-    | T_STRING -> 25
-    | T_TILDE_NAME -> 26
+    | T_ARROW -> 4
+    | T_COLON -> 5
+    | T_LAMBDA -> 6
+    | T_DOT -> 7
+    | T_VERT -> 8
+    | T_JOIN -> 9
+    | T_LPAREN -> 10
+    | T_RPAREN -> 11
+    | T_LBRACKET -> 12
+    | T_RBRACKET -> 13
+    | T_IDENT -> 14
+    | T_EOF -> 15
+    | T_WHERE -> 16
+    | T_STACK_ARROW -> 17
+    | T_FAT_ARROW -> 18
+    | T_QMARK -> 19
+    | T_SLASH -> 20
+    | T_OPEN -> 21
+    | T_OPERATOR -> 22
+    | T_SYMBOL -> 23
+    | T_STRING -> 24
+    | T_ELIM -> 25
+    | T_INTRO -> 26
+    | T_SPLIT -> 27
+    | T_STRONGER_THAN -> 28
+    | T_WEAKER_THAN -> 29
+    | T_SAME_AS -> 30
+    | T_ASSOCIATIVITY -> 31
+    | T_LEFT -> 32
+    | T_RIGHT -> 33
+    | T_NONE -> 34
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -127,7 +151,6 @@ end = struct
     | Lexer.LET -> T_LET
     | Lexer.IMPORT -> T_IMPORT
     | Lexer.UNIVERSE -> T_UNIVERSE
-    | Lexer.ASSIGN -> T_ASSIGN
     | Lexer.ARROW -> T_ARROW
     | Lexer.COLON -> T_COLON
     | Lexer.LAMBDA -> T_LAMBDA
@@ -149,13 +172,22 @@ end = struct
     | Lexer.OPERATOR -> T_OPERATOR
     | Lexer.SYMBOL _ -> T_SYMBOL
     | Lexer.STRING _ -> T_STRING
-    | Lexer.TILDE_NAME _ -> T_TILDE_NAME
+    | Lexer.ELIM -> T_ELIM
+    | Lexer.INTRO -> T_INTRO
+    | Lexer.SPLIT -> T_SPLIT
+    | Lexer.STRONGER_THAN -> T_STRONGER_THAN
+    | Lexer.WEAKER_THAN -> T_WEAKER_THAN
+    | Lexer.SAME_AS -> T_SAME_AS
+    | Lexer.ASSOCIATIVITY -> T_ASSOCIATIVITY
+    | Lexer.LEFT -> T_LEFT
+    | Lexer.RIGHT -> T_RIGHT
+    | Lexer.NONE -> T_NONE
   ;;
 
   type t = int
 
-  (* 27 tags → mask of 27 bits = 0x7FFFFFF *)
-  let mask = 0x7FFFFFF
+  (* 35 tags → mask of 35 bits *)
+  let mask = (1 lsl 35) - 1
   let empty = 0
   let top = mask
   let one t = 1 lsl tag_index t
@@ -345,13 +377,6 @@ module P = struct
     let+ t = tok C.T_SYMBOL in
     match t with
     | Lexer.SYMBOL s -> s
-    | _ -> assert false
-  ;;
-
-  let tilde_name =
-    let+ t = tok C.T_TILDE_NAME in
-    match t with
-    | Lexer.TILDE_NAME s -> s
     | _ -> assert false
   ;;
 
@@ -757,12 +782,14 @@ module Grammar = struct
 
   let p_stack_move : S.stack_move t =
     let+ _ = tok C.T_STACK_ARROW
-    and+ name = ident in
-    match name with
-    | "intro" -> S.Intro
-    | "split" -> S.Split
-    | other ->
-      Reporter.fatalf Parse_error "expected `intro` or `split` after `<=`, got `%s`" other
+    and+ move =
+      (let+ _ = tok C.T_INTRO in
+       S.Intro)
+      ||
+      let+ _ = tok C.T_SPLIT in
+      S.Split
+    in
+    move
   ;;
 
   let p_pattern : S.pattern t =
@@ -809,15 +836,9 @@ module Grammar = struct
     let+ head = ident
     and+ intros = star p_intro_atom
     and+ _ = tok C.T_STACK_ARROW
-    and+ elim_kw = ident
+    and+ _ = tok C.T_ELIM
     and+ target = ident in
-    match elim_kw with
-    | "elim" -> { head; intros; target }
-    | other ->
-      Reporter.fatalf
-        Parse_error
-        "expected `elim` after intros in `where`-line, got `%s`"
-        other
+    { head; intros; target }
   ;;
 
   type where_head =
@@ -836,7 +857,7 @@ module Grammar = struct
   ;;
 
   let p_let_body : let_body t =
-    (let+ _ = tok C.T_ASSIGN
+    (let+ _ = tok C.T_FAT_ARROW
      and+ tm = p_term in
      LB_Assign tm)
     ||
@@ -920,9 +941,9 @@ module Grammar = struct
     { Asai.Range.loc; value = S.Universe_decl names }
   ;;
 
-  (* A "name path" referencing another operator in `~weaker_than:` / etc.
+  (* A "name path" referencing another operator in `\weaker_than:` / etc.
      Consumes a maximal run of consecutive IDENT and SYMBOL tokens. Stops at
-     anything else (TILDE_NAME, top keyword, EOF). At least one token. *)
+     anything else (backslash keyword, top keyword, EOF). At least one token. *)
   let p_name_path : S.op_name_path P.t =
     let tp =
       Tp.{ null = false; first = C.of_list [ C.T_IDENT; C.T_SYMBOL ]; follow = C.empty }
@@ -946,52 +967,54 @@ module Grammar = struct
   ;;
 
   (* One operator option. Hand-coded because the value-level dispatch on the
-     TILDE_NAME payload (`~weaker_than` vs `~stronger_than` vs ...) doesn't
+     specific keyword token (`\weaker_than` vs `\stronger_than` vs ...) doesn't
      fit the static FIRST-set discipline of `||`. *)
   let p_op_option : S.op_option P.t =
-    let tp = Tp.tok C.T_TILDE_NAME in
+    let tp =
+      Tp.
+        { null = false
+        ; first =
+            C.of_list
+              [ C.T_STRONGER_THAN; C.T_WEAKER_THAN; C.T_SAME_AS; C.T_ASSOCIATIVITY ]
+        ; follow = C.empty
+        }
+    in
     let parse buf i =
       let n = Array.length buf in
       if i >= n then P.fail_at buf i;
       let kw_tok = buf.(i) in
-      let kw =
-        match kw_tok.Asai.Range.value with
-        | Lexer.TILDE_NAME s -> s
-        | _ -> P.fail_at buf i
-      in
+      let kw = C.tag_of kw_tok.Asai.Range.value in
       let i = i + 1 in
       let i, _ = (tok C.T_COLON).parse buf i in
       match kw with
-      | "~weaker_than" ->
+      | C.T_WEAKER_THAN ->
         let i, path = p_name_path.parse buf i in
         i, S.OO_Weaker_than [ path ]
-      | "~stronger_than" ->
+      | C.T_STRONGER_THAN ->
         let i, path = p_name_path.parse buf i in
         i, S.OO_Stronger_than [ path ]
-      | "~same_as" ->
+      | C.T_SAME_AS ->
         let i, path = p_name_path.parse buf i in
         i, S.OO_Same_as [ path ]
-      | "~associativity" ->
+      | C.T_ASSOCIATIVITY ->
         if i >= n then P.fail_at buf i;
         let a =
-          match buf.(i).Asai.Range.value with
-          | Lexer.TILDE_NAME "~left" -> S.OA_Left
-          | Lexer.TILDE_NAME "~right" -> S.OA_Right
-          | Lexer.TILDE_NAME "~none" -> S.OA_None
+          match C.tag_of buf.(i).Asai.Range.value with
+          | C.T_LEFT -> S.OA_Left
+          | C.T_RIGHT -> S.OA_Right
+          | C.T_NONE -> S.OA_None
           | _ ->
             Reporter.fatalf
               ?loc:buf.(i).Asai.Range.loc
               Parse_error
-              "expected `~left`, `~right`, or `~none` after `~associativity:`"
+              "expected `\\left`, `\\right`, or `\\none` after `\\associativity:`"
         in
         i + 1, S.OO_Associativity a
-      | other ->
+      | _ ->
         Reporter.fatalf
           ?loc:kw_tok.Asai.Range.loc
           Parse_error
-          "unknown operator option `%s` (expected ~weaker_than, ~stronger_than, \
-           ~same_as, or ~associativity)"
-          other
+          "expected one of \\weaker_than, \\stronger_than, \\same_as, \\associativity"
     in
     { tp; parse }
   ;;
@@ -1001,7 +1024,7 @@ module Grammar = struct
       with_full_range
         (let+ _ = tok C.T_OPERATOR
          and+ template = string_lit
-         and+ _ = tok C.T_ASSIGN
+         and+ _ = tok C.T_FAT_ARROW
          and+ body = p_term
          and+ options = star p_op_option in
          template, body, options)
@@ -1133,27 +1156,18 @@ let%expect_test "lex string: template" =
   [%expect {| [<string:~x + ~y>] |}]
 ;;
 
-let%expect_test "lex tilde-name: keyword" =
-  print_string @@ [%show: Lexer.token list] (lex_to_list "~weaker_than");
-  [%expect {| [<tilde:~weaker_than>] |}]
-;;
-
-let%expect_test "lex tilde-name: hole" =
-  print_string @@ [%show: Lexer.token list] (lex_to_list "~x");
-  [%expect {| [<tilde:~x>] |}]
-;;
-
 let%expect_test "lex operator keyword" =
-  print_string @@ [%show: Lexer.token list] (lex_to_list "operator");
-  [%expect {| [operator] |}]
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\\operator");
+  [%expect {| [\operator] |}]
 ;;
 
 let%expect_test "lex full operator decl" =
   print_string
-  @@ [%show: Lexer.token list] (lex_to_list "operator \"~x + ~y\" := add ~weaker_than: *");
+  @@ [%show: Lexer.token list]
+       (lex_to_list "\\operator \"~x + ~y\" => add \\weaker_than: *");
   [%expect
     {|
-    [operator; <string:~x + ~y>; :=; <identifier:add>; <tilde:~weaker_than>; :;
+    [\operator; <string:~x + ~y>; =>; <identifier:add>; \weaker_than; :;
       <symbol:*>]
     |}]
 ;;
@@ -1171,7 +1185,7 @@ let parse_tops_for_test src =
 
 let%expect_test "parse: bare operator decl, no options" =
   print_string
-  @@ [%show: Surface.top list] (parse_tops_for_test "operator \"~x + ~y\" := add\n");
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\operator \"~x + ~y\" => add\n");
   [%expect
     {|
     [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
@@ -1183,7 +1197,7 @@ let%expect_test "parse: bare operator decl, no options" =
 let%expect_test "parse: operator with ~stronger_than" =
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "operator \"~x * ~y\" := mul\n  ~stronger_than: +\n");
+       (parse_tops_for_test "\\operator \"~x * ~y\" => mul\n  \\stronger_than: +\n");
   [%expect
     {|
     [Surface.Operator_decl {template = "~x * ~y"; body = <soup:[N(mul)]>;
@@ -1195,7 +1209,7 @@ let%expect_test "parse: operator with ~stronger_than" =
 let%expect_test "parse: operator with ~associativity" =
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "operator \"~x + ~y\" := add\n  ~associativity: ~left\n");
+       (parse_tops_for_test "\\operator \"~x + ~y\" => add\n  \\associativity: \\left\n");
   [%expect
     {|
     [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
@@ -1208,7 +1222,7 @@ let%expect_test "parse: operator mixfix with multi-part name in option" =
   print_string
   @@ [%show: Surface.top list]
        (parse_tops_for_test
-          "operator \"if ~x then ~y else ~z\" := ite\n  ~weaker_than: +\n");
+          "\\operator \"if ~x then ~y else ~z\" => ite\n  \\weaker_than: +\n");
   [%expect
     {|
     [Surface.Operator_decl {template = "if ~x then ~y else ~z";
@@ -1221,7 +1235,7 @@ let%expect_test "parse: operator decl alongside let" =
   print_string
   @@ [%show: Surface.top list]
        (parse_tops_for_test
-          "operator \"~x + ~y\" := add\nlet two : Nat := add zero zero\n");
+          "\\operator \"~x + ~y\" => add\n\\let two : Nat => add zero zero\n");
   [%expect
     {|
     [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
@@ -1230,4 +1244,15 @@ let%expect_test "parse: operator decl alongside let" =
          ))
       ]
     |}]
+;;
+
+let%expect_test "reject: legacy := syntax" =
+  let lexbuf = Lexing.from_string "\\let foo : U := bar\n" in
+  let toks = Array.of_list (tokens "<reject-legacy>" lexbuf) in
+  (try
+     let _ = parse_buf ~name:"<reject-legacy>" toks in
+     print_endline "UNEXPECTED: legacy := parsed successfully"
+   with
+   | _ -> print_endline "rejected as expected");
+  [%expect {| rejected as expected |}]
 ;;

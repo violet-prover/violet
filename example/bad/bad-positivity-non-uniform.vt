@@ -2,6 +2,6 @@
 # instead of the declared param `A`, violating the uniform-recursion
 # rule. (`leaf` is included only to give `Tree` a base case; `node`
 # alone would trigger the same rejection.)
-data Tree (A : U) : U
+\data Tree (A : U) : U
   | leaf : Tree A
   | node : Tree (A -> A) -> Tree A

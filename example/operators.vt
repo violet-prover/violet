@@ -1,55 +1,55 @@
-data Nat : U
+\data Nat : U
   | zero : Nat
   | suc : Nat -> Nat
 
-data Bool : U
+\data Bool : U
   | true : Bool
   | false : Bool
 
-let add : (m n : Nat) -> Nat where
-  add m n <= elim m
+\let add : (m n : Nat) -> Nat \where
+  add m n <= \elim m
   | add zero n => n
   | add (suc m) n => suc (add m n)
 
-let mul : (m n : Nat) -> Nat where
-  mul m n <= elim m
+\let mul : (m n : Nat) -> Nat \where
+  mul m n <= \elim m
   | mul zero n => zero
   | mul (suc m) n => add n (mul m n)
 
-let ite : (c : Bool) -> (t e : Nat) -> Nat where
-  ite c t e <= elim c
+\let ite : (c : Bool) -> (t e : Nat) -> Nat \where
+  ite c t e <= \elim c
   | ite true t e => t
   | ite false t e => e
 
-let neg : Bool -> Bool where
-  neg b <= elim b
+\let neg : Bool -> Bool \where
+  neg b <= \elim b
   | neg true => false
   | neg false => true
 
-operator "~x + ~y" := add x y
-  ~associativity: ~left
+\operator "~x + ~y" => add x y
+  \associativity: \left
 
-operator "~x * ~y" := mul x y
-  ~stronger_than: +
-  ~associativity: ~left
+\operator "~x * ~y" => mul x y
+  \stronger_than: +
+  \associativity: \left
 
-operator "if ~c then ~t else ~e" := ite c t e
-  ~weaker_than: +
+\operator "if ~c then ~t else ~e" => ite c t e
+  \weaker_than: +
 
-operator "! ~b" := neg
+\operator "! ~b" => neg
 
-let two : Nat := Nat/suc (Nat/suc Nat/zero)
-let three : Nat := Nat/suc two
+\let two : Nat => Nat/suc (Nat/suc Nat/zero)
+\let three : Nat => Nat/suc two
 
 # binary infix
-let four : Nat := two + two
-let six : Nat := two * three
+\let four : Nat => two + two
+\let six : Nat => two * three
 
 # precedence: * binds tighter than +
-let seven : Nat := two * three + Nat/suc Nat/zero
+\let seven : Nat => two * three + Nat/suc Nat/zero
 
 # ternary mixfix with embedded subexpression in the cond hole
-let chosen : Nat := if Bool/true then two * three else two + two
+\let chosen : Nat => if Bool/true then two * three else two + two
 
 # prefix
-let yes : Bool := ! Bool/false
+\let yes : Bool => ! Bool/false

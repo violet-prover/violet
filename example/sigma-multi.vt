@@ -1,4 +1,4 @@
-universe U V
+\universe U V
 
-data SigmaM (A : U) (B : A -> V) : U ⊔ V
+\data SigmaM (A : U) (B : A -> V) : U ⊔ V
   | mk : (a : A) -> B a -> SigmaM A B

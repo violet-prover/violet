@@ -8,12 +8,12 @@
    (lib/violet/Parser.ml:1-10):
 
      - shapes 0-3: LL(1) baseline (lets, data, applications, arrows)
-     - shape 4: `let NAME (x : U) (y : U) : U := x`        -- header binders
-     - shape 5: `let NAME : (x : U) -> U -> U := \(z : U) -> z`
+     - shape 4: `\let NAME (x : U) (y : U) : U => x`        -- header binders
+     - shape 5: `\let NAME : (x : U) -> U -> U => \(z : U) -> z`
                                                             -- pi binder peek
                                                             -- + typed lambda peek
-     - shape 6: `let NAME {A : U} (x : A) : A := x`         -- implicit binder
-     - shape 7: `let NAME : U -> U := \x -> x`              -- untyped lambda *)
+     - shape 6: `\let NAME {A : U} (x : A) : A => x`         -- implicit binder
+     - shape 7: `\let NAME : U -> U => \x -> x`              -- untyped lambda *)
 let () =
   Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
@@ -21,7 +21,7 @@ let () =
   let n_tops = 4_000 in
   let buf = Buffer.create (1 lsl 20) in
   for i = 1 to n_imports do
-    Buffer.add_string buf (Printf.sprintf "import lib%d.utils\n" i)
+    Buffer.add_string buf (Printf.sprintf "\\import lib%d.utils\n" i)
   done;
   for i = 1 to n_tops do
     (* alternate between let/data shapes so spine, arrow, paren, ctor,
@@ -30,16 +30,16 @@ let () =
     | 0 ->
       Buffer.add_string
         buf
-        (Printf.sprintf "let f%d : U -> U -> U := g%d (h%d x%d) y%d\n" i i i i i)
+        (Printf.sprintf "\\let f%d : U -> U -> U => g%d (h%d x%d) y%d\n" i i i i i)
     | 1 ->
       Buffer.add_string
         buf
-        (Printf.sprintf "let id%d : (U -> U) -> U -> U := f%d (g%d x%d)\n" i i i i)
+        (Printf.sprintf "\\let id%d : (U -> U) -> U -> U => f%d (g%d x%d)\n" i i i i)
     | 2 ->
       Buffer.add_string
         buf
         (Printf.sprintf
-           "data T%d : U | mk%da : T%d | mk%db : T%d -> T%d -> T%d\n"
+           "\\data T%d : U | mk%da : T%d | mk%db : T%d -> T%d -> T%d\n"
            i
            i
            i
@@ -50,14 +50,16 @@ let () =
     | 3 ->
       Buffer.add_string
         buf
-        (Printf.sprintf "let comp%d : U -> U -> U -> U := a%d b%d c%d\n" i i i i)
-    | 4 -> Buffer.add_string buf (Printf.sprintf "let hdr%d (x : U) (y : U) : U := x\n" i)
+        (Printf.sprintf "\\let comp%d : U -> U -> U -> U => a%d b%d c%d\n" i i i i)
+    | 4 ->
+      Buffer.add_string buf (Printf.sprintf "\\let hdr%d (x : U) (y : U) : U => x\n" i)
     | 5 ->
       Buffer.add_string
         buf
-        (Printf.sprintf "let pi%d : (x : U) -> U -> U := \\(z : U) -> z\n" i)
-    | 6 -> Buffer.add_string buf (Printf.sprintf "let imp%d {A : U} (x : A) : A := x\n" i)
-    | _ -> Buffer.add_string buf (Printf.sprintf "let unty%d : U -> U := \\x -> x\n" i)
+        (Printf.sprintf "\\let pi%d : (x : U) -> U -> U => \\(z : U) -> z\n" i)
+    | 6 ->
+      Buffer.add_string buf (Printf.sprintf "\\let imp%d {A : U} (x : A) : A => x\n" i)
+    | _ -> Buffer.add_string buf (Printf.sprintf "\\let unty%d : U -> U => \\x -> x\n" i)
   done;
   let src = Buffer.contents buf in
   let toks_list =

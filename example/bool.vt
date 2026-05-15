@@ -1,8 +1,8 @@
-data Bool : U
+\data Bool : U
   | true : Bool
   | false : Bool
 
-let not : Bool -> Bool where
-  not x <= elim x
+\let not : Bool -> Bool \where
+  not x <= \elim x
   | not true => false
   | not false => true

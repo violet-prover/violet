@@ -11,7 +11,7 @@ let positive_test () =
     m.Violet_elab.Surface.tops
   in
   (* Basic let binding parses OK *)
-  let tops = parse_tops "let f : U -> U := \\x -> x\n" in
+  let tops = parse_tops "\\let f : U -> U => \\x -> x\n" in
   match tops with
   | [ _ ] -> Format.printf "positive_test OK@."
   | _ ->
@@ -30,7 +30,7 @@ let goal_test () =
   in
   (* Elim-style where-clause parses OK *)
   let tops =
-    parse_tops "let neg2 : U -> U where\n  neg2 b <= elim b\n  | neg2 x => x\n"
+    parse_tops "\\let neg2 : U -> U \\where\n  neg2 b <= \\elim b\n  | neg2 x => x\n"
   in
   match tops with
   | [ _ ] -> Format.printf "goal_test OK@."
@@ -49,7 +49,9 @@ let elim_intro_test () =
     m.Violet_elab.Surface.tops
   in
   (* Bare intros — all explicit *)
-  let tops1 = parse_tops "let f : (x : U) -> U where\n  f x <= elim x\n  | f x => x\n" in
+  let tops1 =
+    parse_tops "\\let f : (x : U) -> U \\where\n  f x <= \\elim x\n  | f x => x\n"
+  in
   (match tops1 with
    | [ { Asai.Range.value =
            Violet_elab.Surface.Elim_def
@@ -65,7 +67,7 @@ let elim_intro_test () =
      exit 1);
   (* Bracketed intros — implicit + explicit *)
   let tops2 =
-    parse_tops "let f : (x : U) -> U where\n  f {A} x <= elim x\n  | f x => x\n"
+    parse_tops "\\let f : (x : U) -> U \\where\n  f {A} x <= \\elim x\n  | f x => x\n"
   in
   (match tops2 with
    | [ { Asai.Range.value =
@@ -78,7 +80,7 @@ let elim_intro_test () =
      exit 1);
   (* PImpVar in clause patterns *)
   let tops3 =
-    parse_tops "let f : (x : U) -> U where\n  f x <= elim x\n  | f {A} x => x\n"
+    parse_tops "\\let f : (x : U) -> U \\where\n  f x <= \\elim x\n  | f {A} x => x\n"
   in
   match tops3 with
   | [ { Asai.Range.value =

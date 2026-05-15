@@ -1,8 +1,8 @@
-data Bool : U
+\data Bool : U
   | true : Bool
   | false : Bool
 
 # `<= intro` on a non-Pi goal — should fail elaboration.
-let oops : Bool where
-  <= intro
+\let oops : Bool \where
+  <= \intro
   | oops x => x

@@ -1,9 +1,9 @@
-data Bool : U
+\data Bool : U
   | true : Bool
   | false : Bool
 
 # `<= split` with only one of Bool's constructors — should fail.
-let incomplete : Bool -> Bool where
-  <= intro
-  <= split
+\let incomplete : Bool -> Bool \where
+  <= \intro
+  <= \split
   | incomplete true => false

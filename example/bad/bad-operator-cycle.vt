@@ -1,12 +1,12 @@
 # Precedence cycle between two operators is rejected.
-data X : U
+\data X : U
   | x : X
 
-let f : (a b : X) -> X where
-  f a b <= elim a
+\let f : (a b : X) -> X \where
+  f a b <= \elim a
   | f x b => b
 
-operator "~a A ~b" := f
-  ~stronger_than: B
-operator "~a B ~b" := f
-  ~stronger_than: A
+\operator "~a A ~b" => f
+  \stronger_than: B
+\operator "~a B ~b" => f
+  \stronger_than: A

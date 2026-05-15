@@ -2,14 +2,23 @@
 exception SyntaxError of string
 
 type token =
-  | DATA [@printer fun fmt () -> fprintf fmt "data"]
-  | LET [@printer fun fmt () -> fprintf fmt "let"]
-  | IMPORT [@printer fun fmt () -> fprintf fmt "import"]
-  | UNIVERSE [@printer fun fmt () -> fprintf fmt "universe"]
-  | WHERE [@printer fun fmt () -> fprintf fmt "where"]
-  | OPERATOR [@printer fun fmt () -> fprintf fmt "operator"]
-  | OPEN [@printer fun fmt () -> fprintf fmt "open"]
-  | ASSIGN [@printer fun fmt () -> fprintf fmt ":="]
+  | DATA [@printer fun fmt () -> fprintf fmt "\\data"]
+  | LET [@printer fun fmt () -> fprintf fmt "\\let"]
+  | IMPORT [@printer fun fmt () -> fprintf fmt "\\import"]
+  | UNIVERSE [@printer fun fmt () -> fprintf fmt "\\universe"]
+  | WHERE [@printer fun fmt () -> fprintf fmt "\\where"]
+  | OPERATOR [@printer fun fmt () -> fprintf fmt "\\operator"]
+  | OPEN [@printer fun fmt () -> fprintf fmt "\\open"]
+  | ELIM [@printer fun fmt () -> fprintf fmt "\\elim"]
+  | INTRO [@printer fun fmt () -> fprintf fmt "\\intro"]
+  | SPLIT [@printer fun fmt () -> fprintf fmt "\\split"]
+  | STRONGER_THAN [@printer fun fmt () -> fprintf fmt "\\stronger_than"]
+  | WEAKER_THAN [@printer fun fmt () -> fprintf fmt "\\weaker_than"]
+  | SAME_AS [@printer fun fmt () -> fprintf fmt "\\same_as"]
+  | ASSOCIATIVITY [@printer fun fmt () -> fprintf fmt "\\associativity"]
+  | LEFT [@printer fun fmt () -> fprintf fmt "\\left"]
+  | RIGHT [@printer fun fmt () -> fprintf fmt "\\right"]
+  | NONE [@printer fun fmt () -> fprintf fmt "\\none"]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | STACK_ARROW [@printer fun fmt () -> fprintf fmt "<="]
   | FAT_ARROW [@printer fun fmt () -> fprintf fmt "=>"]
@@ -27,7 +36,6 @@ type token =
   | IDENT of string [@printer fun fmt name -> fprintf fmt "<identifier:%s>" name]
   | SYMBOL of string [@printer fun fmt s -> fprintf fmt "<symbol:%s>" s]
   | STRING of string [@printer fun fmt s -> fprintf fmt "<string:%s>" s]
-  | TILDE_NAME of string [@printer fun fmt s -> fprintf fmt "<tilde:%s>" s]
   | EOF
 [@@deriving show]
 
@@ -48,7 +56,6 @@ let ident = (alpha) (alpha|digit|'_'|'-')*
 let whitespace = [' ' '\t']+
 let newline = '\r' | '\n' | "\r\n"
 let sym_char = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',']
-let tilde_name = '~' alpha (alpha|digit|'_'|'-')*
 
 rule token =
   parse
@@ -57,14 +64,25 @@ rule token =
      SYMBOL rule. ocamllex uses longest-match, then first-rule-wins on ties,
      so reserved 2-3 char sequences still win against single-char SYMBOL,
      and longer SYMBOL runs (e.g. `->>`) win against shorter reserved ones. *)
-  | "universe" { return lexbuf @@ UNIVERSE }
-  | "where" { return lexbuf @@ WHERE }
-  | "open" { return lexbuf @@ OPEN }
-  | "data" { return lexbuf @@ DATA }
-  | "let" { return lexbuf @@ LET }
-  | "import" { return lexbuf @@ IMPORT }
-  | "operator" { return lexbuf @@ OPERATOR }
-  | ":=" { return lexbuf @@ ASSIGN }
+  (* Backslash-prefixed keywords. Listed before the bare `"\\"` LAMBDA rule
+     so longest-match selects the keyword form when applicable. *)
+  | "\\universe" { return lexbuf @@ UNIVERSE }
+  | "\\where" { return lexbuf @@ WHERE }
+  | "\\open" { return lexbuf @@ OPEN }
+  | "\\data" { return lexbuf @@ DATA }
+  | "\\let" { return lexbuf @@ LET }
+  | "\\import" { return lexbuf @@ IMPORT }
+  | "\\operator" { return lexbuf @@ OPERATOR }
+  | "\\elim" { return lexbuf @@ ELIM }
+  | "\\intro" { return lexbuf @@ INTRO }
+  | "\\split" { return lexbuf @@ SPLIT }
+  | "\\stronger_than" { return lexbuf @@ STRONGER_THAN }
+  | "\\weaker_than" { return lexbuf @@ WEAKER_THAN }
+  | "\\same_as" { return lexbuf @@ SAME_AS }
+  | "\\associativity" { return lexbuf @@ ASSOCIATIVITY }
+  | "\\left" { return lexbuf @@ LEFT }
+  | "\\right" { return lexbuf @@ RIGHT }
+  | "\\none" { return lexbuf @@ NONE }
   | "->" { return lexbuf @@ ARROW }
   | "<=" { return lexbuf @@ STACK_ARROW }
   | "=>" { return lexbuf @@ FAT_ARROW }
@@ -79,7 +97,6 @@ rule token =
   | '{' { return lexbuf @@ L_BRACKET }
   | '}' { return lexbuf @@ R_BRACKET }
   | '?' { return lexbuf @@ QMARK }
-  | tilde_name { return lexbuf @@ TILDE_NAME (Lexing.lexeme lexbuf) }
   | '"' ([^ '"' '\n']* as s) '"' { return lexbuf @@ STRING s }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
   | sym_char+ { return lexbuf @@ SYMBOL (Lexing.lexeme lexbuf) }
