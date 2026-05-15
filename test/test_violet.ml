@@ -119,6 +119,7 @@ let expected : (string * outcome) list =
   ; "../example/pterodactyl.vt", `Ok
   ; "../example/operators.vt", `Ok
   ; "../example/operators-user.vt", `Ok
+  ; "../example/goal_demo.vt", `Ok
   ; "../example/bad/bad-stack-not-pi.vt", `Fail
   ; "../example/bad/bad-stack-coverage.vt", `Fail
   ; "../example/bad/independent-universes-bad.vt", `Fail

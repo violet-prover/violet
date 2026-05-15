@@ -2064,7 +2064,13 @@ let check_top
         "internal: Operator_decl reached elaboration (resolver should have consumed it)"
   in
   push m g;
-  ignore (drive m);
+  (* A declaration containing user-placed `?` goals leaves unsolved metas in
+     the term handed to the kernel.  The kernel's well-formedness check then
+     raises `OrphanMeta`; we swallow that here and let the `Goal_unresolved`
+     warning below convey the state to the user. *)
+  (try ignore (drive m) with
+   | Violet_kernel.Error.Kernel_error (Violet_kernel.Error.OrphanMeta _)
+     when !(m.pending_goals) > 0 -> ());
   if !(m.pending_goals) > 0
   then
     Reporter.emitf
