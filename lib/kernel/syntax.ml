@@ -77,6 +77,39 @@ module Core = struct
         ; ty : term
         ; tm : term
         }
+    | RecordType of
+        { name : string
+        ; params : term list
+        ; fields : typ binder list
+        }
+    [@printer
+      fun fmt aname aparams afields ->
+        let p =
+          if aparams = []
+          then ""
+          else " " ^ String.concat " " (List.map show_term aparams)
+        in
+        let fs =
+          String.concat
+            " "
+            (List.map (fun b -> "| " ^ b.name ^ " : " ^ show_typ b.bound) afields)
+        in
+        fprintf fmt "(record %s%s %s)" aname p fs]
+    | RecordIntro of
+        { name : string
+        ; fields : (string * term) list
+        }
+    [@printer
+      fun fmt aname afields ->
+        let fs =
+          String.concat ", " (List.map (fun (f, e) -> f ^ " = " ^ show_term e) afields)
+        in
+        fprintf fmt "%s{ %s }" aname fs]
+    | RecordProj of
+        { record : term
+        ; field : string
+        }
+    [@printer fun fmt arecord afield -> fprintf fmt "%s.%s" (show_term arecord) afield]
 
   and typ = term [@@deriving show]
 
@@ -223,6 +256,36 @@ module Core = struct
         ; ty : value
         ; tm : value
         }
+    | VRecordType of
+        { name : string
+        ; params : value list
+        ; fields : value_ty binder list (* later closures may depend on earlier fields *)
+        }
+    [@printer
+      fun fmt aname aparams afields ->
+        let p =
+          if aparams = []
+          then ""
+          else " " ^ String.concat " " (List.map show_value aparams)
+        in
+        let fs =
+          String.concat
+            " "
+            (List.map (fun b -> "| " ^ b.name ^ " : " ^ show_value b.bound) afields)
+        in
+        fprintf fmt "(record %s%s %s)" aname p fs]
+    | VRecordIntro of
+        { name : string
+        ; fields : (string * value) list
+        }
+    [@printer
+      fun fmt aname afields ->
+        let fs =
+          String.concat ", " (List.map (fun (f, v) -> f ^ " = " ^ show_value v) afields)
+        in
+        fprintf fmt "%s{ %s }" aname fs]
+    | VRecordProj of value * string
+    [@printer fun fmt (v, f) -> fprintf fmt "%s.%s" (show_value v) f]
   [@@deriving show]
 
   and elim_head =

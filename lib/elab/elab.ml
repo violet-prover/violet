@@ -92,6 +92,48 @@ let pick_binder_name (clauses : Surface.clause list) (position : int) : string =
      | _ -> Printf.sprintf "__x%d" position)
 ;;
 
+(* Substitute a list of (name, replacement) pairs into a Surface preterm.
+   Only replaces Var [name] for single-segment paths; does not capture-avoid
+   (record pattern binders are fresh relative to the body). *)
+let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
+  : Surface.preterm
+  =
+  match t with
+  | Surface.Var [ x ] ->
+    (match List.assoc_opt x env with
+     | Some replacement -> replacement
+     | None -> t)
+  | Surface.Var _ -> t
+  | Surface.Located { loc; value } ->
+    Surface.Located { loc; value = subst_vars env value }
+  | Surface.App (impl, f, a) -> Surface.App (impl, subst_vars env f, subst_vars env a)
+  | Surface.Lambda b ->
+    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    Surface.Lambda { b with bound = subst_vars env' b.bound }
+  | Surface.TypedLambda (b, body) ->
+    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    Surface.TypedLambda ({ b with bound = subst_vars env b.bound }, subst_vars env' body)
+  | Surface.Pi (b, cod) ->
+    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    Surface.Pi ({ b with bound = subst_vars env b.bound }, subst_vars env' cod)
+  | Surface.Proj (e, f) -> Surface.Proj (subst_vars env e, f)
+  | Surface.RecordLit entries ->
+    Surface.RecordLit (List.map (fun (f, e) -> f, subst_vars env e) entries)
+  | Surface.RecordUpdate (base, entries) ->
+    Surface.RecordUpdate
+      (subst_vars env base, List.map (fun (f, e) -> f, subst_vars env e) entries)
+  | Surface.Max (a, b) -> Surface.Max (subst_vars env a, subst_vars env b)
+  | Surface.Op_soup items ->
+    Surface.Op_soup
+      (List.map
+         (function
+           | Surface.SI_Atom e -> Surface.SI_Atom (subst_vars env e)
+           | Surface.SI_Imp_arg e -> Surface.SI_Imp_arg (subst_vars env e)
+           | other -> other)
+         items)
+  | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+;;
+
 (* Peel `length bindings` Pi-layers off `typ_val`, extending ctx with the
    user-supplied param names and types. Returns the inner ctx and the goal
    value after all params are consumed. *)
@@ -165,7 +207,15 @@ let rec rename_vars_surface (renaming : (string * string) list) (t : Surface.pre
     | Surface.Op_soup _ ->
       Reporter.fatalf
         Elab_error
-        "internal: Op_soup reached rename_vars_surface (resolver should have lowered it)")
+        "internal: Op_soup reached rename_vars_surface (resolver should have lowered it)"
+    | Surface.RecordLit entries ->
+      Surface.RecordLit
+        (List.map (fun (f, e) -> f, rename_vars_surface renaming e) entries)
+    | Surface.RecordUpdate (base, entries) ->
+      Surface.RecordUpdate
+        ( rename_vars_surface renaming base
+        , List.map (fun (f, e) -> f, rename_vars_surface renaming e) entries )
+    | Surface.Proj (e, f) -> Surface.Proj (rename_vars_surface renaming e, f))
 ;;
 
 (* Peel `n` outer Pi-layers off a Surface pretype, returning the codomain. *)
@@ -224,6 +274,12 @@ let qualify_ctor_names
       Reporter.fatalf
         Elab_error
         "internal: Op_soup reached qualify_ctor_names (resolver should have lowered it)"
+    | Surface.RecordLit entries ->
+      Surface.RecordLit (List.map (fun (f, e) -> f, walk shadowed e) entries)
+    | Surface.RecordUpdate (base, entries) ->
+      Surface.RecordUpdate
+        (walk shadowed base, List.map (fun (f, e) -> f, walk shadowed e) entries)
+    | Surface.Proj (e, f) -> Surface.Proj (walk shadowed e, f)
   in
   walk shadowed body
 ;;
@@ -300,6 +356,11 @@ let rewrite_recursive_calls
       Reporter.fatalf
         Elab_error
         "internal: Op_soup reached clause-body rewrite (resolver should have lowered it)"
+    | Surface.RecordLit entries ->
+      Surface.RecordLit (List.map (fun (f, e) -> f, rw e) entries)
+    | Surface.RecordUpdate (base, entries) ->
+      Surface.RecordUpdate (rw base, List.map (fun (f, e) -> f, rw e) entries)
+    | Surface.Proj (e, f) -> Surface.Proj (rw e, f)
   in
   rw body
 ;;
@@ -387,6 +448,8 @@ let align_clause_patterns
         Elab_error
         "clause: missing pattern for explicit slot `%s`"
         slot_name
+    | (_, false) :: rest_slots, (Surface.PRecord _ as p) :: rest_pats ->
+      p :: go rest_slots rest_pats
   in
   go effective patterns
 ;;
@@ -610,7 +673,12 @@ let build_elim_body
                  Elab_error
                  "elim: pattern at non-target position must be a variable"
              | Surface.PImpVar _ ->
-               assert false (* normalized away by align_clause_patterns *))
+               assert false (* normalized away by align_clause_patterns *)
+             | Surface.PRecord _ ->
+               Reporter.fatalf
+                 ~loc:clause_loc
+                 Elab_error
+                 "elim: record pattern at non-target position must be a variable")
          in
          if List.length trailing_pattern_names <> List.length trailing_intros
          then
@@ -766,133 +834,245 @@ let rec walk_moves
       | _ -> Reporter.fatalf ~loc Elab_error "`<= split` requires a preceding `<= intro`"
     in
     let pattern_position = position - 1 in
-    let ind_head =
-      match Evaluation.force_head target_ty with
-      | Core.IndType (h, _) -> h
-      | other ->
-        Reporter.fatalf
-          ~loc
-          Elab_error
-          "`<= split`: target type must be an inductive, got `%s`"
-          ([%show: Core.value] other)
-    in
-    let ctors =
-      match Context.S.resolve [ ind_head ] with
-      | Some (_, `Inductive info) -> ElabData.arities_of info
-      | _ ->
-        Reporter.fatalf ~loc Elab_error "`<= split`: `%s` is not an inductive" ind_head
-    in
-    (* A bare IDENT in a pattern position parses as PVar, but the user may
-       have written the name of a nullary constructor. Normalize on-the-fly. *)
-    let is_ctor name = List.exists (fun (n, _) -> String.equal n name) ctors in
-    let normalize = function
-      | Surface.PVar name when is_ctor name -> Surface.PCon (name, [])
-      | p -> p
-    in
-    let seen = Hashtbl.create 4 in
-    List.iter
-      (fun (c : Surface.clause) ->
-         let cloc = clause_loc c in
-         match Option.map normalize (List.nth_opt c.patterns pattern_position) with
-         | Some (Surface.PCon (cn, _)) ->
-           if not (is_ctor cn)
-           then
-             Reporter.fatalf
-               ~loc:cloc
-               Elab_error
-               "`%s` is not a constructor of `%s`"
-               cn
-               ind_head;
-           if Hashtbl.mem seen cn
-           then
-             Reporter.fatalf
-               ~loc:cloc
-               Elab_error
-               "constructor `%s` has more than one clause"
-               cn;
-           Hashtbl.add seen cn ()
+    (match Evaluation.force_head target_ty with
+     | Core.VRecordType { name = r_name; fields; _ } ->
+       (* Record split: one clause, PRecord pattern, bind each field via projection. *)
+       if List.length clauses <> 1
+       then
+         Reporter.fatalf
+           ~loc
+           Elab_error
+           "`<= split` on record `%s` expects exactly one clause, got %d"
+           r_name
+           (List.length clauses);
+       let clause = List.hd clauses in
+       let cloc = clause_loc clause in
+       let entries =
+         match List.nth_opt clause.patterns pattern_position with
+         | Some (Surface.PRecord es) -> es
          | Some (Surface.PVar _) | Some (Surface.PImpVar _) ->
            Reporter.fatalf
              ~loc:cloc
              Elab_error
-             "expected constructor pattern at split position, got variable"
+             "expected a record pattern `{ f = x, ... }` at split position for record \
+              `%s`"
+             r_name
+         | Some (Surface.PCon _) ->
+           Reporter.fatalf
+             ~loc:cloc
+             Elab_error
+             "expected a record pattern `{ f = x, ... }` at split position for record \
+              `%s`"
+             r_name
          | None ->
-           Reporter.fatalf ~loc:cloc Elab_error "clause `%s` has too few patterns" c.head)
-      clauses;
-    let case_args : Surface.preterm list =
-      List.map
-        (fun (ctor_name, arity) ->
-           let clause =
-             match
-               List.find_opt
-                 (fun (c : Surface.clause) ->
-                    match
-                      Option.map normalize (List.nth_opt c.patterns pattern_position)
-                    with
-                    | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
-                    | _ -> false)
-                 clauses
-             with
-             | Some c -> c
-             | None ->
-               Reporter.fatalf
-                 ~loc
-                 Elab_error
-                 "`<= split` on `%s`: no clause for constructor `%s`"
-                 ind_head
-                 ctor_name
-           in
-           let cloc = clause_loc clause in
-           let vs =
-             match
-               Option.map normalize (List.nth_opt clause.patterns pattern_position)
-             with
-             | Some (Surface.PCon (_, vs)) -> vs
-             | _ -> []
-           in
-           if List.length vs <> arity
-           then
+           Reporter.fatalf
+             ~loc:cloc
+             Elab_error
+             "clause `%s` has too few patterns"
+             clause.head
+       in
+       (* Validate: no duplicates in pattern entries *)
+       let _ =
+         List.fold_left
+           (fun seen (fname, _) ->
+              if List.mem fname seen
+              then
+                Reporter.fatalf
+                  ~loc:cloc
+                  Elab_error
+                  "duplicate field `%s` in record pattern for `%s`"
+                  fname
+                  r_name
+              else fname :: seen)
+           []
+           entries
+       in
+       let field_names =
+         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
+       in
+       let entry_names = List.map fst entries in
+       (* Validate: no unknown fields *)
+       List.iter
+         (fun fname ->
+            if not (List.mem fname field_names)
+            then
+              Reporter.fatalf
+                ~loc:cloc
+                Elab_error
+                "unknown field `%s` in record pattern for `%s`"
+                fname
+                r_name)
+         entry_names;
+       (* Validate: no missing fields *)
+       List.iter
+         (fun fname ->
+            if not (List.mem fname entry_names)
+            then
+              Reporter.fatalf
+                ~loc:cloc
+                Elab_error
+                "missing field `%s` in record pattern for `%s`"
+                fname
+                r_name)
+         field_names;
+       (* Bind each field sub-pattern by substituting the projected value
+          for the pattern variable in the clause body, in declaration order.
+          Only PVar sub-patterns are supported. *)
+       let subst_pairs =
+         List.filter_map
+           (fun fname ->
+              let sub_pat = List.assoc fname entries in
+              match sub_pat with
+              | Surface.PVar v ->
+                Some (v, Surface.Proj (Surface.Var [ target_name ], fname))
+              | _ ->
+                Reporter.fatalf
+                  ~loc:cloc
+                  Elab_error
+                  "record pattern field `%s`: only simple variable sub-patterns are \
+                   supported"
+                  fname)
+           field_names
+       in
+       subst_vars subst_pairs clause.body
+     | Core.IndType (ind_head, _) ->
+       let ctors =
+         match Context.S.resolve [ ind_head ] with
+         | Some (_, `Inductive info) -> ElabData.arities_of info
+         | _ ->
+           Reporter.fatalf ~loc Elab_error "`<= split`: `%s` is not an inductive" ind_head
+       in
+       (* A bare IDENT in a pattern position parses as PVar, but the user may
+          have written the name of a nullary constructor. Normalize on-the-fly. *)
+       let is_ctor name = List.exists (fun (n, _) -> String.equal n name) ctors in
+       let normalize = function
+         | Surface.PVar name when is_ctor name -> Surface.PCon (name, [])
+         | p -> p
+       in
+       let seen = Hashtbl.create 4 in
+       List.iter
+         (fun (c : Surface.clause) ->
+            let cloc = clause_loc c in
+            match Option.map normalize (List.nth_opt c.patterns pattern_position) with
+            | Some (Surface.PCon (cn, _)) ->
+              if not (is_ctor cn)
+              then
+                Reporter.fatalf
+                  ~loc:cloc
+                  Elab_error
+                  "`%s` is not a constructor of `%s`"
+                  cn
+                  ind_head;
+              if Hashtbl.mem seen cn
+              then
+                Reporter.fatalf
+                  ~loc:cloc
+                  Elab_error
+                  "constructor `%s` has more than one clause"
+                  cn;
+              Hashtbl.add seen cn ()
+            | Some (Surface.PVar _) | Some (Surface.PImpVar _) ->
+              Reporter.fatalf
+                ~loc:cloc
+                Elab_error
+                "expected constructor pattern at split position, got variable"
+            | Some (Surface.PRecord _) ->
+              Reporter.fatalf
+                ~loc:cloc
+                Elab_error
+                "expected constructor pattern at split position, got record pattern \
+                 (target `%s` is an inductive, not a record)"
+                ind_head
+            | None ->
+              Reporter.fatalf
+                ~loc:cloc
+                Elab_error
+                "clause `%s` has too few patterns"
+                c.head)
+         clauses;
+       let case_args : Surface.preterm list =
+         List.map
+           (fun (ctor_name, arity) ->
+              let clause =
+                match
+                  List.find_opt
+                    (fun (c : Surface.clause) ->
+                       match
+                         Option.map normalize (List.nth_opt c.patterns pattern_position)
+                       with
+                       | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
+                       | _ -> false)
+                    clauses
+                with
+                | Some c -> c
+                | None ->
+                  Reporter.fatalf
+                    ~loc
+                    Elab_error
+                    "`<= split` on `%s`: no clause for constructor `%s`"
+                    ind_head
+                    ctor_name
+              in
+              let cloc = clause_loc clause in
+              let vs =
+                match
+                  Option.map normalize (List.nth_opt clause.patterns pattern_position)
+                with
+                | Some (Surface.PCon (_, vs)) -> vs
+                | _ -> []
+              in
+              if List.length vs <> arity
+              then
+                Reporter.fatalf
+                  ~loc:cloc
+                  Elab_error
+                  "constructor `%s` expects %d field-binders, got %d"
+                  ctor_name
+                  arity
+                  (List.length vs);
+              List.fold_right
+                (fun v body ->
+                   Surface.Lambda { name = v; bound = body; implicit = false })
+                vs
+                clause.body)
+           ctors
+       in
+       let motive_body =
+         peel_pi_surface ~loc (pattern_position + 1 - n_params) signature
+       in
+       let motive : Surface.preterm =
+         Surface.Lambda { name = target_name; bound = motive_body; implicit = false }
+       in
+       (* Extract the target's type as a Surface preterm so we can read off the
+          data-type's params + deps to prepend to the eliminator's spine. The
+          target's type is the domain of the (pattern_position - n_params)-th
+          Pi-layer of `signature`. *)
+       let target_type_surface : Surface.pretype =
+         let rec find_dom ~loc n s =
+           match s with
+           | Surface.Located { value; loc = inner } ->
+             find_dom ~loc:(Option.value inner ~default:loc) n value
+           | Surface.Pi (binder, cod) ->
+             if n = 0 then binder.bound else find_dom ~loc (n - 1) cod
+           | _ ->
              Reporter.fatalf
-               ~loc:cloc
+               ~loc
                Elab_error
-               "constructor `%s` expects %d field-binders, got %d"
-               ctor_name
-               arity
-               (List.length vs);
-           List.fold_right
-             (fun v body -> Surface.Lambda { name = v; bound = body; implicit = false })
-             vs
-             clause.body)
-        ctors
-    in
-    let motive_body = peel_pi_surface ~loc (pattern_position + 1 - n_params) signature in
-    let motive : Surface.preterm =
-      Surface.Lambda { name = target_name; bound = motive_body; implicit = false }
-    in
-    (* Extract the target's type as a Surface preterm so we can read off the
-       data-type's params + deps to prepend to the eliminator's spine. The
-       target's type is the domain of the (pattern_position - n_params)-th
-       Pi-layer of `signature`. *)
-    let target_type_surface : Surface.pretype =
-      let rec find_dom ~loc n s =
-        match s with
-        | Surface.Located { value; loc = inner } ->
-          find_dom ~loc:(Option.value inner ~default:loc) n value
-        | Surface.Pi (binder, cod) ->
-          if n = 0 then binder.bound else find_dom ~loc (n - 1) cod
-        | _ ->
-          Reporter.fatalf
-            ~loc
-            Elab_error
-            "stack-def: cannot locate target type in signature"
-      in
-      find_dom ~loc (pattern_position - n_params) signature
-    in
-    let data_args : Surface.preterm list = Surface.applied_spine target_type_surface in
-    List.fold_left
-      (fun acc arg -> Surface.App (false, acc, arg))
-      (Surface.Var [ ind_head; "elim" ])
-      (data_args @ [ Surface.Var [ target_name ]; motive ] @ case_args)
+               "stack-def: cannot locate target type in signature"
+         in
+         find_dom ~loc (pattern_position - n_params) signature
+       in
+       let data_args : Surface.preterm list = Surface.applied_spine target_type_surface in
+       List.fold_left
+         (fun acc arg -> Surface.App (false, acc, arg))
+         (Surface.Var [ ind_head; "elim" ])
+         (data_args @ [ Surface.Var [ target_name ]; motive ] @ case_args)
+     | other ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "`<= split`: target type must be an inductive or record type, got `%s`"
+         ([%show: Core.value] other))
 ;;
 
 type produced =
@@ -962,6 +1142,53 @@ type goal =
       * (string * bool) list
       * string
       * Surface.clause list
+  | GTopRecord of t * Surface.top
+  | KTopRecord_HaveType of
+      t
+      * string
+      * Surface.pretype binder list
+      * Surface.pretype
+      * Surface.pretype binder list
+  (* Continuation frame for check-mode record literal elaboration.
+     Fired after each field's GCheck completes.
+     - r_name:            bare record name (for RecordIntro)
+     - done_rev:          (field_name, core_term) pairs checked so far, in reverse
+     - current_fname:     name of the field just checked (the GCheck we just returned from)
+     - remaining_entries: (name, surface_expr) pairs in declaration order, still to check
+     - remaining_types:   field type binders (from VRecordType.fields) for remaining fields *)
+  | KRecordLit_Field of
+      t
+      * string
+      * (string * Core.term) list
+      * string
+      * (string * Surface.preterm) list
+      * Core.value_ty Syntax.binder list
+  (* Continuation for GInfer (Proj (e, f)): holds (loc, field_name) after e is inferred. *)
+  | KProj_HaveRec of t * string
+  (* Continuation for GCheck (RecordUpdate …, expected_ty): fired after base is checked.
+     - loc:               source location (for nested GChecks)
+     - r_name:            record name (for RecordIntro)
+     - overrides:         (field_name, surface_expr) map of the user-supplied overrides
+     - all_fields:        full field list from VRecordType in declaration order *)
+  | KRecordUpdate_HaveBase of
+      t * string * (string * Surface.preterm) list * Core.value_ty Syntax.binder list
+  (* Continuation for each field inside RecordUpdate: same shape as KRecordLit_Field.
+     Fired after each GCheck for an override field completes.
+     - loc:               source location
+     - r_name:            record name
+     - base_core:         elaborated base term (for projections of non-overridden fields)
+     - overrides:         the full overrides map (to look up whether upcoming fields are overridden)
+     - done_rev:          (field_name, core_term) pairs checked so far, in reverse order
+     - current_fname:     name of the field whose GCheck just completed
+     - remaining_fields:  remaining VRecordType binders (declaration order) still to process *)
+  | KRecordUpdate_Field of
+      t
+      * string
+      * Core.term
+      * (string * Surface.preterm) list
+      * (string * Core.term) list
+      * string
+      * Core.value_ty Syntax.binder list
 
 type machine =
   { mutable goals : goal list
@@ -1105,6 +1332,25 @@ let rec pretty_value (ctx : local_ctx) (v : Core.value) : string =
       (pretty_level to_lvl)
       (pretty_value ctx tm)
       (pretty_value ctx ty)
+  | Core.VRecordType { name; params; fields } ->
+    let p_params = List.map (pretty_value ctx) params in
+    let rec walk ctx = function
+      | [] -> []
+      | (b : Core.value_ty Syntax.binder) :: rest ->
+        let t_str = pretty_value ctx b.bound in
+        let ctx' = bind ctx b.name b.bound in
+        (b.name ^ " : " ^ t_str) :: walk ctx' rest
+    in
+    let field_strs = walk ctx fields in
+    let p = if p_params = [] then "" else " " ^ String.concat " " p_params in
+    let fs = String.concat " " (List.map (fun s -> "| " ^ s) field_strs) in
+    Printf.sprintf "(record %s%s %s)" name p fs
+  | Core.VRecordIntro { name; fields } ->
+    let fs =
+      String.concat ", " (List.map (fun (f, v) -> f ^ " = " ^ pretty_value ctx v) fields)
+    in
+    Printf.sprintf "%s{ %s }" name fs
+  | Core.VRecordProj (v, f) -> Printf.sprintf "%s.%s" (pretty_value ctx v) f
 
 and pretty_neutral (ctx : local_ctx) (head : string) (spine : Core.value bwd) : string =
   if Bwd.is_empty spine
@@ -1154,6 +1400,7 @@ let name_of_top : Surface.top -> string = function
   | Surface.Elim_def { name; _ } -> name
   | Surface.Universe_decl _ -> "<universe_decl>"
   | Surface.Operator_decl _ -> "<operator_decl>"
+  | Surface.Record { name; _ } -> name
 ;;
 
 (* Publish to Yuujinchou: visible-only if private, visible+export if public.
@@ -1174,6 +1421,49 @@ let publish_to_env ~exported path datum =
   then
     Env.S.include_singleton ~context_visible:`Visible ~context_export:`Export (path, datum)
   else Env.S.import_singleton ~context_visible:`Visible (path, datum)
+;;
+
+(* Shift all free LocalVar indices in a Core.term by `n`.
+   Variables with index < cutoff (bound by binders we're inside) are left alone.
+   This is the standard weakening operation for de Bruijn terms. *)
+let rec shift_term ?(cutoff = 0) (n : int) (t : Core.term) : Core.term =
+  match t with
+  | Core.LocalVar ix -> if ix >= cutoff then Core.LocalVar (ix + n) else t
+  | Core.Universe _ | Core.Var _ | Core.Meta _ | Core.InsertedMeta _ -> t
+  | Core.App (a, b) -> Core.App (shift_term ~cutoff n a, shift_term ~cutoff n b)
+  | Core.Lambda { name; bound; implicit } ->
+    Core.Lambda { name; bound = shift_term ~cutoff:(cutoff + 1) n bound; implicit }
+  | Core.TypedLambda ({ name; bound = dom; implicit }, body) ->
+    Core.TypedLambda
+      ( { name; bound = shift_term ~cutoff n dom; implicit }
+      , shift_term ~cutoff:(cutoff + 1) n body )
+  | Core.Pi ({ name; bound = dom; implicit }, cod) ->
+    Core.Pi
+      ( { name; bound = shift_term ~cutoff n dom; implicit }
+      , shift_term ~cutoff:(cutoff + 1) n cod )
+  | Core.Lift { from_lvl; to_lvl; ty } ->
+    Core.Lift { from_lvl; to_lvl; ty = shift_term ~cutoff n ty }
+  | Core.LiftTerm { from_lvl; to_lvl; ty; tm } ->
+    Core.LiftTerm
+      { from_lvl; to_lvl; ty = shift_term ~cutoff n ty; tm = shift_term ~cutoff n tm }
+  | Core.UnliftTerm { from_lvl; to_lvl; ty; tm } ->
+    Core.UnliftTerm
+      { from_lvl; to_lvl; ty = shift_term ~cutoff n ty; tm = shift_term ~cutoff n tm }
+  | Core.RecordType { name = rn; params; fields } ->
+    let params' = List.map (shift_term ~cutoff n) params in
+    let fields', _ =
+      List.fold_left
+        (fun (acc, c) (b : Core.term Syntax.binder) ->
+           { b with bound = shift_term ~cutoff:c n b.bound } :: acc, c + 1)
+        ([], cutoff)
+        fields
+    in
+    Core.RecordType { name = rn; params = params'; fields = List.rev fields' }
+  | Core.RecordIntro { name = rn; fields } ->
+    Core.RecordIntro
+      { name = rn; fields = List.map (fun (f, e) -> f, shift_term ~cutoff n e) fields }
+  | Core.RecordProj { record; field } ->
+    Core.RecordProj { record = shift_term ~cutoff n record; field }
 ;;
 
 let rec dispatch (m : machine) (g : goal) : unit =
@@ -1353,6 +1643,285 @@ let rec dispatch (m : machine) (g : goal) : unit =
       ~loc
       Elab_error
       "internal: Op_soup reached elaborator (resolver should have lowered it)"
+  | GInfer (loc, RecordLit _) ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "cannot infer the type of a record literal; please annotate"
+  | GCheck (loc, RecordLit entries, expected_ty) ->
+    (match Evaluation.force_head expected_ty with
+     | Core.VRecordType { name = r_name; fields = type_fields; _ } ->
+       (* 1. Detect duplicate entry names *)
+       let entry_names = List.map fst entries in
+       let _ =
+         List.fold_left
+           (fun seen fname ->
+              if List.mem fname seen
+              then
+                Reporter.fatalf
+                  ~loc
+                  Elab_error
+                  "duplicate field `%s` in record literal"
+                  fname
+              else fname :: seen)
+           []
+           entry_names
+       in
+       let field_names =
+         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) type_fields
+       in
+       (* 2. Detect unknown field names (entries not in the record type) *)
+       List.iter
+         (fun fname ->
+            if not (List.mem fname field_names)
+            then
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "unknown field `%s` in record literal for `%s`"
+                fname
+                r_name)
+         entry_names;
+       (* 3. Detect missing fields (fields in the type not provided) *)
+       List.iter
+         (fun fname ->
+            if not (List.mem fname entry_names)
+            then
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "missing field `%s` in record literal for `%s`"
+                fname
+                r_name)
+         field_names;
+       (* 4. Canonicalize entries to declaration order *)
+       let canonical_entries =
+         List.map (fun fname -> fname, List.assoc fname entries) field_names
+       in
+       (* 5. Start the telescope walk *)
+       (match canonical_entries, type_fields with
+        | [], [] ->
+          m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields = [] }))
+        | (fname0, expr0) :: rest_entries, b0 :: rest_types ->
+          push m (KRecordLit_Field (loc, r_name, [], fname0, rest_entries, rest_types));
+          push m (GCheck (loc, expr0, b0.Syntax.bound))
+        | _ ->
+          Reporter.fatalf ~loc Elab_error "internal: record literal field count mismatch")
+     | Core.Flex _ ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "cannot infer record type for record literal; please annotate"
+     | other ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "expected a record type for record literal, got %s"
+         (pretty_value m.ctx other))
+  | KRecordLit_Field
+      (loc, r_name, done_rev, current_fname, remaining_entries, remaining_types) ->
+    (match take_result m with
+     | PTerm field_tm ->
+       let done_rev' = (current_fname, field_tm) :: done_rev in
+       (match remaining_entries, remaining_types with
+        | [], [] ->
+          let fields = List.rev done_rev' in
+          m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields }))
+        | (fname, expr) :: rest_entries, (b : Core.value_ty Syntax.binder) :: rest_types
+          ->
+          (* KNOWN LIMITATION: spec §4.3 requires substituting already-checked
+             field values into later field types (e.g. `snd : B fst` should be
+             re-evaluated with the actual `fst` value from the literal).
+             Currently we check against `b.Syntax.bound` (the raw closure body)
+             without applying earlier projections, so genuinely-dependent field
+             types are not properly threaded.  Tracked for follow-up. *)
+          push
+            m
+            (KRecordLit_Field (loc, r_name, done_rev', fname, rest_entries, rest_types));
+          push m (GCheck (loc, expr, b.Syntax.bound))
+        | _ ->
+          Reporter.fatalf
+            Elab_error
+            "internal: KRecordLit_Field: entry/type list length mismatch")
+     | other ->
+       Reporter.fatalf
+         Elab_error
+         "KRecordLit_Field: bad result %s"
+         ([%show: produced] other))
+  | GInfer (loc, RecordUpdate _) ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "cannot infer the type of a record update; please annotate"
+  | GCheck (loc, RecordUpdate (base, overrides), expected_ty) ->
+    (match Evaluation.force_head expected_ty with
+     | Core.VRecordType { name = r_name; fields = type_fields; _ } ->
+       (* 1. Validate override field set *)
+       if overrides = []
+       then
+         Reporter.fatalf
+           ~loc
+           Elab_error
+           "empty record update `{ _ | }`; use `p` directly instead";
+       let field_names =
+         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) type_fields
+       in
+       (* 1a. Detect unknown override fields *)
+       List.iter
+         (fun (fname, _) ->
+            if not (List.mem fname field_names)
+            then
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "unknown field `%s` in record update for `%s`"
+                fname
+                r_name)
+         overrides;
+       (* 1b. Detect duplicate override fields *)
+       let _ =
+         List.fold_left
+           (fun seen (fname, _) ->
+              if List.mem fname seen
+              then
+                Reporter.fatalf
+                  ~loc
+                  Elab_error
+                  "duplicate field `%s` in record update"
+                  fname
+              else fname :: seen)
+           []
+           overrides
+       in
+       (* 2. Check base against the expected record type; fire KRecordUpdate_HaveBase *)
+       push m (KRecordUpdate_HaveBase (loc, r_name, overrides, type_fields));
+       push m (GCheck (loc, base, expected_ty))
+     | Core.Flex _ ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "cannot infer record type for record update; please annotate"
+     | other ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "expected a record type for record update, got %s"
+         (pretty_value m.ctx other))
+  | KRecordUpdate_HaveBase (loc, r_name, overrides, type_fields) ->
+    (match take_result m with
+     | PTerm base_core ->
+       (* Walk type_fields in declaration order.
+          For each field, use the override expression if provided, or synthesize a
+          RecordProj from base_core otherwise.
+          NOTE: for dependent records, the field types in `type_fields` may contain
+          RigidLocal references to prior field values; we follow Task 4.2's approach
+          and do not substitute prior values into the types.  This is correct for
+          non-dependent records; dependent records may produce incorrect types but
+          will not crash. *)
+       let rec go done_rev fields =
+         match fields with
+         | [] ->
+           let result_fields = List.rev done_rev in
+           m.result
+           <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
+         | (b : Core.value_ty Syntax.binder) :: rest_fields ->
+           let fname = b.name in
+           (match List.assoc_opt fname overrides with
+            | Some expr ->
+              push
+                m
+                (KRecordUpdate_Field
+                   (loc, r_name, base_core, overrides, done_rev, fname, rest_fields));
+              push m (GCheck (loc, expr, b.Syntax.bound))
+            | None ->
+              let proj_core = Core.RecordProj { record = base_core; field = fname } in
+              go ((fname, proj_core) :: done_rev) rest_fields)
+       in
+       go [] type_fields
+     | other ->
+       Reporter.fatalf
+         Elab_error
+         "KRecordUpdate_HaveBase: bad result %s"
+         ([%show: produced] other))
+  | KRecordUpdate_Field
+      (loc, r_name, base_core, overrides, done_rev, current_fname, remaining_fields) ->
+    (match take_result m with
+     | PTerm field_tm ->
+       let done_rev' = (current_fname, field_tm) :: done_rev in
+       (* Continue walking the remaining fields *)
+       let rec go done_rev fields =
+         match fields with
+         | [] ->
+           let result_fields = List.rev done_rev in
+           m.result
+           <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
+         | (b : Core.value_ty Syntax.binder) :: rest_fields ->
+           let fname = b.name in
+           (match List.assoc_opt fname overrides with
+            | Some expr ->
+              push
+                m
+                (KRecordUpdate_Field
+                   (loc, r_name, base_core, overrides, done_rev, fname, rest_fields));
+              push m (GCheck (loc, expr, b.Syntax.bound))
+            | None ->
+              let proj_core = Core.RecordProj { record = base_core; field = fname } in
+              go ((fname, proj_core) :: done_rev) rest_fields)
+       in
+       go done_rev' remaining_fields
+     | other ->
+       Reporter.fatalf
+         Elab_error
+         "KRecordUpdate_Field: bad result %s"
+         ([%show: produced] other))
+  | GInfer (loc, Proj (e, f)) ->
+    push m (KProj_HaveRec (loc, f));
+    push m (GInfer (loc, e))
+  | KProj_HaveRec (loc, f) ->
+    (match take_result m with
+     | PTermType (e_core, v_ty) ->
+       (match Evaluation.force_head v_ty with
+        | Core.VRecordType { name = r_name; params = v_params; fields } ->
+          (* Validate that field f exists in the record type *)
+          let field_names =
+            List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
+          in
+          if not (List.mem f field_names)
+          then Reporter.fatalf ~loc Type_error "record `%s` has no field `%s`" r_name f;
+          (* Look up the companion R/f to get its type, then apply it to params + record
+             to recover the result type for this projection. *)
+          let companion_name = r_name ^ "/" ^ f in
+          let companion_ty = Context.lookup companion_name in
+          (* Apply companion_ty (a VPi) successively to each param, then to the record value *)
+          let apply_vpi ty arg =
+            match Evaluation.force_head ty with
+            | Core.VPi (_, b) -> b arg
+            | other ->
+              Reporter.fatalf
+                Elab_error
+                "KProj_HaveRec: companion type is not a Pi when applying params, got %s"
+                ([%show: Core.value] other)
+          in
+          let ty_after_params = List.fold_left apply_vpi companion_ty v_params in
+          let v_record = Evaluation.eval m.ctx.env e_core in
+          let result_ty = apply_vpi ty_after_params v_record in
+          m.result
+          <- Some (PTermType (Core.RecordProj { record = e_core; field = f }, result_ty))
+        | Core.Flex _ ->
+          Reporter.fatalf
+            ~loc
+            Elab_error
+            "cannot infer record type for projection `.%s`; please annotate"
+            f
+        | other ->
+          Reporter.fatalf
+            ~loc
+            Type_error
+            "expected a record type for projection `.%s`, got %s"
+            f
+            ([%show: Core.value] other))
+     | other ->
+       Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" ([%show: produced] other))
   | GInfer (loc, Lambda _) -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
   | GCheck (_loc, Hole, _) -> m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
   | GInfer (_loc, Hole) ->
@@ -1688,6 +2257,540 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "KTopData_HaveType: bad result %s"
          ([%show: produced] other))
   | GTopData (_, _) -> Reporter.fatalf Elab_error "GTopData: payload is not Data"
+  | GTopRecord (loc, Surface.Record { name; params; ind_ty; fields }) ->
+    (* Defensive check: implicit field binders are not supported.
+       The parser does not emit them, but hand-constructed ASTs could. *)
+    List.iter
+      (fun (b : Surface.pretype binder) ->
+         if b.implicit
+         then
+           Reporter.fatalf
+             ~loc
+             Elab_error
+             "record `%s`: implicit field binders are not supported (`%s`)"
+             name
+             b.name)
+      fields;
+    (* Build the Pi-tower: params → ind_ty, and infer it. *)
+    let typ : Surface.pretype =
+      List.fold_right
+        (fun binding return_ty -> Surface.Pi (binding, return_ty))
+        params
+        ind_ty
+    in
+    push m (KTopRecord_HaveType (loc, name, params, ind_ty, fields));
+    push m (GInferType (loc, typ))
+  | GTopRecord (_, _) -> Reporter.fatalf Elab_error "GTopRecord: payload is not Record"
+  | KTopRecord_HaveType (loc, name, params, ind_ty, fields) ->
+    (match take_result m with
+     | PType (typ_tm, _inferred_sort) ->
+       (* --- Record head ---
+          The type of the head (as a term) is just `typ_tm`, which is the
+          inferred type of the full params → ind_ty Pi-tower.
+          The body is a Lambda over the params that returns RecordType. *)
+       let typ_val = Evaluation.eval m.ctx.env typ_tm in
+       (* Check each field type in context extended by params + previous fields.
+          We accumulate (field_name, field_ty_core_term) pairs. *)
+       let ctx_with_params =
+         (* Extend ctx with params as rigid locals so field types can refer to them. *)
+         let rec extend_params ctx = function
+           | [] -> ctx
+           | (b : Surface.pretype binder) :: rest ->
+             let qty_tm = check_type ~loc ctx b.bound in
+             let qty_val = Evaluation.eval ctx.env qty_tm in
+             extend_params (bind ctx b.name qty_val) rest
+         in
+         extend_params m.ctx params
+       in
+       (* Check field types accumulating the local context.
+          These Core terms have correct LocalVar indices: since m.ctx.lvl = 0 at
+          top-level, params in ctx_with_params are at LocalVar (k-1-i), the same
+          indices they will have under the k param-lambdas in head_body. *)
+       let field_ty_terms, _ctx_after_fields =
+         List.fold_left
+           (fun (acc, ctx_acc) (b : Surface.pretype binder) ->
+              let fty_tm = check_type ~loc ctx_acc b.bound in
+              let fty_val = Evaluation.eval ctx_acc.env fty_tm in
+              let ctx_acc' = bind ctx_acc b.name fty_val in
+              acc @ [ b.name, fty_tm ], ctx_acc')
+           ([], ctx_with_params)
+           fields
+       in
+       let n_params = List.length params in
+       let n_fields = List.length fields in
+       let field_names = List.map (fun (b : Surface.pretype binder) -> b.name) fields in
+       (* --- Publish record head ---
+          Type: typ_val (the Pi params → ind_ty)
+          Body: Lambda(P₁, ..., Lambda(Pₖ, RecordType { name; params=[LocalVar(k-1)...0]; fields=... }))
+          The RecordType body also needs the field telescope in Core.
+          We build it directly. *)
+       (* Build the field telescope in Core under k param lambdas.
+          Reuse the Core terms already produced by the first pass above.
+          Those terms were checked in ctx_with_params (depth = k, since m.ctx.lvl=0),
+          so their LocalVar indices already match what RecordType needs under k param-lambdas. *)
+       let head_body : Core.term =
+         (* Under k param-lambdas, param_i is at LocalVar (k-1-i) for i in [0,k-1].
+            Build RecordType with params = [LocalVar(k-1), LocalVar(k-2), ..., LocalVar 0]. *)
+         let param_vars =
+           List.init n_params (fun i -> Core.LocalVar (n_params - 1 - i))
+         in
+         (* Build core_fields directly from field_ty_terms — no re-check needed. *)
+         let core_fields =
+           List.map
+             (fun (fname, fty_tm) ->
+                { Syntax.name = fname; bound = fty_tm; implicit = false })
+             field_ty_terms
+         in
+         let record_ty_tm =
+           Core.RecordType { name; params = param_vars; fields = core_fields }
+         in
+         (* Wrap in lambdas for each param *)
+         List.fold_right
+           (fun (b : Surface.pretype binder) body ->
+              Core.Lambda { name = b.name; bound = body; implicit = b.implicit })
+           params
+           record_ty_tm
+       in
+       let exported = m.is_exported name in
+       publish_to_context ~exported [ name ] (typ_val, `Defn);
+       let head_body_val = Evaluation.eval m.ctx.env head_body in
+       publish_to_env ~exported [ name ] (head_body_val, `Defn);
+       Env.register_definition name head_body_val;
+       let qname = m.module_name ^ "." ^ name in
+       Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:head_body;
+       (* --- Helper: build param Pi-tower wrapping inner_ty ---
+          Re-checks param types in m.ctx to get Core terms. *)
+       let param_binder_core_terms =
+         (* Check each param type in ctx extended by previous params *)
+         let _, terms =
+           List.fold_left
+             (fun (ctx_acc, acc) (b : Surface.pretype binder) ->
+                let qty_tm = check_type ~loc ctx_acc b.bound in
+                let qty_val = Evaluation.eval ctx_acc.env qty_tm in
+                let ctx_acc' = bind ctx_acc b.name qty_val in
+                ctx_acc', acc @ [ b.name, b.implicit, qty_tm ])
+             (m.ctx, [])
+             params
+         in
+         terms
+       in
+       (* Build: Pi(P₁:Q₁, Pi(P₂:Q₂, ..., Pi(Pₖ:Qₖ, inner))) *)
+       let wrap_param_pis (inner : Core.term) : Core.term =
+         List.fold_right
+           (fun (n, impl, qty_tm) body ->
+              Core.Pi ({ name = n; bound = qty_tm; implicit = impl }, body))
+           param_binder_core_terms
+           inner
+       in
+       (* Build: Lambda(P₁, Lambda(P₂, ..., Lambda(Pₖ, inner))) *)
+       let wrap_param_lambdas (inner : Core.term) : Core.term =
+         List.fold_right
+           (fun (n, impl, _qty_tm) body ->
+              Core.Lambda { name = n; bound = body; implicit = impl })
+           param_binder_core_terms
+           inner
+       in
+       (* The application R P₁…Pₖ under (depth_extra) additional inner binders.
+          Under the param Pi-tower (depth_extra more binders), the params are at:
+          LocalVar(depth_extra + n_params - 1 - i) for param i in [0, k-1].
+          Applied left-to-right: (((R P₁) P₂) ... Pₖ). *)
+       let rec_applied_under (depth_extra : int) : Core.term =
+         let base : Core.term = Core.Var name in
+         List.fold_left
+           (fun f i -> Core.App (f, Core.LocalVar (depth_extra + n_params - 1 - i)))
+           base
+           (List.init n_params (fun i -> i))
+       in
+       (* --- Build field type Core terms for companion types ---
+          field_core_tys.(i) = Core.term for Tᵢ, valid under (params + f₁…fᵢ₋₁) binders *)
+       let field_core_tys =
+         let _, tys =
+           List.fold_left
+             (fun (ctx_acc, acc) (b : Surface.pretype binder) ->
+                let fty_tm = check_type ~loc ctx_acc b.bound in
+                let fty_val = Evaluation.eval ctx_acc.env fty_tm in
+                let ctx_acc' = bind ctx_acc b.name fty_val in
+                ctx_acc', acc @ [ fty_tm ])
+             (ctx_with_params, [])
+             fields
+         in
+         Array.of_list tys
+       in
+       (* --- R/mk companion ---
+          ty = Pi(P₁:Q₁, ..., Pi(Pₖ:Qₖ, Pi(f₁:T₁, ..., Pi(fₙ:Tₙ, R P₁…Pₖ))))
+          body = Lambda(P₁, ..., Lambda(Pₖ, Lambda(f₁, ..., Lambda(fₙ,
+                   RecordIntro { name=R; fields=[(f₁,LocalVar(n-1)),...,(fₙ,LocalVar 0)] }))))
+
+          Under k+n binders: fₙ=ix 0, ..., f₁=ix(n-1), Pₖ=ix n, ..., P₁=ix(k+n-1).
+       *)
+       let mk_name = name ^ "/mk" in
+       let mk_ty : Core.term =
+         (* Build the field Pi-tower inside the param Pi-tower.
+            field_core_tys.(i) was checked in ctx of depth (k + i), so LocalVar indices
+            in it are already correct for the Pi position at depth (k + i). *)
+         let inner_result = rec_applied_under n_fields in
+         let field_pi_tower =
+           (* fold_right: process fields from last to first *)
+           let n = n_fields in
+           fst
+           @@ List.fold_right
+                (fun (b : Surface.pretype binder) (acc_body, i) ->
+                   (* i counts from 0 = last field; field index from start = n-1-i *)
+                   let field_idx = n - 1 - i in
+                   let fty = field_core_tys.(field_idx) in
+                   ( Core.Pi ({ name = b.name; bound = fty; implicit = false }, acc_body)
+                   , i + 1 ))
+                fields
+                (inner_result, 0)
+         in
+         wrap_param_pis field_pi_tower
+       in
+       let mk_body : Core.term =
+         (* RecordIntro: field fᵢ (0-indexed) = LocalVar (n_fields - 1 - i) *)
+         let intro_fields =
+           List.mapi (fun i fname -> fname, Core.LocalVar (n_fields - 1 - i)) field_names
+         in
+         let intro = Core.RecordIntro { name; fields = intro_fields } in
+         (* Wrap in field lambdas (inner) then param lambdas (outer) *)
+         let with_field_lambdas =
+           List.fold_right
+             (fun (b : Surface.pretype binder) body ->
+                Core.Lambda { name = b.name; bound = body; implicit = false })
+             fields
+             intro
+         in
+         wrap_param_lambdas with_field_lambdas
+       in
+       let mk_ty_val = Evaluation.eval m.ctx.env mk_ty in
+       publish_to_context ~exported [ mk_name ] (mk_ty_val, `Defn);
+       (* Also register under two-segment path [name; "mk"] so that surface
+          syntax `R/mk` (parsed as Var [R; "mk"]) can resolve the companion. *)
+       publish_to_context ~exported [ name; "mk" ] (mk_ty_val, `Defn);
+       let mk_body_val = Evaluation.eval m.ctx.env mk_body in
+       publish_to_env ~exported [ mk_name ] (mk_body_val, `Defn);
+       Env.register_definition mk_name mk_body_val;
+       let q_mk_name = m.module_name ^ "." ^ mk_name in
+       Check.accept_let m.kernel_module ~name:q_mk_name ~ty:mk_ty ~body:mk_body;
+       (* --- R/fᵢ companions ---
+          For each field fᵢ (0-indexed):
+          ty  = Pi(P₁:Q₁,...,Pi(Pₖ:Qₖ, Pi(r:R_applied, Tᵢ_projected)))
+          body = Lambda(P₁,...,Lambda(Pₖ, Lambda(r, RecordProj { record=LocalVar 0; field=fᵢ })))
+
+          Tᵢ_projected: substitute in Tᵢ_tm (depth k+i context):
+            - LocalVar j for j in [0..i-1] (prev fields) ->
+                RecordProj { record = LocalVar(depth_extra + k - j); field = prev_field }
+                where in the projection type under 1 extra binder (r), depth_extra=0 outside + 0 Pi walk,
+                but actually we're at depth k+1 total with r=ix 0, Pₖ=ix 1, ..., P₁=ix k.
+                So in Tᵢ_projected (depth k+1 binders): r=ix 0.
+                field fⱼ (0-indexed, j < i) was at LocalVar (i-1-j) in Tᵢ_tm.
+                Replace with RecordProj { record=LocalVar 0; field=field_names[j] }
+                ... but LocalVar 0 refers to r, which is CORRECT only at depth 0 in Tᵢ_projected.
+                We need a shifting substitution as we go deeper.
+            - LocalVar j for j in [i..i+k-1] (params) -> LocalVar(j - i + 1)
+              (was param at offset i+j', now at offset 1+j' in the proj type)
+       *)
+       let subst_proj_result_ty
+             ~(n_before : int)
+             ~(n_params_here : int)
+             ~(prev_field_names : string list)
+             (tm : Core.term)
+         : Core.term
+         =
+         (* Perform a substitution with depth tracking.
+            At extra_depth (additional binders descended into during walk),
+            the occurrences of LocalVar shift:
+            - LocalVar (j + extra_depth) for j in [0..n_before-1] (shifted field refs)
+              -> RecordProj { record=LocalVar(extra_depth); field=prev_field_names[n_before-1-j] }
+              (r is at LocalVar extra_depth when extra_depth more binders surround us)
+            - LocalVar (j + extra_depth) for j in [n_before..n_before+n_params_here-1] (param refs)
+              -> LocalVar(j - n_before + 1 + extra_depth)
+            - LocalVar (j + extra_depth) for j < 0: impossible (extra_depth accounts for new binders)
+         *)
+         let rec go extra_depth t =
+           match t with
+           | Core.LocalVar ix ->
+             let j = ix - extra_depth in
+             if j >= 0 && j < n_before
+             then
+               (* field reference: replace with projection on r (at extra_depth below us) *)
+               Core.RecordProj
+                 { record = Core.LocalVar extra_depth
+                 ; field = List.nth prev_field_names (n_before - 1 - j)
+                 }
+             else if j >= n_before && j < n_before + n_params_here
+             then
+               (* param reference: shift down by n_before - 1 *)
+               Core.LocalVar (ix - n_before + 1)
+             else
+               (* deeper local or something else: shift down to account for lost field binders,
+                  but add 1 for the new r binder *)
+               Core.LocalVar (ix - n_before + 1)
+           | Core.Universe _ -> t
+           | Core.Var _ -> t
+           | Core.App (a, b) -> Core.App (go extra_depth a, go extra_depth b)
+           | Core.Lambda { name = n; bound; implicit } ->
+             Core.Lambda { name = n; bound = go (extra_depth + 1) bound; implicit }
+           | Core.TypedLambda ({ name = n; bound = dom; implicit }, body) ->
+             Core.TypedLambda
+               ( { name = n; bound = go extra_depth dom; implicit }
+               , go (extra_depth + 1) body )
+           | Core.Pi ({ name = n; bound = dom; implicit }, cod) ->
+             Core.Pi
+               ( { name = n; bound = go extra_depth dom; implicit }
+               , go (extra_depth + 1) cod )
+           | Core.Meta _ | Core.InsertedMeta _ -> t
+           | Core.Lift { from_lvl; to_lvl; ty } ->
+             Core.Lift { from_lvl; to_lvl; ty = go extra_depth ty }
+           | Core.LiftTerm { from_lvl; to_lvl; ty; tm } ->
+             Core.LiftTerm
+               { from_lvl; to_lvl; ty = go extra_depth ty; tm = go extra_depth tm }
+           | Core.UnliftTerm { from_lvl; to_lvl; ty; tm } ->
+             Core.UnliftTerm
+               { from_lvl; to_lvl; ty = go extra_depth ty; tm = go extra_depth tm }
+           | Core.RecordType { name = rn; params = ps; fields = fs } ->
+             let ps' = List.map (go extra_depth) ps in
+             let fs', _ =
+               List.fold_left
+                 (fun (acc, d) (b : Core.term Syntax.binder) ->
+                    { b with bound = go d b.bound } :: acc, d + 1)
+                 ([], extra_depth)
+                 fs
+             in
+             Core.RecordType { name = rn; params = ps'; fields = List.rev fs' }
+           | Core.RecordIntro { name = rn; fields = fs } ->
+             Core.RecordIntro
+               { name = rn; fields = List.map (fun (f, e) -> f, go extra_depth e) fs }
+           | Core.RecordProj { record; field } ->
+             Core.RecordProj { record = go extra_depth record; field }
+         in
+         go 0 tm
+       in
+       List.iteri
+         (fun i (b : Surface.pretype binder) ->
+            let field_name = b.name in
+            let proj_name = name ^ "/" ^ field_name in
+            (* prev_field_names: in context, last field bound = innermost.
+               field_core_tys.(i) has LocalVar 0 = field_(i-1), ..., LocalVar (i-1) = field_0.
+               So prev_field_names should map depth j -> field name at (i-1-j). *)
+            let prev_field_names =
+              Array.to_list (Array.sub (Array.of_list field_names) 0 i)
+            in
+            (* Tᵢ_projected *)
+            let proj_result_ty =
+              subst_proj_result_ty
+                ~n_before:i
+                ~n_params_here:n_params
+                ~prev_field_names
+                field_core_tys.(i)
+            in
+            (* ty = Pi(params..., Pi(r:R_applied, proj_result_ty)) *)
+            let proj_ty : Core.term =
+              let r_pi =
+                Core.Pi
+                  ( { name = "r"; bound = rec_applied_under 0; implicit = false }
+                  , proj_result_ty )
+              in
+              wrap_param_pis r_pi
+            in
+            (* body = Lambda(params..., Lambda(r, RecordProj { record=LocalVar 0; field })) *)
+            let proj_body : Core.term =
+              let proj_expr =
+                Core.RecordProj { record = Core.LocalVar 0; field = field_name }
+              in
+              let with_r =
+                Core.Lambda { name = "r"; bound = proj_expr; implicit = false }
+              in
+              wrap_param_lambdas with_r
+            in
+            let proj_ty_val = Evaluation.eval m.ctx.env proj_ty in
+            publish_to_context ~exported [ proj_name ] (proj_ty_val, `Defn);
+            (* Also register under the two-segment path [name; field_name] so that
+               surface syntax `R/f` (parsed as Var [R; f]) can resolve the companion. *)
+            publish_to_context ~exported [ name; field_name ] (proj_ty_val, `Defn);
+            let proj_body_val = Evaluation.eval m.ctx.env proj_body in
+            publish_to_env ~exported [ proj_name ] (proj_body_val, `Defn);
+            Env.register_definition proj_name proj_body_val;
+            let q_proj_name = m.module_name ^ "." ^ proj_name in
+            Check.accept_let m.kernel_module ~name:q_proj_name ~ty:proj_ty ~body:proj_body)
+         fields;
+       (* --- R/elim companion ---
+          ty  = Pi(params..., Pi(r:R_applied, Pi(M:R_applied->ind_ty, Pi(case:f_tower->M(R/mk f_tower), M r))))
+          body = Lambda(params..., Lambda(r, Lambda(M, Lambda(case, case r.f₁ r.f₂ ... r.fₙ))))
+
+          Under params + r + M + case = k+3 binders:
+            case = LocalVar 0, M = LocalVar 1, r = LocalVar 2, Pₖ = LocalVar 3, ..., P₁ = LocalVar(k+2)
+
+          Build the motive type: R_applied -> ind_ty
+          Under k+2 outer binders (params + r + M), and case: f_tower -> M(R/mk fields).
+          The f_tower is: Pi(f₁:T₁, Pi(f₂:T₂', ..., Pi(fₙ:Tₙ', M (R/mk f₁...fₙ)) ... ))
+
+          This is complex. Let's build it step by step.
+          For simplicity: use Universe (the ind_ty) for M's codomain since
+          the motive is M : R_applied → ind_ty_core_term.
+       *)
+       let ind_ty_tm = check_type ~loc m.ctx ind_ty in
+       let elim_name = name ^ "/elim" in
+       (* Under k+3 binders: case=ix 0, M=ix 1, r=ix 2, Pₖ=ix 3,...,P₁=ix(k+2).
+          Under k+2 binders (params+r+M): M=ix 1, r=ix 2 (r is at ix 1 when inside case Pi?).
+          Let's be precise:
+          The case binder is: Pi(case : f_tower -> M(R/mk f_tower), M r)
+          Inside this Pi's DOMAIN (f_tower → ...), we are under k+2 outer binders (no case yet):
+            M = ix 1, r = ix 2, ...
+          Inside Pi's CODOMAIN, we are under k+3 binders (case added):
+            case = ix 0, M = ix 1, r = ix 2.
+
+          Let's build the case_type (f-tower -> M(R/mk f_tower)) under k+2 binders.
+          Under k+2: M=ix 1, r=ix 2 (shifting from outside k+2 binders).
+
+          Actually: under k+2 binders total so far:
+            outmost = P₁ (ix k+1), ..., Pₖ (ix 2), r (ix 1), M (ix 0) [NO! M is last bound]
+          Wait I need to rebuild the order carefully.
+
+          Pi(P₁:Q₁, ..., Pi(Pₖ:Qₖ, Pi(r:R_applied, Pi(M:R_applied->U, Pi(case:f_tower->M(R/mk), M r)))))
+          Building inside-out:
+            - M r (M applied to r): M = ix 1, r = ix 2 under case-binder [3 total inner]
+              Wait no, the RESULT M r is in the CODOMAIN of the case Pi.
+              Under P₁...Pₖ, r, M, case: M=ix 1, r=ix 2, case=ix 0.
+          So M r = App(LocalVar 1, LocalVar 2).
+
+          case Pi domain (f-tower): under P₁...Pₖ, r, M but NOT case:
+            Under k+2 binders: M=ix 0, r=ix 1, Pₖ=ix 2,...,P₁=ix k+1.
+          So R/mk applied to fields in domain: after Pi-ing over f₁...fₙ under k+2+n more binders:
+            fₙ=ix 0, ..., f₁=ix(n-1), M=ix n, r=ix(n+1), Pₖ=ix(n+2),...,P₁=ix(k+n+1).
+            R/mk f₁...fₙ = App(App(...App(Var(mk_name), LocalVar(k+n+1-k+1)),...,LocalVar(n-1+1)),LocalVar(0+1))
+            Wait: mk_name takes params first, then fields.
+            Under k+2+n binders (params+r+M+fields):
+              Pₖ = ix(n+2), ..., P₁=ix(k+n+1). Wait params are k of them.
+              Actually this is getting very complex.
+          *)
+       (* Simplified elim: build body and ty for the eliminator.
+          ty = Pi(params, Pi(r:R, Pi(M:R->ind_ty, Pi(case: field_tele -> M(R/mk field_tele), M r))))
+          body = Lambda(params, Lambda(r, Lambda(M, Lambda(case, case r.f₁ ... r.fₙ))))
+       *)
+       (* M's type: R_applied → ind_ty. Under k+1 binders (params+r). *)
+       let motive_ty_tm : Core.term =
+         (* Pi(r_for_M : R_applied, ind_ty_shifted) where ind_ty_shifted
+            has ind_ty_tm indices shifted by (k+1) compared to top level...
+            But ind_ty_tm was checked in m.ctx (depth 0 lvl), so it has no local vars.
+            Under k+1 binders: R_applied at ix 0. *)
+         Core.Pi
+           ( { name = "_"; bound = rec_applied_under 0; implicit = false }
+           , (* shift ind_ty_tm by 1 for this binder *)
+             shift_term 1 ind_ty_tm )
+       in
+       (* Build the case type: Pi(f₁:T₁, ..., Pi(fₙ:Tₙ', M (R/mk f₁...fₙ)))
+          Under k+2 binders (params + r + M), then inside n more field binders.
+          After all, we compute the case type.
+
+          Let's number: under k+2+j binders when processing field j (0-indexed):
+            fⱼ=ix 0, ..., f₁=ix(j-1), M=ix j, r=ix(j+1), Pₖ=ix(j+2),...
+
+          Actually k+2 binders = P₁...Pₖ (k) + r (1) + M (1). Then inside field binders:
+          Under all of them (k+2+n total):
+            fₙ=ix 0, ..., f₁=ix(n-1), M=ix n, r=ix(n+1), Pₖ=ix(n+2),...,P₁=ix(k+n+1).
+
+          R/mk has type Pi(params, Pi(fields, R params)).
+          Applied to all params and fields under k+2+n binders:
+            - Params: P₁=ix(k+n+1), P₂=ix(k+n), ..., Pₖ=ix(n+2). Left-to-right application.
+            - Fields: f₁=ix(n-1), f₂=ix(n-2), ..., fₙ=ix 0. Left-to-right application.
+          So R/mk applied = App(...App(App(Var mk_name, ix(k+n+1)), ix(k+n)),...ix(n+2), ix(n-1), ix(n-2),...ix 0).
+
+          M applied to (R/mk applied) = App(LocalVar n, App(...R/mk applied...)).
+
+          The case type inside n field binders:
+            result = App(LocalVar n, R/mk_full_applied)
+          field binder i (fold_right from last to first):
+            T'ᵢ: field_core_tys.(i) in subst for case context.
+            field_core_tys.(i) was checked in ctx of depth k+i (m.ctx + params + f₁...fᵢ₋₁).
+            In case type context (depth k+2+i from outside = k+2 outer + i field binders):
+              fᵢ₋₁=ix 0,...,f₁=ix(i-1),M=ix i,r=ix(i+1),Pₖ=ix(i+2),...,P₁=ix(i+k+1).
+            field_core_tys.(i): LocalVar j for j in [0..i-1] = field, j in [i..i+k-1] = param.
+            Shift by 2 (r and M added):
+              LocalVar j -> LocalVar (j+2) for j >= 0.
+            This is just shift_term 2.
+       *)
+       let case_ty_tm : Core.term =
+         (* Build innermost: M(R/mk f₁...fₙ) under k+2+n binders.
+            M = ix n, params P₁=ix(k+n+1)...Pₖ=ix(n+2), fields f₁=ix(n-1)...fₙ=ix 0. *)
+         let mk_full_applied =
+           (* Apply R/mk to params then to fields *)
+           let with_params =
+             List.fold_left
+               (fun f i ->
+                  (* Pᵢ (0-indexed from P₁) = ix(n_params+n_fields+1-i) under n_params+2+n_fields binders *)
+                  Core.App (f, Core.LocalVar (n_params + n_fields + 1 - i)))
+               (Core.Var mk_name)
+               (List.init n_params (fun i -> i))
+           in
+           List.fold_left
+             (fun f i ->
+                (* fᵢ (0-indexed, f₁ first) = ix(n_fields-1-i) under k+2+n binders *)
+                Core.App (f, Core.LocalVar (n_fields - 1 - i)))
+             with_params
+             (List.init n_fields (fun i -> i))
+         in
+         let m_applied = Core.App (Core.LocalVar n_fields, mk_full_applied) in
+         (* Wrap in field Pi-binders (fold_right: last field first) *)
+         fst
+         @@ List.fold_right
+              (fun (b : Surface.pretype binder) (acc_body, i_rev) ->
+                 (* i_rev = 0 means last field, i = n_fields-1-i_rev *)
+                 let i = n_fields - 1 - i_rev in
+                 let fty = shift_term 2 field_core_tys.(i) in
+                 ( Core.Pi ({ name = b.name; bound = fty; implicit = false }, acc_body)
+                 , i_rev + 1 ))
+              fields
+              (m_applied, 0)
+       in
+       (* Full elim type:
+          Pi(params, Pi(r:R, Pi(M:R->ind_ty, Pi(case:case_ty, M r)))) *)
+       let elim_ty : Core.term =
+         (* Under params + r + M + case binders: M=ix 1, r=ix 2. *)
+         let m_r = Core.App (Core.LocalVar 1, Core.LocalVar 2) in
+         let case_pi =
+           Core.Pi ({ name = "case"; bound = case_ty_tm; implicit = false }, m_r)
+         in
+         let m_pi =
+           Core.Pi ({ name = "M"; bound = motive_ty_tm; implicit = false }, case_pi)
+         in
+         let r_pi =
+           Core.Pi ({ name = "r"; bound = rec_applied_under 0; implicit = false }, m_pi)
+         in
+         wrap_param_pis r_pi
+       in
+       (* Elim body:
+          Lambda(params, Lambda(r, Lambda(M, Lambda(case, case r.f₁ ... r.fₙ))))
+          Under k+3 binders: case=ix 0, M=ix 1, r=ix 2, ...
+          case r.f₁ ... r.fₙ = App(...App(LocalVar 0, RecordProj(LocalVar 2, f₁)), ..., RecordProj(LocalVar 2, fₙ)) *)
+       let elim_body : Core.term =
+         let r_var = Core.LocalVar 2 in
+         let projections =
+           List.map (fun fn -> Core.RecordProj { record = r_var; field = fn }) field_names
+         in
+         let inner =
+           List.fold_left (fun f arg -> Core.App (f, arg)) (Core.LocalVar 0) projections
+         in
+         let with_case = Core.Lambda { name = "case"; bound = inner; implicit = false } in
+         let with_m = Core.Lambda { name = "M"; bound = with_case; implicit = false } in
+         let with_r = Core.Lambda { name = "r"; bound = with_m; implicit = false } in
+         wrap_param_lambdas with_r
+       in
+       let elim_ty_val = Evaluation.eval m.ctx.env elim_ty in
+       publish_to_context ~exported [ elim_name ] (elim_ty_val, `Defn);
+       (* Also register under two-segment path [name; "elim"] so that surface
+          syntax `R/elim` (parsed as Var [R; "elim"]) can resolve the companion. *)
+       publish_to_context ~exported [ name; "elim" ] (elim_ty_val, `Defn);
+       let elim_body_val = Evaluation.eval m.ctx.env elim_body in
+       publish_to_env ~exported [ elim_name ] (elim_body_val, `Defn);
+       Env.register_definition elim_name elim_body_val;
+       let q_elim_name = m.module_name ^ "." ^ elim_name in
+       Check.accept_let m.kernel_module ~name:q_elim_name ~ty:elim_ty ~body:elim_body;
+       m.result <- Some PUnit
+     | other ->
+       Reporter.fatalf
+         Elab_error
+         "KTopRecord_HaveType: bad result %s"
+         ([%show: produced] other))
 
 and drive (m : machine) : produced =
   match m.goals with
@@ -2064,6 +3167,7 @@ let check_top
         ~loc
         Elab_error
         "internal: Operator_decl reached elaboration (resolver should have consumed it)"
+    | Surface.Record _ as r -> GTopRecord (loc, r)
   in
   push m g;
   ignore (drive m);
@@ -2341,4 +3445,322 @@ let%expect_test
     +checking [module] b (b.vt)
     ok
     |}]
+;;
+
+let%expect_test
+    "module: \\export of a record bundle: Point companions visible cross-module"
+  =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc top = Asai.Range.locate dummy_loc top in
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let point_record : Surface.top =
+    Surface.Record
+      { name = "Point"
+      ; params = []
+      ; ind_ty = Surface.Universe
+      ; fields =
+          [ { name = "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ]
+      }
+  in
+  (* Module A: defines Nat + Point, exports only "Point" (which should cluster
+     all five companions: Point, Point/mk, Point/x, Point/y, Point/elim). *)
+  let mod_a : Surface.t =
+    { name = "a.vt"
+    ; imports = []
+    ; exports = [ "Nat"; "Point" ]
+    ; tops = [ loc nat_data; loc point_record ]
+    }
+  in
+  (* Module B: imports a, uses Point/x — proves the companion is cross-module visible.
+     Note: field projectors are published under the flat name "Point/x" (single segment),
+     mirroring how the env stores them, so we resolve via Var ["Point/x"]. *)
+  let mod_b : Surface.t =
+    { name = "b.vt"
+    ; imports = [ [ "a" ] ]
+    ; exports = []
+    ; tops =
+        [ loc
+            (Surface.Let
+               ( "uses_proj"
+               , []
+               , Surface.Pi
+                   ( { name = "_"; bound = Surface.Var [ "Point" ]; implicit = false }
+                   , Surface.Var [ "Nat" ] )
+               , Surface.Var [ "Point/x" ] ))
+        ]
+    }
+  in
+  with_handlers (fun () ->
+    check_module mod_a;
+    check_module mod_b);
+  print_endline "ok";
+  [%expect
+    {|
+    +checking [module] a (a.vt)
+    +checking [module] b (b.vt)
+    ok
+    |}]
+;;
+
+let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Module entries"
+  =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  (* First declare Nat so fields can refer to it *)
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let point_record : Surface.top =
+    Surface.Record
+      { name = "Point"
+      ; params = []
+      ; ind_ty = Surface.Universe
+      ; fields =
+          [ { name = "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ]
+      }
+  in
+  let kernel_module = Violet_kernel.Module.create () in
+  with_handlers (fun () ->
+    let goal_counter = ref 0 in
+    let is_exported _ = false in
+    Context.clear_level_vars ();
+    Context.declare_level_var "U";
+    (* Elaborate Nat *)
+    check_top
+      ~module_name:"test"
+      ~kernel_module
+      ~goal_counter
+      ~is_exported
+      ~loc:dummy_loc
+      nat_data;
+    (* Elaborate Point *)
+    check_top
+      ~module_name:"test"
+      ~kernel_module
+      ~goal_counter
+      ~is_exported
+      ~loc:dummy_loc
+      point_record);
+  (* Verify the 5 expected entries are present in the kernel module *)
+  let present name =
+    match Violet_kernel.Module.lookup kernel_module ("test." ^ name) with
+    | Some _ -> true
+    | None -> false
+  in
+  let entries = [ "Point"; "Point/mk"; "Point/x"; "Point/y"; "Point/elim" ] in
+  List.iter
+    (fun name ->
+       Printf.printf "%s: %s\n" name (if present name then "present" else "MISSING"))
+    entries;
+  [%expect
+    {|
+    Point: present
+    Point/mk: present
+    Point/x: present
+    Point/y: present
+    Point/elim: present
+    |}]
+;;
+
+let%expect_test "check-mode record literal elaboration produces RecordIntro" =
+  (* Set up: Nat data + Pair record + a let that uses a record literal.
+     Verifies that { fst = Nat/zero, snd = Nat/zero } : Pair Nat Nat
+     elaborates to RecordIntro { name = "Pair"; fields = [("fst", ...); ("snd", ...)] }.
+  *)
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let pair_record : Surface.top =
+    Surface.Record
+      { name = "Pair"
+      ; params =
+          [ { name = "A"; bound = Surface.Universe; implicit = false }
+          ; { name = "B"; bound = Surface.Universe; implicit = false }
+          ]
+      ; ind_ty = Surface.Universe
+      ; fields =
+          [ { name = "fst"; bound = Surface.Var [ "A" ]; implicit = false }
+          ; { name = "snd"; bound = Surface.Var [ "B" ]; implicit = false }
+          ]
+      }
+  in
+  (* \let p : Pair Nat Nat => { fst = Nat/zero, snd = Nat/zero } *)
+  let p_let : Surface.top =
+    Surface.Let
+      ( "p"
+      , []
+      , Surface.App
+          ( false
+          , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
+          , Surface.Var [ "Nat" ] )
+      , Surface.RecordLit
+          [ "fst", Surface.Var [ "Nat"; "zero" ]; "snd", Surface.Var [ "Nat"; "zero" ] ]
+      )
+  in
+  let kernel_module = Violet_kernel.Module.create () in
+  with_handlers (fun () ->
+    let goal_counter = ref 0 in
+    let is_exported _ = false in
+    Context.clear_level_vars ();
+    Context.declare_level_var "U";
+    check_top
+      ~module_name:"test"
+      ~kernel_module
+      ~goal_counter
+      ~is_exported
+      ~loc:dummy_loc
+      nat_data;
+    check_top
+      ~module_name:"test"
+      ~kernel_module
+      ~goal_counter
+      ~is_exported
+      ~loc:dummy_loc
+      pair_record;
+    check_top
+      ~module_name:"test"
+      ~kernel_module
+      ~goal_counter
+      ~is_exported
+      ~loc:dummy_loc
+      p_let);
+  (* Look up `test.p` in the kernel module and print its body *)
+  (match Violet_kernel.Module.lookup kernel_module "test.p" with
+   | Some (Violet_kernel.Module.Let { body; _ }) ->
+     Printf.printf "body: %s\n" ([%show: Core.term] body)
+   | _ -> Printf.printf "not found or wrong decl kind\n");
+  [%expect {| body: Pair{ fst = Nat/zero, snd = Nat/zero } |}]
+;;
+
+let%expect_test "check-mode record literal with missing field gives error" =
+  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let nat_data : Surface.top =
+    Surface.Data
+      { name = "Nat"
+      ; params = []
+      ; deps = []
+      ; ind_ty = Surface.Universe
+      ; ctors =
+          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = "suc"
+            ; bound =
+                Surface.Pi
+                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  , Surface.Var [ "Nat" ] )
+            ; implicit = false
+            }
+          ]
+      }
+  in
+  let pair_record : Surface.top =
+    Surface.Record
+      { name = "Pair"
+      ; params =
+          [ { name = "A"; bound = Surface.Universe; implicit = false }
+          ; { name = "B"; bound = Surface.Universe; implicit = false }
+          ]
+      ; ind_ty = Surface.Universe
+      ; fields =
+          [ { name = "fst"; bound = Surface.Var [ "A" ]; implicit = false }
+          ; { name = "snd"; bound = Surface.Var [ "B" ]; implicit = false }
+          ]
+      }
+  in
+  (* \let p : Pair Nat Nat => { fst = Nat/zero }  -- missing snd *)
+  let p_let : Surface.top =
+    Surface.Let
+      ( "p"
+      , []
+      , Surface.App
+          ( false
+          , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
+          , Surface.Var [ "Nat" ] )
+      , Surface.RecordLit [ "fst", Surface.Var [ "Nat"; "zero" ] ] )
+  in
+  let kernel_module = Violet_kernel.Module.create () in
+  let result =
+    try
+      with_handlers (fun () ->
+        let goal_counter = ref 0 in
+        let is_exported _ = false in
+        Context.clear_level_vars ();
+        Context.declare_level_var "U";
+        check_top
+          ~module_name:"test"
+          ~kernel_module
+          ~goal_counter
+          ~is_exported
+          ~loc:dummy_loc
+          nat_data;
+        check_top
+          ~module_name:"test"
+          ~kernel_module
+          ~goal_counter
+          ~is_exported
+          ~loc:dummy_loc
+          pair_record;
+        check_top
+          ~module_name:"test"
+          ~kernel_module
+          ~goal_counter
+          ~is_exported
+          ~loc:dummy_loc
+          p_let);
+      "no error"
+    with
+    | Failure msg -> "error: " ^ msg
+  in
+  Printf.printf "%s\n" result;
+  [%expect {| error: Reporter.Message.Elab_error |}]
 ;;

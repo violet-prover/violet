@@ -54,6 +54,8 @@ module C : sig
     | T_RIGHT
     | T_NONE
     | T_EXPORT
+    | T_RECORD
+    | T_DOT
 
   type t
 
@@ -107,6 +109,8 @@ end = struct
     | T_RIGHT
     | T_NONE
     | T_EXPORT
+    | T_RECORD
+    | T_DOT
 
   let tag_index = function
     | T_DATA -> 0
@@ -144,6 +148,8 @@ end = struct
     | T_RIGHT -> 32
     | T_NONE -> 33
     | T_EXPORT -> 34
+    | T_RECORD -> 35
+    | T_DOT -> 36
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -182,12 +188,14 @@ end = struct
     | Lexer.LEFT -> T_LEFT
     | Lexer.RIGHT -> T_RIGHT
     | Lexer.NONE -> T_NONE
+    | Lexer.RECORD -> T_RECORD
+    | Lexer.DOT -> T_DOT
   ;;
 
   type t = int
 
-  (* 35 tags (indices 0–34) → mask of 35 bits *)
-  let mask = (1 lsl 35) - 1
+  (* 37 tags (indices 0–36) → mask of 37 bits *)
+  let mask = (1 lsl 37) - 1
   let empty = 0
   let top = mask
   let one t = 1 lsl tag_index t
@@ -501,6 +509,60 @@ module Grammar = struct
       | _ -> false)
   ;;
 
+  (* Three-way classifier for `{` at position i in the token buffer.
+     Returns:
+       `Binder  — `{name... : type} -> body`
+       `Literal — `{ field = e, … }` or `{ x }` (pun) or `{}`
+       `Update  — `{ expr | field = e, … }` copy-with-update
+
+     Strategy: scan forward from i+1, balancing L_BRACKET/L_PAREN depth,
+     until we find a token at depth 0 that disambiguates:
+       VERT (`|`)  → Update
+       R_BRACKET (`}`) at depth 0 → Literal (empty or single pun ending)
+       SYMBOL "=" → Literal (explicit field)
+       SYMBOL "," → Literal (pun list)
+       COLON      → Binder
+       EOF / other → Binder (let downstream fail)
+  *)
+  type lbrace_kind =
+    | Binder
+    | Literal
+    | Update
+
+  let classify_lbrace (buf : P.token_buf) (i : int) : lbrace_kind =
+    let n = Array.length buf in
+    (* i points at `{`; start scanning from i+1 *)
+    let depth = ref 0 in
+    let j = ref (i + 1) in
+    let result = ref None in
+    while !result = None && !j < n do
+      let tok = buf.(!j).Asai.Range.value in
+      (match tok with
+       | Lexer.L_BRACKET | Lexer.L_PAREN -> incr depth
+       | Lexer.R_BRACKET | Lexer.R_PAREN ->
+         if !depth = 0
+         then result := Some Literal (* closing `}` at depth 0 → literal *)
+         else decr depth
+       | Lexer.VERT when !depth = 0 -> result := Some Update
+       | Lexer.COLON when !depth = 0 -> result := Some Binder
+       | Lexer.SYMBOL "=" when !depth = 0 -> result := Some Literal
+       | Lexer.SYMBOL "," when !depth = 0 -> result := Some Literal
+       | _ -> ());
+      incr j
+    done;
+    match !result with
+    | Some k -> k
+    | None -> Binder (* ran off end — let downstream fail *)
+  ;;
+
+  let peek_is_record_lit (buf : P.token_buf) (i : int) : bool =
+    classify_lbrace buf i = Literal
+  ;;
+
+  let peek_is_record_update (buf : P.token_buf) (i : int) : bool =
+    classify_lbrace buf i = Update
+  ;;
+
   (* The whole preterm grammar, including the two hybrid disambiguation
      points. Tied together by a single `fix`. *)
   let p_term : S.preterm t =
@@ -646,13 +708,187 @@ module Grammar = struct
         in
         { tp; parse }
       in
-      (* `atom` covers all single-token structural forms PLUS bare
-         identifiers (used as Var atoms in legacy spine positions). Kept
-         around for the `arg` rule inside a soup tail's `{ atom }`. *)
+      (* `atom_no_bracket` covers all single-token structural forms PLUS bare
+         identifiers, but excludes {…}-forms.  Used as Var atoms in legacy
+         spine positions and as the building block for record-entry values. *)
       let atom_no_bracket : S.preterm t =
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
-      let atom : S.preterm t = atom_no_bracket || p_atom_lbracket in
+      (* RECORD LITERAL: `{ field = expr , … }` or `{ field , … }` (pun) or `{}`.
+         All variants start with T_LBRACKET.  Disambiguation from the binder form
+         `{x : T} -> body` is done by peek_is_record_lit.
+
+         `=` and `,` are both SYMBOL tokens in this lexer.  To prevent the full
+         term parser from consuming commas (which are part of the record separator
+         syntax) as operator soup tokens, record field values are parsed with a
+         *restricted* parser (p_record_value) that collects `atom_no_bracket`
+         items in a loop, stopping before any SYMBOL or R_BRACKET token.  Lbracket
+         forms ({…}) inside field values must be parenthesised. *)
+      (* Parse a record-entry value: a non-empty sequence of atom_no_bracket
+         items forming an application spine.  Stops before SYMBOL tokens (which
+         include "," and "=") and R_BRACKET.  Returns Op_soup for multi-item
+         spines, or unwraps single-item ones. *)
+      let p_record_value : S.preterm t =
+        let tp =
+          Tp.
+            { null = false
+            ; first = C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA ]
+            ; follow = C.empty
+            }
+        in
+        let parse buf i =
+          let n = Array.length buf in
+          (* Parse one atom_no_bracket item; returns None when no more. *)
+          let parse_item buf i =
+            if i >= n
+            then None
+            else (
+              match C.tag_of buf.(i).Asai.Range.value with
+              | C.T_IDENT | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
+                let i, a = atom_no_bracket.parse buf i in
+                Some (i, a)
+              | _ -> None)
+          in
+          match parse_item buf i with
+          | None -> P.fail_at buf i
+          | Some (i, first_atom) ->
+            let atoms = ref [ first_atom ] in
+            let pos = ref i in
+            let continue_ = ref true in
+            while !continue_ do
+              match parse_item buf !pos with
+              | None -> continue_ := false
+              | Some (i', a) ->
+                atoms := a :: !atoms;
+                pos := i'
+            done;
+            let result =
+              match List.rev !atoms with
+              | [ a ] -> a
+              | parts -> S.Op_soup (List.map (fun a -> S.SI_Atom a) parts)
+            in
+            !pos, result
+        in
+        { tp; parse }
+      in
+      (* One field entry: `name = value` (explicit) or `name` (pun). *)
+      let p_record_entry : (string * S.preterm) t =
+        let tp = Tp.{ null = false; first = C.one C.T_IDENT; follow = C.empty } in
+        let parse buf i =
+          let i, name_tok = (tok C.T_IDENT).parse buf i in
+          let name =
+            match name_tok with
+            | Lexer.IDENT s -> s
+            | _ -> assert false
+          in
+          if i < Array.length buf
+          then (
+            match buf.(i).Asai.Range.value with
+            | Lexer.SYMBOL "=" ->
+              let i = i + 1 in
+              let i, e = p_record_value.parse buf i in
+              i, (name, e)
+            | _ -> i, (name, S.Var [ name ]))
+          else i, (name, S.Var [ name ])
+        in
+        { tp; parse }
+      in
+      (* `{ entry , … }` or `{}`. `,` is SYMBOL "," so we hand-code the loop. *)
+      let p_record_lit : S.preterm t =
+        let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
+        let parse buf i =
+          let i = i + 1 in
+          (* consume `{` *)
+          let n = Array.length buf in
+          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
+          then i + 1, S.RecordLit [] (* `{}` *)
+          else begin
+            let i, first = p_record_entry.parse buf i in
+            let entries = ref [ first ] in
+            let pos = ref i in
+            while
+              !pos < n
+              &&
+              match buf.(!pos).Asai.Range.value with
+              | Lexer.SYMBOL "," -> true
+              | _ -> false
+            do
+              pos := !pos + 1;
+              (* skip `,` *)
+              let i', e = p_record_entry.parse buf !pos in
+              entries := e :: !entries;
+              pos := i'
+            done;
+            let i', _ = (tok C.T_RBRACKET).parse buf !pos in
+            i', S.RecordLit (List.rev !entries)
+          end
+        in
+        { tp; parse }
+      in
+      (* `{ expr | entry , … }` copy-with-update.
+         The base expression is parsed with `p_record_value` (the same
+         restricted spine parser used for field values), which stops before
+         SYMBOL tokens — including `|` — and R_BRACKET.  This means the base
+         must be a simple application spine of atoms (no infix operators),
+         which is the common case; more complex bases can be parenthesised. *)
+      let p_record_update : S.preterm t =
+        let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
+        let parse buf i =
+          let i = i + 1 in
+          (* consume `{` *)
+          let n = Array.length buf in
+          (* Parse the base expression: a spine of atom_no_bracket items,
+             stopping before VERT or R_BRACKET. *)
+          let i, base = p_record_value.parse buf i in
+          (* Consume `|` (T_VERT) *)
+          let i, _ = (tok C.T_VERT).parse buf i in
+          (* Parse comma-separated entries *)
+          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
+          then
+            (* `{ base | }` — zero update fields; unusual but valid *)
+            i + 1, S.RecordUpdate (base, [])
+          else begin
+            let i, first = p_record_entry.parse buf i in
+            let entries = ref [ first ] in
+            let pos = ref i in
+            while
+              !pos < n
+              &&
+              match buf.(!pos).Asai.Range.value with
+              | Lexer.SYMBOL "," -> true
+              | _ -> false
+            do
+              pos := !pos + 1;
+              (* skip `,` *)
+              let i', e = p_record_entry.parse buf !pos in
+              entries := e :: !entries;
+              pos := i'
+            done;
+            let i', _ = (tok C.T_RBRACKET).parse buf !pos in
+            i', S.RecordUpdate (base, List.rev !entries)
+          end
+        in
+        { tp; parse }
+      in
+      (* Disambiguating T_LBRACKET atom: record update, record literal, OR
+         implicit-binder pi.  All start with `{`; we use the 3-way classifier
+         to decide which form is intended.  Update is tried first because
+         `{ ident | …` cannot be distinguished from `{ ident = …` until the
+         second token after the ident. *)
+      let p_lbracket_atom : S.preterm t =
+        let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
+        let parse buf i =
+          if peek_is_record_update buf i
+          then p_record_update.parse buf i
+          else if peek_is_record_lit buf i
+          then p_record_lit.parse buf i
+          else p_atom_lbracket.parse buf i
+        in
+        { tp; parse }
+      in
+      (* `atom` extends atom_no_bracket with lbracket forms (record literal or
+         implicit-binder pi).  Used inside soup tails for `{ atom }` implicit args. *)
+      let atom : S.preterm t = atom_no_bracket || p_lbracket_atom in
       (* Structural soup atoms: paren-term, lambda, hole/goal, and the
          binder form `{x:T} -> body`. IDENT and SYMBOL are NOT here — they
          become SI_Name and are interpreted by the resolver. *)
@@ -678,7 +914,9 @@ module Grammar = struct
         | _ -> S.SI_Atom (wrap_loc loc (S.Var (first :: rest)))
       in
       (* Soup-head item. First sets: T_IDENT, T_SYMBOL, T_QMARK, T_LPAREN,
-         T_LAMBDA, T_LBRACKET — disjoint. *)
+         T_LAMBDA, T_LBRACKET — disjoint.
+         T_LBRACKET uses the disambiguating p_lbracket_atom (record literal
+         OR implicit-binder pi). *)
       let soup_head_item : S.soup_item t =
         p_ident_soup_item
         || (let+ n = p_symbol_name in
@@ -686,7 +924,7 @@ module Grammar = struct
         || (let+ a = structural_atom_no_lbracket in
             S.SI_Atom a)
         ||
-        let+ a = p_atom_lbracket in
+        let+ a = p_lbracket_atom in
         S.SI_Atom a
       in
       (* Soup-tail item. In tail position, `{...}` is ALWAYS an implicit
@@ -710,13 +948,50 @@ module Grammar = struct
         and+ rest = star soup_tail_item in
         S.Op_soup (head :: rest)
       in
-      (* `max_level: op_soup ('⊔' op_soup)*`, right-associative as before. *)
+      (* Postfix `.field` projection loop.  After parsing an op-soup we
+         greedily consume `T_DOT IDENT` sequences and wrap the accumulator
+         in `S.Proj`.  This produces left-associative chains:
+             r.x.y  ⟹  Proj(Proj(r,"x"),"y")
+         Hand-coded because the typed-algebraic `star` combinator would need
+         the recursion to be expressed through `fix`, but this imperative
+         loop is simpler and correct. *)
+      let proj_soup : S.preterm t =
+        let tp = op_soup.tp in
+        let parse buf i =
+          let i, base = op_soup.parse buf i in
+          let n = Array.length buf in
+          let acc = ref base in
+          let pos = ref i in
+          let continue_ = ref true in
+          while
+            !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT
+          do
+            (* Peek that the next token after DOT is an IDENT. *)
+            let dot_i = !pos + 1 in
+            if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
+            then begin
+              let field_tok = buf.(dot_i).Asai.Range.value in
+              let field =
+                match field_tok with
+                | Lexer.IDENT s -> s
+                | _ -> assert false
+              in
+              acc := S.Proj (!acc, field);
+              pos := dot_i + 1
+            end
+            else continue_ := false
+          done;
+          !pos, !acc
+        in
+        { tp; parse }
+      in
+      (* `max_level: proj_soup ('⊔' proj_soup)*`, right-associative as before. *)
       let max_level : S.preterm t =
-        let+ head = op_soup
+        let+ head = proj_soup
         and+ tail =
           star
             (let+ _ = tok C.T_JOIN
-             and+ s = op_soup in
+             and+ s = proj_soup in
              s)
         in
         match List.rev (head :: tail) with
@@ -788,19 +1063,124 @@ module Grammar = struct
     move
   ;;
 
+  (* peek_is_record_pattern: returns true when the token at position i is `{`
+     and the next two tokens are `IDENT SYMBOL "="`.
+     This distinguishes `{ fst = a, … }` (PRecord) from `{name}` (PImpVar). *)
+  let peek_is_record_pattern (buf : P.token_buf) (i : int) : bool =
+    let n = Array.length buf in
+    if i + 2 >= n
+    then false
+    else (
+      match
+        ( buf.(i).Asai.Range.value
+        , buf.(i + 1).Asai.Range.value
+        , buf.(i + 2).Asai.Range.value )
+      with
+      | Lexer.L_BRACKET, Lexer.IDENT _, Lexer.SYMBOL "=" -> true
+      | _ -> false)
+  ;;
+
+  (* p_pattern: parses a single pattern (PVar, PCon, PImpVar, PRecord).
+     Uses a ref so that the p_lbrace arm can call back into p_pattern for
+     PRecord sub-patterns without triggering eager OCaml let-rec issues. *)
   let p_pattern : S.pattern t =
-    (let+ name = ident in
-     S.PVar name)
-    || (let+ _ = tok C.T_LPAREN
-        and+ ctor = ident
-        and+ vs = star ident
-        and+ _ = tok C.T_RPAREN in
-        S.PCon (ctor, vs))
-    ||
-    let+ _ = tok C.T_LBRACKET
-    and+ name = ident
-    and+ _ = tok C.T_RBRACKET in
-    S.PImpVar name
+    (* ref stub — filled in below *)
+    let self_ref : (P.token_buf -> int -> int * S.pattern) ref =
+      ref (fun buf i -> P.fail_at buf i)
+    in
+    let self_tp =
+      (* first-set: IDENT | T_LPAREN | T_LBRACKET *)
+      Tp.
+        { null = false
+        ; first = C.of_list [ C.T_IDENT; C.T_LPAREN; C.T_LBRACKET ]
+        ; follow = C.empty
+        }
+    in
+    let self : S.pattern t = { tp = self_tp; parse = (fun buf i -> !self_ref buf i) } in
+    (* PVar: an IDENT *)
+    let p_var =
+      let+ name = ident in
+      S.PVar name
+    in
+    (* PCon: `( ctor arg… )` *)
+    let p_con =
+      let+ _ = tok C.T_LPAREN
+      and+ ctor = ident
+      and+ vs = star ident
+      and+ _ = tok C.T_RPAREN in
+      S.PCon (ctor, vs)
+    in
+    (* p_lbrace: disambiguates `{…}` — PRecord vs PImpVar *)
+    let p_lbrace : S.pattern t =
+      let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
+      let parse buf i =
+        if peek_is_record_pattern buf i
+        then begin
+          (* PRecord: `{ name = pat , … }` — no punning allowed *)
+          let i = i + 1 in
+          (* consume `{` *)
+          let n = Array.length buf in
+          let parse_entry pos =
+            let pos, name_tok = (tok C.T_IDENT).parse buf pos in
+            let name =
+              match name_tok with
+              | Lexer.IDENT s -> s
+              | _ -> assert false
+            in
+            (* Require `=` — punning is forbidden in patterns *)
+            let pos =
+              if pos < n
+              then (
+                match buf.(pos).Asai.Range.value with
+                | Lexer.SYMBOL "=" -> pos + 1
+                | _ -> (P.fail_at buf pos : int))
+              else (P.fail_at buf pos : int)
+            in
+            let pos, p = self.parse buf pos in
+            pos, (name, p)
+          in
+          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
+          then i + 1, S.PRecord []
+          else begin
+            let i, first = parse_entry i in
+            let entries = ref [ first ] in
+            let pos = ref i in
+            while
+              !pos < n
+              &&
+              match buf.(!pos).Asai.Range.value with
+              | Lexer.SYMBOL "," -> true
+              | _ -> false
+            do
+              pos := !pos + 1;
+              (* skip `,` *)
+              let i', e = parse_entry !pos in
+              entries := e :: !entries;
+              pos := i'
+            done;
+            let i', _ = (tok C.T_RBRACKET).parse buf !pos in
+            i', S.PRecord (List.rev !entries)
+          end
+        end
+        else begin
+          (* PImpVar: `{ name }` *)
+          let i = i + 1 in
+          (* consume `{` *)
+          let i, name_tok = (tok C.T_IDENT).parse buf i in
+          let name =
+            match name_tok with
+            | Lexer.IDENT s -> s
+            | _ -> assert false
+          in
+          let i, _ = (tok C.T_RBRACKET).parse buf i in
+          i, S.PImpVar name
+        end
+      in
+      { tp; parse }
+    in
+    let body = p_var || p_con || p_lbrace in
+    self_ref := body.parse;
+    body
   ;;
 
   let p_clause : S.clause t =
@@ -926,6 +1306,29 @@ module Grammar = struct
     { Asai.Range.loc; value }
   ;;
 
+  let p_record_field : S.pretype Syntax.binder t =
+    let+ _ = tok C.T_VERT
+    and+ name = ident
+    and+ _ = tok C.T_COLON
+    and+ ty = p_term in
+    { Syntax.name; bound = ty; implicit = false }
+  ;;
+
+  let p_record_top : S.top Asai.Range.located t =
+    let+ loc, (name, params, ret, fields) =
+      with_full_range
+        (let+ _ = tok C.T_RECORD
+         and+ name = ident
+         and+ params = p_bindings_flat
+         and+ _ = tok C.T_COLON
+         and+ ret = p_term
+         and+ fields = star p_record_field in
+         name, params, ret, fields)
+    in
+    let value = S.Record { name; params; ind_ty = ret; fields } in
+    { Asai.Range.loc; value }
+  ;;
+
   let p_universe_top : S.top Asai.Range.located t =
     let+ loc, names =
       with_full_range
@@ -1029,7 +1432,7 @@ module Grammar = struct
   ;;
 
   let p_top : S.top Asai.Range.located t =
-    p_let_top || p_data_top || p_universe_top || p_operator_top
+    p_let_top || p_data_top || p_record_top || p_universe_top || p_operator_top
   ;;
 
   let p_tops_loop : S.top Asai.Range.located list t =
@@ -1289,6 +1692,21 @@ let%expect_test "reject: legacy := syntax" =
 let%expect_test "lex export keyword" =
   print_string @@ [%show: Lexer.token list] (lex_to_list "\\export foo bar");
   [%expect {| [\export; <identifier:foo>; <identifier:bar>] |}]
+;;
+
+let%expect_test "lex \\record keyword" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\\record");
+  [%expect {| [\record] |}]
+;;
+
+let%expect_test "lex dot punctuation" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list ".");
+  [%expect {| [.] |}]
+;;
+
+let%expect_test "lex dot in field projection context" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "r.field");
+  [%expect {| [<identifier:r>; .; <identifier:field>] |}]
 ;;
 
 let%expect_test "parse: multiple \\export lines concatenated in source order" =

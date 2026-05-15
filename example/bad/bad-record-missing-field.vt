@@ -1,0 +1,9 @@
+\import nat
+
+\universe U
+
+\record Pair (A : U) (B : U) : U
+  | fst : A
+  | snd : B
+
+\let p : Pair Nat Nat => { fst = Nat/zero }

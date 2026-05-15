@@ -20,6 +20,7 @@ type token =
   | LEFT [@printer fun fmt () -> fprintf fmt "\\left"]
   | RIGHT [@printer fun fmt () -> fprintf fmt "\\right"]
   | NONE [@printer fun fmt () -> fprintf fmt "\\none"]
+  | RECORD [@printer fun fmt () -> fprintf fmt "\\record"]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | STACK_ARROW [@printer fun fmt () -> fprintf fmt "<="]
   | FAT_ARROW [@printer fun fmt () -> fprintf fmt "=>"]
@@ -33,6 +34,7 @@ type token =
   | L_BRACKET [@printer fun fmt () -> fprintf fmt "{"]
   | R_BRACKET [@printer fun fmt () -> fprintf fmt "}"]
   | QMARK [@printer fun fmt () -> fprintf fmt "?"]
+  | DOT [@printer fun fmt () -> fprintf fmt "."]
   | IDENT of string [@printer fun fmt name -> fprintf fmt "<identifier:%s>" name]
   | SYMBOL of string [@printer fun fmt s -> fprintf fmt "<symbol:%s>" s]
   | STRING of string [@printer fun fmt s -> fprintf fmt "<string:%s>" s]
@@ -84,6 +86,7 @@ rule token =
   | "\\left" { return lexbuf @@ LEFT }
   | "\\right" { return lexbuf @@ RIGHT }
   | "\\none" { return lexbuf @@ NONE }
+  | "\\record" { return lexbuf @@ RECORD }
   | "->" { return lexbuf @@ ARROW }
   | "<=" { return lexbuf @@ STACK_ARROW }
   | "=>" { return lexbuf @@ FAT_ARROW }
@@ -97,6 +100,7 @@ rule token =
   | '{' { return lexbuf @@ L_BRACKET }
   | '}' { return lexbuf @@ R_BRACKET }
   | '?' { return lexbuf @@ QMARK }
+  | '.' { return lexbuf @@ DOT }
   | '"' ([^ '"' '\n']* as s) '"' { return lexbuf @@ STRING s }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
   | sym_char+ { return lexbuf @@ SYMBOL (Lexing.lexeme lexbuf) }

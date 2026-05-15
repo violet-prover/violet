@@ -1,0 +1,14 @@
+\import nat
+\import vec
+\import sigma
+
+\universe U
+
+# TODO: dependent record literal type-substitution (currently
+# field types are not re-evaluated against the actual literal values).
+# This SHOULD typecheck once fully implemented, but doesn't today
+# because the elaborator checks `snd` against `B fst` using the raw binder
+# rather than substituting the chosen `fst` value (Nat/suc Nat/zero) into
+# the closure.  Tracked as a known limitation.
+\let bad : Sigma Nat (\n -> Vec Nat n) =>
+  { fst = Nat/suc Nat/zero, snd = Vec/cons Nat/zero Vec/nil }

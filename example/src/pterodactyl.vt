@@ -21,9 +21,8 @@
   | neg2 true => false
   | neg2 false => true
 
-# Sigma swap — `<= \split` on a Sigma pair binds the two field names.
-# Implicits on `mkSigma` are supplied here because Violet's current unifier
-# can't infer them from the case-body context.
+# Sigma swap — record pattern on a Sigma pair binds `fst` and `snd`.
 \let swap (A : U) (B : U) : Sigma A (\x -> B) -> Sigma B (\y -> A) \where
-  swap A B x <= \elim x
-  | swap A B (mk a b) => mk {B} {\y -> A} b a
+  <= \intro
+  <= \split
+  | swap A B { fst = a, snd = b } => { fst = b, snd = a }

@@ -1,0 +1,27 @@
+\import nat
+
+\universe U
+
+\record Pair (A : U) (B : U) : U
+  | fst : A
+  | snd : B
+
+\record Point : U
+  | x : Nat
+  | y : Nat
+
+\let origin : Point => { x = Nat/zero, y = Nat/zero }
+
+# Field-order freedom: writing fields in reverse order should produce the same
+# canonical AST as declaration order.
+\let p-reorder : Pair Nat Nat => { snd = Nat/suc Nat/zero, fst = Nat/zero }
+\let p-reorder-fst : Nat => p-reorder.fst
+\let p-reorder-snd : Nat => p-reorder.snd
+
+# Higher-order projection: Point/x as a first-class function value.
+\let project-x : Point -> Nat => Point/x
+\let xx : Nat => project-x origin
+
+# Punning + projection composability: pun-then-project round-trip.
+\let p2 (x : Nat) (y : Nat) : Point => { x, y }
+\let pp : Nat => (p2 (Nat/suc Nat/zero) Nat/zero).x

@@ -283,6 +283,10 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
       Reporter.fatalf
         Elab_error
         "internal: Op_soup reached occurs_in (resolver should have lowered it)"
+    | Surface.RecordLit entries -> List.exists (fun (_, e) -> go e) entries
+    | Surface.RecordUpdate (base, entries) ->
+      go base || List.exists (fun (_, e) -> go e) entries
+    | Surface.Proj (e, _) -> go e
   in
   go t
 ;;

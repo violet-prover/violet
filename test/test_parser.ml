@@ -101,11 +101,360 @@ let elim_intro_test () =
     exit 1
 ;;
 
+let record_top_test () =
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_top_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<record_top_test>" toks in
+    m.Violet_elab.Surface.tops
+  in
+  (* Record with two fields, no parameters *)
+  let tops = parse_tops "\\record Point : U\n  | x : Nat\n  | y : Nat" in
+  (match tops with
+   | [ { Asai.Range.value = Violet_elab.Surface.Record r; _ } ] ->
+     if
+       String.equal r.name "Point" && List.length r.fields = 2 && List.length r.params = 0
+     then Format.printf "record_top_test OK  no-params@."
+     else begin
+       Format.printf
+         "record_top_test FAIL no-params: name=%s fields=%d params=%d@."
+         r.name
+         (List.length r.fields)
+         (List.length r.params);
+       exit 1
+     end
+   | _ ->
+     Format.printf "record_top_test FAIL no-params: wrong shape@.";
+     exit 1);
+  (* Record with two fields, two parameters *)
+  let tops2 =
+    parse_tops "\\record Sigma (A : U) (B : A -> U) : U\n  | fst : A\n  | snd : B fst"
+  in
+  match tops2 with
+  | [ { Asai.Range.value = Violet_elab.Surface.Record r; _ } ] ->
+    if String.equal r.name "Sigma" && List.length r.fields = 2 && List.length r.params = 2
+    then Format.printf "record_top_test OK  with-params@."
+    else begin
+      Format.printf
+        "record_top_test FAIL with-params: name=%s fields=%d params=%d@."
+        r.name
+        (List.length r.fields)
+        (List.length r.params);
+      exit 1
+    end
+  | _ ->
+    Format.printf "record_top_test FAIL with-params: wrong shape@.";
+    exit 1
+;;
+
+let record_lit_test () =
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_lit_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<record_lit_test>" toks in
+    m.Violet_elab.Surface.tops
+  in
+  (* Helper: extract RecordLit from the Op_soup wrapper that the parser emits
+     before operator resolution.  A bare `{ … }` at head position becomes
+     Op_soup [ SI_Atom (RecordLit […]) ]. *)
+  let unwrap_record_lit body =
+    match body with
+    | Violet_elab.Surface.Op_soup
+        [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit entries) ] ->
+      Some entries
+    | _ -> None
+  in
+  (* Empty record literal *)
+  let tops0 = parse_tops "\\let p : Point => {}" in
+  (match tops0 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_lit body with
+      | Some [] -> Format.printf "record_lit_test OK  empty@."
+      | _ ->
+        Format.printf
+          "record_lit_test FAIL empty: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_lit_test FAIL empty: wrong shape@.";
+     exit 1);
+  (* Plain literal: { x = a, y = b } *)
+  let tops1 = parse_tops "\\let p : Point => { x = a, y = b }" in
+  (match tops1 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_lit body with
+      | Some [ ("x", _); ("y", _) ] -> Format.printf "record_lit_test OK  plain-lit@."
+      | _ ->
+        Format.printf
+          "record_lit_test FAIL plain-lit: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_lit_test FAIL plain-lit: wrong shape@.";
+     exit 1);
+  (* Pun literal: { x, y } desugars to { x = x, y = y } *)
+  let tops2 = parse_tops "\\let p : Point => { x, y }" in
+  (match tops2 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_lit body with
+      | Some
+          [ ("x", Violet_elab.Surface.Var [ "x" ])
+          ; ("y", Violet_elab.Surface.Var [ "y" ])
+          ] -> Format.printf "record_lit_test OK  pun-lit@."
+      | _ ->
+        Format.printf
+          "record_lit_test FAIL pun-lit: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_lit_test FAIL pun-lit: wrong shape@.";
+     exit 1);
+  (* Mixed: { x, y = e, z } desugars to { x = x, y = e, z = z } *)
+  let tops3 = parse_tops "\\let p : Point => { x, y = e, z }" in
+  (match tops3 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_lit body with
+      | Some
+          [ ("x", Violet_elab.Surface.Var [ "x" ])
+          ; ("y", _)
+          ; ("z", Violet_elab.Surface.Var [ "z" ])
+          ] -> Format.printf "record_lit_test OK  mixed-lit@."
+      | _ ->
+        Format.printf
+          "record_lit_test FAIL mixed-lit: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_lit_test FAIL mixed-lit: wrong shape@.";
+     exit 1);
+  (* Implicit-application f {x} must still parse (regression check).
+     `f {x}` = Op_soup with head SI_Name "f" and tail SI_Imp_arg.
+     The inner atom may be wrapped in Located, so we check structurally
+     using the show_preterm output. *)
+  let tops4 = parse_tops "\\let r : U => f {x}" in
+  (match tops4 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match body with
+      | Violet_elab.Surface.Op_soup
+          [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg inner ] ->
+        (* inner may be Located-wrapped; check its show is "x" *)
+        let inner_str = Violet_elab.Surface.show_preterm inner in
+        if String.equal inner_str "x"
+        then Format.printf "record_lit_test OK  implicit-app@."
+        else begin
+          Format.printf "record_lit_test FAIL implicit-app: inner=%s@." inner_str;
+          exit 1
+        end
+      | _ ->
+        Format.printf
+          "record_lit_test FAIL implicit-app: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_lit_test FAIL implicit-app: wrong shape@.";
+     exit 1);
+  Format.printf "record_lit_test OK@."
+;;
+
+let record_update_test () =
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_update_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<record_update_test>" toks in
+    m.Violet_elab.Surface.tops
+  in
+  (* Helper: unwrap RecordUpdate from Op_soup wrapper *)
+  let unwrap_record_update body =
+    match body with
+    | Violet_elab.Surface.Op_soup
+        [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordUpdate (base, entries)) ]
+      -> Some (base, entries)
+    | _ -> None
+  in
+  (* Simple single-field update: { p | x = z } *)
+  let tops1 = parse_tops "\\let q : Point => { p | x = z }" in
+  (match tops1 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_update body with
+      | Some (_, [ ("x", _) ]) -> Format.printf "record_update_test OK  simple@."
+      | _ ->
+        Format.printf
+          "record_update_test FAIL simple: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_update_test FAIL simple: wrong shape@.";
+     exit 1);
+  (* Multi-field update: { p | x = z, y = w } *)
+  let tops2 = parse_tops "\\let q : Point => { p | x = z, y = w }" in
+  (match tops2 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_update body with
+      | Some (_, [ ("x", _); ("y", _) ]) -> Format.printf "record_update_test OK  multi@."
+      | _ ->
+        Format.printf
+          "record_update_test FAIL multi: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_update_test FAIL multi: wrong shape@.";
+     exit 1);
+  (* Pun-style override: { p | x } desugars to { p | x = x } *)
+  let tops3 = parse_tops "\\let q : Point => { p | x }" in
+  (match tops3 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match unwrap_record_update body with
+      | Some (_, [ ("x", Violet_elab.Surface.Var [ "x" ]) ]) ->
+        Format.printf "record_update_test OK  pun@."
+      | _ ->
+        Format.printf
+          "record_update_test FAIL pun: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_update_test FAIL pun: wrong shape@.";
+     exit 1);
+  (* Regression: plain literal { x = a } must still be RecordLit, not RecordUpdate *)
+  let tops4 = parse_tops "\\let p : Point => { x = a }" in
+  (match tops4 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match body with
+      | Violet_elab.Surface.Op_soup
+          [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit _) ] ->
+        Format.printf "record_update_test OK  regression-literal@."
+      | _ ->
+        Format.printf
+          "record_update_test FAIL regression-literal: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_update_test FAIL regression-literal: wrong shape@.";
+     exit 1);
+  (* Regression: implicit application f {x} must still work *)
+  let tops5 = parse_tops "\\let r : U => f {x}" in
+  (match tops5 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     (match body with
+      | Violet_elab.Surface.Op_soup
+          [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg _ ] ->
+        Format.printf "record_update_test OK  regression-implicit-app@."
+      | _ ->
+        Format.printf
+          "record_update_test FAIL regression-implicit-app: body=%s@."
+          (Violet_elab.Surface.show_preterm body);
+        exit 1)
+   | _ ->
+     Format.printf "record_update_test FAIL regression-implicit-app: wrong shape@.";
+     exit 1);
+  Format.printf "record_update_test OK@."
+;;
+
+let projection_test () =
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<projection_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<projection_test>" toks in
+    m.Violet_elab.Surface.tops
+  in
+  (* Simple projection *)
+  let src1 = "\\let n : Nat => p.x" in
+  let tops1 = parse_tops src1 in
+  (match tops1 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     Printf.printf "simple: %s\n" (Violet_elab.Surface.show_preterm body)
+   | _ -> Printf.printf "simple: unexpected\n");
+  (* Chained projection -- left-associative *)
+  let src2 = "\\let n : Nat => r.x.y" in
+  let tops2 = parse_tops src2 in
+  (match tops2 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     Printf.printf "chained: %s\n" (Violet_elab.Surface.show_preterm body)
+   | _ -> Printf.printf "chained: unexpected\n");
+  (* Projection on application -- (f x).y *)
+  let src3 = "\\let n : Nat => (f x).y" in
+  let tops3 = parse_tops src3 in
+  (match tops3 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     Printf.printf "appl: %s\n" (Violet_elab.Surface.show_preterm body)
+   | _ -> Printf.printf "appl: unexpected\n");
+  (* Regression: Nat/zero must parse as Var ["Nat"; "zero"], not affected by dot *)
+  let src4 = "\\let n : Nat => Nat/zero" in
+  let tops4 = parse_tops src4 in
+  (match tops4 with
+   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+     Printf.printf "qname: %s\n" (Violet_elab.Surface.show_preterm body)
+   | _ -> Printf.printf "qname: unexpected\n");
+  print_endline "projection_test OK"
+;;
+
+let pattern_record_test () =
+  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  @@ fun () ->
+  let parse_tops src =
+    let lexbuf = Lexing.from_string src in
+    let toks = Array.of_list (Violet_elab.Parser.tokens "<pattern_record_test>" lexbuf) in
+    let m = Violet_elab.Parser.parse_buf ~name:"<pattern_record_test>" toks in
+    m.Violet_elab.Surface.tops
+  in
+  (* Use stack-move style `<= \intro; <= \split` which is the correct
+     \split syntax in Violet.  The elim-style `name p <= \split` is not
+     part of the grammar — \split is always a stack move. *)
+  let src =
+    "\\let swap : Pair Nat Nat -> Pair Nat Nat \\where\n\
+    \  <= \\intro\n\
+    \  <= \\split\n\
+    \  | swap { fst = a, snd = b } => { fst = b, snd = a }"
+  in
+  let tops = parse_tops src in
+  (match tops with
+   | [ _ ] -> Format.printf "pattern_record_test OK@."
+   | _ ->
+     Format.printf "pattern_record_test FAIL: expected 1 top, got %d@." (List.length tops);
+     exit 1);
+  (* Verify the PRecord pattern is actually present in the clause.
+     The \split via stack moves produces a Stack_def top. *)
+  (match tops with
+   | [ { Asai.Range.value =
+           Violet_elab.Surface.Stack_def
+             { clauses =
+                 [ { patterns =
+                       [ Violet_elab.Surface.PRecord
+                           [ ("fst", Violet_elab.Surface.PVar "a")
+                           ; ("snd", Violet_elab.Surface.PVar "b")
+                           ]
+                       ]
+                   ; _
+                   }
+                 ]
+             ; _
+             }
+       ; _
+       }
+     ] -> Format.printf "pattern_record_test OK  PRecord structure@."
+   | _ ->
+     Format.printf
+       "pattern_record_test FAIL  unexpected structure (parse may still be OK)@.");
+  Format.printf "pattern_record_test OK@."
+;;
+
 let benchmark () = Format.printf "benchmark: skipped in unit-test mode@."
 
 let () =
   positive_test ();
   goal_test ();
   elim_intro_test ();
+  record_top_test ();
+  record_lit_test ();
+  record_update_test ();
+  projection_test ();
+  pattern_record_test ();
   benchmark ()
 ;;

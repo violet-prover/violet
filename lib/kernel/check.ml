@@ -30,6 +30,17 @@ module Make (M : Views.META_VIEW) = struct
     | Core.LiftTerm { ty; tm; _ } | Core.UnliftTerm { ty; tm; _ } ->
       check_term lvl ty;
       check_term lvl tm
+    | Core.RecordType { params; fields; _ } ->
+      List.iter (check_term lvl) params;
+      let rec walk lvl = function
+        | [] -> ()
+        | (b : Core.term Syntax.binder) :: rest ->
+          check_term lvl b.bound;
+          walk (lvl + 1) rest
+      in
+      walk lvl fields
+    | Core.RecordIntro { fields; _ } -> List.iter (fun (_, t) -> check_term lvl t) fields
+    | Core.RecordProj { record; _ } -> check_term lvl record
   ;;
 
   let accept_let m ~name ~ty ~body =
