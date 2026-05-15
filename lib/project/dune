@@ -1,0 +1,8 @@
+(library
+ (name violet_project)
+ (inline_tests)
+ (libraries unix)
+ (preprocess
+  (pps ppx_deriving.show ppx_expect)))
+
+(ocamllex manifest_lexer)

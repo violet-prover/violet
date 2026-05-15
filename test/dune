@@ -7,6 +7,7 @@
  (libraries
   violet_elab
   violet_kernel
+  violet_project
   asai
   eio
   eio_main
