@@ -24,6 +24,7 @@ module Make (M : Views.META_VIEW) = struct
     | Core.Meta m | Core.InsertedMeta (m, _) ->
       (match M.lookup m with
        | Some _ -> ()
+       | None when M.is_goal m -> ()
        | None -> raise (Kernel_error (OrphanMeta m)))
     | Core.Lift { ty; _ } -> check_term lvl ty
     | Core.LiftTerm { ty; tm; _ } | Core.UnliftTerm { ty; tm; _ } ->

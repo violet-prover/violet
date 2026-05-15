@@ -17,6 +17,14 @@ let eval (mvar : metavar) : value =
 
 let count = ref 0
 
+(* Metas that stand in for a user-placed `?` goal.  They are intentionally
+   unsolved: the kernel's well-formedness check (`Check.check_term`) treats
+   them as known, so a declaration containing goals still flows through
+   `Module.declare` and remains usable by later definitions. *)
+let goal_metas : (metavar, unit) Hashtbl.t = Hashtbl.create 32
+let register_goal (mvar : metavar) : unit = Hashtbl.replace goal_metas mvar ()
+let is_goal (mvar : metavar) : bool = Hashtbl.mem goal_metas mvar
+
 (* Used by elaborator (Checker): fresh meta as a core term, applied to all
    currently-bound locals 0..lvl-1.  Eval of `InsertedMeta (m, lvl)` later will
    reconstruct the spine from the live env. *)
@@ -24,6 +32,14 @@ let meta_fresh (lvl : int) : term =
   let r = InsertedMeta (MetaVar !count, lvl) in
   incr count;
   r
+;;
+
+(* Like [meta_fresh] but also records the new meta as a user goal. *)
+let fresh_goal (lvl : int) : term =
+  let mvar = MetaVar !count in
+  incr count;
+  register_goal mvar;
+  InsertedMeta (mvar, lvl)
 ;;
 
 (* Used by Unification when inserting an implicit-Pi meta during unify: skips
@@ -41,4 +57,5 @@ let fresh_meta_value (lvl : int) : value =
 module View : Violet_kernel.Views.META_VIEW = struct
   let lookup = lookup_meta
   let eval = eval
+  let is_goal = is_goal
 end

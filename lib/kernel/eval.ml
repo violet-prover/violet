@@ -121,6 +121,7 @@ end
 module NullMeta : Views.META_VIEW = struct
   let lookup _ = None
   let eval m = Flex (m, Emp)
+  let is_goal _ = false
 end
 
 module NullEnv : Views.ENV_VIEW = struct

@@ -1185,7 +1185,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:(Core.Universe Level.LZero);
     incr m.pending_goals;
-    m.result <- Some (PType (Meta.meta_fresh m.ctx.lvl, Level.LZero))
+    m.result <- Some (PType (Meta.fresh_goal m.ctx.lvl, Level.LZero))
   | GInferType (loc, p) ->
     push m (KEnsureUniverse loc);
     push m (GInfer (loc, p))
@@ -1340,14 +1340,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:ty;
     incr m.pending_goals;
-    m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
+    m.result <- Some (PTerm (Meta.fresh_goal m.ctx.lvl))
   | GInfer (loc, Goal name_opt) ->
     let name = resolve_goal_name m name_opt in
-    let ty_tm = Meta.meta_fresh m.ctx.lvl in
+    let ty_tm = Meta.fresh_goal m.ctx.lvl in
     let ty_val = Evaluation.eval m.ctx.env ty_tm in
     emit_goal_report ~loc m ~name ~target:ty_val;
     incr m.pending_goals;
-    m.result <- Some (PTermType (Meta.meta_fresh m.ctx.lvl, ty_val))
+    m.result <- Some (PTermType (Meta.fresh_goal m.ctx.lvl, ty_val))
   | GInfer (loc, Max (a, b)) ->
     push m (KMax_HaveLeft (loc, b));
     push m (GInfer (loc, a))
@@ -2064,13 +2064,7 @@ let check_top
         "internal: Operator_decl reached elaboration (resolver should have consumed it)"
   in
   push m g;
-  (* A declaration containing user-placed `?` goals leaves unsolved metas in
-     the term handed to the kernel.  The kernel's well-formedness check then
-     raises `OrphanMeta`; we swallow that here and let the `Goal_unresolved`
-     warning below convey the state to the user. *)
-  (try ignore (drive m) with
-   | Violet_kernel.Error.Kernel_error (Violet_kernel.Error.OrphanMeta _)
-     when !(m.pending_goals) > 0 -> ());
+  ignore (drive m);
   if !(m.pending_goals) > 0
   then
     Reporter.emitf
