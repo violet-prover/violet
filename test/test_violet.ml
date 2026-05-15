@@ -28,7 +28,7 @@ let load_with_deps (filename : string) : Violet_elab.Surface.t list =
     then ()
     else begin
       Hashtbl.add mods key m;
-      let values = List.map (fun path -> String.concat "." path) m.imports in
+      let values = List.map (fun path -> String.concat "/" path) m.imports in
       Hashtbl.add deps key values;
       List.iter
         (fun library ->

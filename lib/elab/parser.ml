@@ -26,7 +26,6 @@ module C : sig
     | T_ARROW
     | T_COLON
     | T_LAMBDA
-    | T_DOT
     | T_SLASH
     | T_VERT
     | T_JOIN
@@ -79,7 +78,6 @@ end = struct
     | T_ARROW
     | T_COLON
     | T_LAMBDA
-    | T_DOT
     | T_SLASH
     | T_VERT
     | T_JOIN
@@ -116,34 +114,33 @@ end = struct
     | T_ARROW -> 4
     | T_COLON -> 5
     | T_LAMBDA -> 6
-    | T_DOT -> 7
-    | T_VERT -> 8
-    | T_JOIN -> 9
-    | T_LPAREN -> 10
-    | T_RPAREN -> 11
-    | T_LBRACKET -> 12
-    | T_RBRACKET -> 13
-    | T_IDENT -> 14
-    | T_EOF -> 15
-    | T_WHERE -> 16
-    | T_STACK_ARROW -> 17
-    | T_FAT_ARROW -> 18
-    | T_QMARK -> 19
-    | T_SLASH -> 20
-    | T_OPEN -> 21
-    | T_OPERATOR -> 22
-    | T_SYMBOL -> 23
-    | T_STRING -> 24
-    | T_ELIM -> 25
-    | T_INTRO -> 26
-    | T_SPLIT -> 27
-    | T_STRONGER_THAN -> 28
-    | T_WEAKER_THAN -> 29
-    | T_SAME_AS -> 30
-    | T_ASSOCIATIVITY -> 31
-    | T_LEFT -> 32
-    | T_RIGHT -> 33
-    | T_NONE -> 34
+    | T_VERT -> 7
+    | T_JOIN -> 8
+    | T_LPAREN -> 9
+    | T_RPAREN -> 10
+    | T_LBRACKET -> 11
+    | T_RBRACKET -> 12
+    | T_IDENT -> 13
+    | T_EOF -> 14
+    | T_WHERE -> 15
+    | T_STACK_ARROW -> 16
+    | T_FAT_ARROW -> 17
+    | T_QMARK -> 18
+    | T_SLASH -> 19
+    | T_OPEN -> 20
+    | T_OPERATOR -> 21
+    | T_SYMBOL -> 22
+    | T_STRING -> 23
+    | T_ELIM -> 24
+    | T_INTRO -> 25
+    | T_SPLIT -> 26
+    | T_STRONGER_THAN -> 27
+    | T_WEAKER_THAN -> 28
+    | T_SAME_AS -> 29
+    | T_ASSOCIATIVITY -> 30
+    | T_LEFT -> 31
+    | T_RIGHT -> 32
+    | T_NONE -> 33
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -154,7 +151,6 @@ end = struct
     | Lexer.ARROW -> T_ARROW
     | Lexer.COLON -> T_COLON
     | Lexer.LAMBDA -> T_LAMBDA
-    | Lexer.DOT -> T_DOT
     | Lexer.SLASH -> T_SLASH
     | Lexer.VERT -> T_VERT
     | Lexer.JOIN -> T_JOIN
@@ -449,17 +445,6 @@ module Grammar = struct
     | None -> v
   ;;
 
-  let p_path : string list t =
-    let+ first = ident
-    and+ rest =
-      star
-        (let+ _ = tok C.T_DOT
-         and+ x = ident in
-         x)
-    in
-    first :: rest
-  ;;
-
   let p_qname : string list t =
     let+ first = ident
     and+ rest =
@@ -473,7 +458,7 @@ module Grammar = struct
 
   let p_import : string list t =
     let+ _ = tok C.T_IMPORT
-    and+ path = p_path in
+    and+ path = p_qname in
     path
   ;;
 

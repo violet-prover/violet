@@ -24,7 +24,6 @@ type token =
   | FAT_ARROW [@printer fun fmt () -> fprintf fmt "=>"]
   | COLON [@printer fun fmt () -> fprintf fmt ":"]
   | LAMBDA [@printer fun fmt () -> fprintf fmt "\\"]
-  | DOT [@printer fun fmt () -> fprintf fmt "."]
   | SLASH [@printer fun fmt () -> fprintf fmt "/"]
   | VERT [@printer fun fmt () -> fprintf fmt "|"]
   | JOIN [@printer fun fmt () -> fprintf fmt "\xe2\x8a\x94"]
@@ -88,7 +87,6 @@ rule token =
   | "=>" { return lexbuf @@ FAT_ARROW }
   | ':' { return lexbuf @@ COLON }
   | "\\" { return lexbuf @@ LAMBDA }
-  | '.' { return lexbuf @@ DOT }
   | '/' { return lexbuf @@ SLASH }
   | '|' { return lexbuf @@ VERT }
   | "⊔" { return lexbuf @@ JOIN }

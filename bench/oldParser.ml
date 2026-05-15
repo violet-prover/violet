@@ -235,7 +235,7 @@ let p_path () : Trie.path =
   let rest =
     many
       (fun () ->
-         consume Lexer.DOT;
+         consume Lexer.SLASH;
          ident ())
       ()
   in

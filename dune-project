@@ -19,14 +19,7 @@
  (name violet)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends
-  ocaml
-  dune
-  cmdliner
-  eio
-  eio_main
-  violet_kernel
-  violet_elab)
+ (depends ocaml dune cmdliner eio eio_main violet_kernel violet_elab)
  (tags
   (topics "to describe" your project)))
 

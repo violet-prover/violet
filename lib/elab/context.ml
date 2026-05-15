@@ -84,7 +84,7 @@ let has_path (xs : string list) : bool = Option.is_some (S.resolve xs)
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
-    | path -> Format.pp_print_string fmt @@ String.concat "." (Bwd.to_list path)
+    | path -> Format.pp_print_string fmt @@ String.concat "/" (Bwd.to_list path)
   ;;
 
   let pp_context fmt = function

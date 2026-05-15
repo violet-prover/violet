@@ -14,7 +14,7 @@ let rec prepare_dependencies
   =
   let key = module_name m.name in
   Hashtbl.add mods key m;
-  let values = List.map (fun path -> String.concat "." path) m.imports in
+  let values = List.map (fun path -> String.concat "/" path) m.imports in
   match Hashtbl.find_opt deps key with
   | Some _ -> ()
   | None ->

@@ -1390,7 +1390,7 @@ let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
    importer's starting table. Conflicts (same template, different bodies)
    error at import time. *)
 let module_op_tables : (string, op_table) Hashtbl.t = Hashtbl.create 32
-let module_name_of_path (p : Yuujinchou.Trie.path) : string = String.concat "." p
+let module_name_of_path (p : Yuujinchou.Trie.path) : string = String.concat "/" p
 
 (* Merge another table's decls into ours. Duplicate-template across modules
    raises unless the duplicates share an origin (diamond import). *)

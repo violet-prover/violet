@@ -34,7 +34,7 @@ let lookup (x : string) : Core.value =
     Reporter.fatalf
       NoVar_error
       "cannot find `%s` in environment"
-      (String.concat "." [ x ])
+      (String.concat "/" [ x ])
 ;;
 
 let lookup_path (xs : string list) : Core.value =
@@ -59,7 +59,7 @@ let unfold_def (name : string) : Core.value option = Hashtbl.find_opt definition
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
-    | path -> Format.pp_print_string fmt @@ String.concat "." (Bwd.to_list path)
+    | path -> Format.pp_print_string fmt @@ String.concat "/" (Bwd.to_list path)
   ;;
 
   let pp_context fmt = function
