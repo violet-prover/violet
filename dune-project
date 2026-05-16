@@ -5,7 +5,13 @@
 (generate_opam_files true)
 
 (source
- (sourcehut dannypsnl/violet))
+ (uri "git+https://codeberg.org/dannypsnl/violet.git"))
+
+(homepage "https://violet-lang.org")
+
+(documentation "https://violet-lang.org")
+
+(bug_reports "https://codeberg.org/dannypsnl/violet/issues")
 
 (authors "Lîm Tsú-thuàn")
 
@@ -13,15 +19,13 @@
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
-
 (package
  (name violet)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (synopsis "A small dependent type language")
+ (description "Violet is a small dependent type language.")
  (depends ocaml dune cmdliner eio eio_main violet_kernel violet_elab)
  (tags
-  (topics "to describe" your project)))
+  ("dependent-types" "type-theory" "proof-assistant")))
 
 (package
  (name violet_kernel)

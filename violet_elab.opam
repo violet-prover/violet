@@ -4,9 +4,9 @@ synopsis: "Violet elaborator"
 maintainer: ["Lîm Tsú-thuàn"]
 authors: ["Lîm Tsú-thuàn"]
 license: "LICENSE"
-homepage: "https://sr.ht/~dannypsnl/violet"
-doc: "https://url/to/documentation"
-bug-reports: "https://todo.sr.ht/~dannypsnl/violet"
+homepage: "https://violet-lang.org"
+doc: "https://violet-lang.org"
+bug-reports: "https://codeberg.org/dannypsnl/violet/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.17"}
@@ -32,4 +32,4 @@ build: [
     "@doc" {with-doc}
   ]
 ]
-dev-repo: "git+https://git.sr.ht/~dannypsnl/violet"
+dev-repo: "git+https://codeberg.org/dannypsnl/violet.git"
