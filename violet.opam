@@ -10,7 +10,7 @@ homepage: "https://violet-lang.org"
 doc: "https://violet-lang.org"
 bug-reports: "https://codeberg.org/dannypsnl/violet/issues"
 depends: [
-  "ocaml"
+  "ocaml" {>= "5.3"}
   "dune" {>= "3.17"}
   "cmdliner"
   "eio"
