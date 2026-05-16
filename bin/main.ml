@@ -117,7 +117,8 @@ let load_cmd ~env =
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet_elab.Parser.parse_file filename in
         let mode = mode_for_entry ?explicit_root filename in
-        prepare_dependencies mode [] mods deps (module_name m.name) m;
+        let entry_key = module_name m.name in
+        prepare_dependencies mode [] mods deps entry_key m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
@@ -128,8 +129,8 @@ let load_cmd ~env =
          | ErrorCycle err_list ->
            Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
            @@ String.concat ", " err_list);
-        (* TODO: load module into a REPL *)
-        ())
+        let entry = Hashtbl.find mods entry_key in
+        Repl.run ~entry_module:entry)
       $ arg_root
       $ arg_file)
 ;;

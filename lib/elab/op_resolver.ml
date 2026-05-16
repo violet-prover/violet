@@ -1469,6 +1469,19 @@ let resolve_module ?module_name (file : Surface.t) : Surface.t =
   { file with tops = tops' }
 ;;
 
+(* For REPL / external single-expression use: look up the op table registered
+   by a previous `resolve_module` pass, and lower a fresh preterm with it. *)
+let resolve_preterm_for_module ~(module_name : string) (t : Surface.preterm)
+  : Surface.preterm
+  =
+  let table =
+    match Hashtbl.find_opt module_op_tables module_name with
+    | Some t -> t
+    | None -> empty_table
+  in
+  lower_preterm table t
+;;
+
 let%expect_test "resolve_module: operator then let — soup uses operator, decl consumed" =
   let mk_op : Surface.top Asai.Range.located =
     { loc = None

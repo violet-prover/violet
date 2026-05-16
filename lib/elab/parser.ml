@@ -1533,6 +1533,36 @@ let parse_file filename =
   Fun.protect ~finally:(fun _ -> close_in ch) @@ fun _ -> parse_channel filename ch
 ;;
 
+let parse_expression_string ~source (src : string) : Surface.preterm =
+  let lexbuf = Lexing.from_string src in
+  lexbuf.Lexing.lex_curr_p <- { lexbuf.Lexing.lex_curr_p with Lexing.pos_fname = source };
+  let toks = Array.of_list (tokens source lexbuf) in
+  match P.parse Grammar.p_term toks 0 with
+  | next, t when next = Array.length toks - 1 -> t
+  | next, _ ->
+    let lt = toks.(next) in
+    Reporter.fatalf
+      ?loc:lt.Asai.Range.loc
+      Parse_error
+      "unexpected trailing token `%s` after expression"
+      ([%show: Lexer.token] lt.Asai.Range.value)
+  | exception P.ParseFailure { offset; loc; found } ->
+    (match loc with
+     | Some loc ->
+       Reporter.fatalf
+         ~loc
+         Parse_error
+         "unexpected token `%s` at offset %d"
+         ([%show: Lexer.token] found)
+         offset
+     | None ->
+       Reporter.fatalf
+         Parse_error
+         "unexpected token `%s` at offset %d (no location)"
+         ([%show: Lexer.token] found)
+         offset)
+;;
+
 (* Lex a source string to a list of tokens (location-stripped, EOF dropped) for
    inline tests of the lexer. *)
 let lex_to_list src =

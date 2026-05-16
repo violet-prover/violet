@@ -12,4 +12,7 @@
   tsort
   eio
   eio_main
-  asai))
+  asai
+  bwd
+  yuujinchou
+  linenoise))

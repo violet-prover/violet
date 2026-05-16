@@ -31,6 +31,7 @@
   eio_main
   tsort
   ppx_expect
+  linenoise
   violet_kernel
   violet_elab)
  (tags
