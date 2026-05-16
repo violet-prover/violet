@@ -11,11 +11,13 @@
 
 # Surface eta test: rebuild p from its components and prove equality via refl.
 # This exercises the kernel eta-expansion: q should be definitionally equal to p
-# because Pair/fst Nat Nat p = p.fst and Pair/snd Nat Nat p = p.snd by beta-reduction,
+# because Pair/fst p = p.fst and Pair/snd p = p.snd by beta-reduction,
 # and eta says p = {fst = p.fst, snd = p.snd}.
 #
 # The unifier handles VRecordIntro vs Flex by solving the meta directly with the
 # whole record literal rather than projecting fields from a flex (which would
 # produce stuck neutrals).
-\let q : Pair Nat Nat => { fst = Pair/fst Nat Nat p, snd = Pair/snd Nat Nat p }
+\let q : Pair Nat Nat => { fst = Pair/fst p, snd = Pair/snd p }
 \let eta-refl : Id q p => refl
+\let q2 : Pair Nat Nat => { fst = p.fst, snd = p.snd }
+\let eta2-refl : Id q2 p => refl

@@ -2382,11 +2382,28 @@ let rec dispatch (m : machine) (g : goal) : unit =
            param_binder_core_terms
            inner
        in
+       (* Like wrap_param_pis but forces every param binder to be implicit.
+          Field projectors can recover the params from the record argument's
+          type, so users write `R/f r` rather than `R/f P₁…Pₖ r`. *)
+       let wrap_param_pis_implicit (inner : Core.term) : Core.term =
+         List.fold_right
+           (fun (n, _impl, qty_tm) body ->
+              Core.Pi ({ name = n; bound = qty_tm; implicit = true }, body))
+           param_binder_core_terms
+           inner
+       in
        (* Build: Lambda(P₁, Lambda(P₂, ..., Lambda(Pₖ, inner))) *)
        let wrap_param_lambdas (inner : Core.term) : Core.term =
          List.fold_right
            (fun (n, impl, _qty_tm) body ->
               Core.Lambda { name = n; bound = body; implicit = impl })
+           param_binder_core_terms
+           inner
+       in
+       let wrap_param_lambdas_implicit (inner : Core.term) : Core.term =
+         List.fold_right
+           (fun (n, _impl, _qty_tm) body ->
+              Core.Lambda { name = n; bound = body; implicit = true })
            param_binder_core_terms
            inner
        in
@@ -2583,16 +2600,17 @@ let rec dispatch (m : machine) (g : goal) : unit =
                 ~prev_field_names
                 field_core_tys.(i)
             in
-            (* ty = Pi(params..., Pi(r:R_applied, proj_result_ty)) *)
+            (* ty = Pi({params...}, Pi(r:R_applied, proj_result_ty))
+               Params are implicit on projectors: they are recovered from r's type. *)
             let proj_ty : Core.term =
               let r_pi =
                 Core.Pi
                   ( { name = "r"; bound = rec_applied_under 0; implicit = false }
                   , proj_result_ty )
               in
-              wrap_param_pis r_pi
+              wrap_param_pis_implicit r_pi
             in
-            (* body = Lambda(params..., Lambda(r, RecordProj { record=LocalVar 0; field })) *)
+            (* body = Lambda({params...}, Lambda(r, RecordProj { record=LocalVar 0; field })) *)
             let proj_body : Core.term =
               let proj_expr =
                 Core.RecordProj { record = Core.LocalVar 0; field = field_name }
@@ -2600,7 +2618,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
               let with_r =
                 Core.Lambda { name = "r"; bound = proj_expr; implicit = false }
               in
-              wrap_param_lambdas with_r
+              wrap_param_lambdas_implicit with_r
             in
             let proj_ty_val = Evaluation.eval m.ctx.env proj_ty in
             publish_to_context ~exported [ proj_name ] (proj_ty_val, `Defn);

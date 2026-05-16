@@ -738,7 +738,34 @@ module Grammar = struct
         in
         let parse buf i =
           let n = Array.length buf in
-          (* Parse one atom_no_bracket item; returns None when no more. *)
+          (* Greedily consume `.field` projections after an atom, mirroring the
+             postfix `proj_soup` loop in the full term parser.  Without this,
+             writing `{ fst = p.fst }` would fail to parse because the restricted
+             field-value loop doesn't include the projection layer. *)
+          let apply_proj_loop start_i base =
+            let acc = ref base in
+            let pos = ref start_i in
+            let continue_ = ref true in
+            while
+              !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT
+            do
+              let dot_i = !pos + 1 in
+              if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
+              then begin
+                let field =
+                  match buf.(dot_i).Asai.Range.value with
+                  | Lexer.IDENT s -> s
+                  | _ -> assert false
+                in
+                acc := S.Proj (!acc, field);
+                pos := dot_i + 1
+              end
+              else continue_ := false
+            done;
+            !pos, !acc
+          in
+          (* Parse one atom_no_bracket item (with trailing `.field*`); returns
+             None when no more. *)
           let parse_item buf i =
             if i >= n
             then None
@@ -746,6 +773,7 @@ module Grammar = struct
               match C.tag_of buf.(i).Asai.Range.value with
               | C.T_IDENT | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
                 let i, a = atom_no_bracket.parse buf i in
+                let i, a = apply_proj_loop i a in
                 Some (i, a)
               | _ -> None)
           in
