@@ -323,12 +323,9 @@ module P = struct
         then
           begin match buf.(i).Asai.Range.loc, buf.(last).Asai.Range.loc with
           | Some lstart, Some lend ->
-            (try
-               let bpos, _ = Asai.Range.split lstart in
-               let _, epos = Asai.Range.split lend in
-               Some (Asai.Range.make (bpos, epos))
-             with
-             | Invalid_argument _ -> Some lstart)
+            (match Asai.Range.view lstart, Asai.Range.view lend with
+             | `Range (bpos, _), `Range (_, epos) -> Some (Asai.Range.make (bpos, epos))
+             | _ -> Some lstart)
           | (Some _ as l), None | None, (Some _ as l) -> l
           | None, None -> None
           end
@@ -677,12 +674,9 @@ module Grammar = struct
             &&
             match qmark_loc, buf.(after).Asai.Range.loc with
             | Some q, Some j ->
-              (try
-                 let _, q_end = Asai.Range.split q in
-                 let j_start, _ = Asai.Range.split j in
-                 q_end.offset = j_start.offset
-               with
-               | Invalid_argument _ -> false)
+              (match Asai.Range.view q, Asai.Range.view j with
+               | `Range (_, q_end), `Range (j_start, _) -> q_end.offset = j_start.offset
+               | _ -> false)
             | _ -> false
           in
           if adjacent_ident
@@ -693,12 +687,10 @@ module Grammar = struct
               let span =
                 match qmark_loc, ident_loc with
                 | Some q, Some j ->
-                  (try
-                     let bpos, _ = Asai.Range.split q in
-                     let _, epos = Asai.Range.split j in
+                  (match Asai.Range.view q, Asai.Range.view j with
+                   | `Range (bpos, _), `Range (_, epos) ->
                      Some (Asai.Range.make (bpos, epos))
-                   with
-                   | Invalid_argument _ -> qmark_loc)
+                   | _ -> qmark_loc)
                 | Some _, None -> qmark_loc
                 | None, _ -> ident_loc
               in
