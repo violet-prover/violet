@@ -117,7 +117,13 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
           { b with bound = b_val } :: walk (env_extended <: rigid_local head_lvl) rest
       in
       let v_fields = walk env fields in
-      VRecordType { name; params = v_params; fields = v_fields }
+      VRecordType
+        { name
+        ; params = v_params
+        ; fields = v_fields
+        ; field_env = env
+        ; field_terms = fields
+        }
     | RecordIntro { name; fields } ->
       VRecordIntro { name; fields = List.map (fun (f, t) -> f, eval env t) fields }
     | RecordProj { record; field } ->

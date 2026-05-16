@@ -1,0 +1,12 @@
+\import nat
+\import vec
+\import sigma
+
+\universe U
+
+# Dependent record literal: the type of `snd` depends on the chosen `fst`.
+# When checking the literal, the elaborator substitutes the value of `fst`
+# (= Nat/suc Nat/zero) into `B fst` so `snd` is checked against
+# `Vec Nat (Nat/suc Nat/zero)`.
+\let dep : Sigma Nat (\n -> Vec Nat n) =>
+  { fst = Nat/suc Nat/zero, snd = Vec/cons Nat/zero Vec/nil }

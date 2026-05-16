@@ -259,10 +259,21 @@ module Core = struct
     | VRecordType of
         { name : string
         ; params : value list
-        ; fields : value_ty binder list (* later closures may depend on earlier fields *)
+        ; fields : value_ty binder list
+          (* Pre-instantiated with `rigid_local` placeholders for prior fields.
+                 Consumers that only need to enumerate field names/types in
+                 isolation use this directly. *)
+        ; field_env : value bwd
+          (* Env captured at construction time, before any field was placed.
+                 Combine with `field_terms` to re-evaluate a field's type with
+                 actual prior field values substituted in. *)
+        ; field_terms : typ binder list
+          (* Source-term form of fields, parallel to `fields`. Field i's
+                 bound term, evaluated under `field_env <: v_0 <: ... <: v_{i-1}`,
+                 yields the dependent type with prior fields substituted. *)
         }
     [@printer
-      fun fmt aname aparams afields ->
+      fun fmt aname aparams afields _aenv _aterms ->
         let p =
           if aparams = []
           then ""

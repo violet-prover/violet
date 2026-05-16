@@ -1155,32 +1155,47 @@ type goal =
      - done_rev:          (field_name, core_term) pairs checked so far, in reverse
      - current_fname:     name of the field just checked (the GCheck we just returned from)
      - remaining_entries: (name, surface_expr) pairs in declaration order, still to check
-     - remaining_types:   field type binders (from VRecordType.fields) for remaining fields *)
+     - remaining_term_binders: term-form field binders for remaining fields, used to
+                          re-evaluate dependent field types with actual prior values.
+     - eval_env:          VRecordType.field_env extended with the VALUES of every field
+                          checked so far. Evaluating the next remaining term binder's
+                          bound term in this env substitutes prior field values into the
+                          dependent type. *)
   | KRecordLit_Field of
       t
       * string
       * (string * Core.term) list
       * string
       * (string * Surface.preterm) list
-      * Core.value_ty Syntax.binder list
+      * Core.typ Syntax.binder list
+      * Core.value bwd
   (* Continuation for GInfer (Proj (e, f)): holds (loc, field_name) after e is inferred. *)
   | KProj_HaveRec of t * string
   (* Continuation for GCheck (RecordUpdate …, expected_ty): fired after base is checked.
      - loc:               source location (for nested GChecks)
      - r_name:            record name (for RecordIntro)
      - overrides:         (field_name, surface_expr) map of the user-supplied overrides
-     - all_fields:        full field list from VRecordType in declaration order *)
+     - term_fields:       full term-form field binders, declaration order
+     - eval_env:          field_env from VRecordType — extended with each chosen field
+                          value as the walk progresses, so dependent field types can be
+                          instantiated on the fly. *)
   | KRecordUpdate_HaveBase of
-      t * string * (string * Surface.preterm) list * Core.value_ty Syntax.binder list
-  (* Continuation for each field inside RecordUpdate: same shape as KRecordLit_Field.
+      t
+      * string
+      * (string * Surface.preterm) list
+      * Core.typ Syntax.binder list
+      * Core.value bwd
+  (* Continuation for each override field inside RecordUpdate.
      Fired after each GCheck for an override field completes.
      - loc:               source location
      - r_name:            record name
      - base_core:         elaborated base term (for projections of non-overridden fields)
-     - overrides:         the full overrides map (to look up whether upcoming fields are overridden)
+     - overrides:         the full overrides map
      - done_rev:          (field_name, core_term) pairs checked so far, in reverse order
      - current_fname:     name of the field whose GCheck just completed
-     - remaining_fields:  remaining VRecordType binders (declaration order) still to process *)
+     - remaining_term_fields: remaining term-form binders still to process
+     - eval_env:          extended with the values of every field chosen so far
+                          (overrides as well as projections from base). *)
   | KRecordUpdate_Field of
       t
       * string
@@ -1188,7 +1203,8 @@ type goal =
       * (string * Surface.preterm) list
       * (string * Core.term) list
       * string
-      * Core.value_ty Syntax.binder list
+      * Core.typ Syntax.binder list
+      * Core.value bwd
 
 type machine =
   { mutable goals : goal list
@@ -1332,7 +1348,7 @@ let rec pretty_value (ctx : local_ctx) (v : Core.value) : string =
       (pretty_level to_lvl)
       (pretty_value ctx tm)
       (pretty_value ctx ty)
-  | Core.VRecordType { name; params; fields } ->
+  | Core.VRecordType { name; params; fields; _ } ->
     let p_params = List.map (pretty_value ctx) params in
     let rec walk ctx = function
       | [] -> []
@@ -1650,7 +1666,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
       "cannot infer the type of a record literal; please annotate"
   | GCheck (loc, RecordLit entries, expected_ty) ->
     (match Evaluation.force_head expected_ty with
-     | Core.VRecordType { name = r_name; fields = type_fields; _ } ->
+     | Core.VRecordType { name = r_name; fields = type_fields; field_env; field_terms; _ }
+       ->
        (* 1. Detect duplicate entry names *)
        let entry_names = List.map fst entries in
        let _ =
@@ -1694,17 +1711,24 @@ let rec dispatch (m : machine) (g : goal) : unit =
                 fname
                 r_name)
          field_names;
-       (* 4. Canonicalize entries to declaration order *)
+       (* 4. Canonicalize entries to declaration order. `field_terms` is already
+          in declaration order (eval.ml preserves order), parallel to `type_fields`. *)
        let canonical_entries =
          List.map (fun fname -> fname, List.assoc fname entries) field_names
        in
-       (* 5. Start the telescope walk *)
-       (match canonical_entries, type_fields with
+       (* 5. Start the telescope walk. The first field has no prior values to
+          substitute, so `eval field_env t0.bound` reduces to the same value as
+          `type_fields[0].bound`. *)
+       (match canonical_entries, field_terms with
         | [], [] ->
           m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields = [] }))
-        | (fname0, expr0) :: rest_entries, b0 :: rest_types ->
-          push m (KRecordLit_Field (loc, r_name, [], fname0, rest_entries, rest_types));
-          push m (GCheck (loc, expr0, b0.Syntax.bound))
+        | (fname0, expr0) :: rest_entries, t0 :: rest_term_types ->
+          let ty0 = Evaluation.eval field_env t0.Syntax.bound in
+          push
+            m
+            (KRecordLit_Field
+               (loc, r_name, [], fname0, rest_entries, rest_term_types, field_env));
+          push m (GCheck (loc, expr0, ty0))
         | _ ->
           Reporter.fatalf ~loc Elab_error "internal: record literal field count mismatch")
      | Core.Flex _ ->
@@ -1719,26 +1743,34 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "expected a record type for record literal, got %s"
          (pretty_value m.ctx other))
   | KRecordLit_Field
-      (loc, r_name, done_rev, current_fname, remaining_entries, remaining_types) ->
+      ( loc
+      , r_name
+      , done_rev
+      , current_fname
+      , remaining_entries
+      , remaining_term_binders
+      , eval_env ) ->
     (match take_result m with
      | PTerm field_tm ->
        let done_rev' = (current_fname, field_tm) :: done_rev in
-       (match remaining_entries, remaining_types with
+       (* Evaluate the just-checked field term in the current local env to get
+          its value, then extend `eval_env` with it so dependent types of later
+          fields can substitute the actual value in place of the rigid-local
+          placeholder VRecordType used at construction time. *)
+       let field_val = Evaluation.eval m.ctx.env field_tm in
+       let eval_env' = Bwd.Snoc (eval_env, field_val) in
+       (match remaining_entries, remaining_term_binders with
         | [], [] ->
           let fields = List.rev done_rev' in
           m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields }))
-        | (fname, expr) :: rest_entries, (b : Core.value_ty Syntax.binder) :: rest_types
+        | (fname, expr) :: rest_entries, (t : Core.typ Syntax.binder) :: rest_term_types
           ->
-          (* KNOWN LIMITATION: spec §4.3 requires substituting already-checked
-             field values into later field types (e.g. `snd : B fst` should be
-             re-evaluated with the actual `fst` value from the literal).
-             Currently we check against `b.Syntax.bound` (the raw closure body)
-             without applying earlier projections, so genuinely-dependent field
-             types are not properly threaded.  Tracked for follow-up. *)
+          let ty = Evaluation.eval eval_env' t.Syntax.bound in
           push
             m
-            (KRecordLit_Field (loc, r_name, done_rev', fname, rest_entries, rest_types));
-          push m (GCheck (loc, expr, b.Syntax.bound))
+            (KRecordLit_Field
+               (loc, r_name, done_rev', fname, rest_entries, rest_term_types, eval_env'));
+          push m (GCheck (loc, expr, ty))
         | _ ->
           Reporter.fatalf
             Elab_error
@@ -1755,7 +1787,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
       "cannot infer the type of a record update; please annotate"
   | GCheck (loc, RecordUpdate (base, overrides), expected_ty) ->
     (match Evaluation.force_head expected_ty with
-     | Core.VRecordType { name = r_name; fields = type_fields; _ } ->
+     | Core.VRecordType { name = r_name; fields = type_fields; field_env; field_terms; _ }
+       ->
        (* 1. Validate override field set *)
        if overrides = []
        then
@@ -1794,7 +1827,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
            overrides
        in
        (* 2. Check base against the expected record type; fire KRecordUpdate_HaveBase *)
-       push m (KRecordUpdate_HaveBase (loc, r_name, overrides, type_fields));
+       push m (KRecordUpdate_HaveBase (loc, r_name, overrides, field_terms, field_env));
        push m (GCheck (loc, base, expected_ty))
      | Core.Flex _ ->
        Reporter.fatalf
@@ -1807,68 +1840,99 @@ let rec dispatch (m : machine) (g : goal) : unit =
          Elab_error
          "expected a record type for record update, got %s"
          (pretty_value m.ctx other))
-  | KRecordUpdate_HaveBase (loc, r_name, overrides, type_fields) ->
+  | KRecordUpdate_HaveBase (loc, r_name, overrides, term_fields, field_env) ->
     (match take_result m with
      | PTerm base_core ->
-       (* Walk type_fields in declaration order.
-          For each field, use the override expression if provided, or synthesize a
-          RecordProj from base_core otherwise.
-          NOTE: for dependent records, the field types in `type_fields` may contain
-          RigidLocal references to prior field values; we follow Task 4.2's approach
-          and do not substitute prior values into the types.  This is correct for
-          non-dependent records; dependent records may produce incorrect types but
-          will not crash. *)
-       let rec go done_rev fields =
+       (* Walk term_fields in declaration order.  For each field:
+          - if overridden, push GCheck against the type instantiated with the
+            values of all previously-chosen fields, then suspend;
+          - otherwise, synthesize `RecordProj base_core fname`, eagerly evaluate
+            it, and extend eval_env so subsequent dependent field types see the
+            actual projected value. *)
+       let rec go done_rev fields eval_env =
          match fields with
          | [] ->
            let result_fields = List.rev done_rev in
            m.result
            <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
-         | (b : Core.value_ty Syntax.binder) :: rest_fields ->
+         | (b : Core.typ Syntax.binder) :: rest_fields ->
            let fname = b.name in
            (match List.assoc_opt fname overrides with
             | Some expr ->
+              let ty = Evaluation.eval eval_env b.Syntax.bound in
               push
                 m
                 (KRecordUpdate_Field
-                   (loc, r_name, base_core, overrides, done_rev, fname, rest_fields));
-              push m (GCheck (loc, expr, b.Syntax.bound))
+                   ( loc
+                   , r_name
+                   , base_core
+                   , overrides
+                   , done_rev
+                   , fname
+                   , rest_fields
+                   , eval_env ));
+              push m (GCheck (loc, expr, ty))
             | None ->
               let proj_core = Core.RecordProj { record = base_core; field = fname } in
-              go ((fname, proj_core) :: done_rev) rest_fields)
+              let proj_val = Evaluation.eval m.ctx.env proj_core in
+              go
+                ((fname, proj_core) :: done_rev)
+                rest_fields
+                (Bwd.Snoc (eval_env, proj_val)))
        in
-       go [] type_fields
+       go [] term_fields field_env
      | other ->
        Reporter.fatalf
          Elab_error
          "KRecordUpdate_HaveBase: bad result %s"
          ([%show: produced] other))
   | KRecordUpdate_Field
-      (loc, r_name, base_core, overrides, done_rev, current_fname, remaining_fields) ->
+      ( loc
+      , r_name
+      , base_core
+      , overrides
+      , done_rev
+      , current_fname
+      , remaining_term_fields
+      , eval_env ) ->
     (match take_result m with
      | PTerm field_tm ->
        let done_rev' = (current_fname, field_tm) :: done_rev in
-       (* Continue walking the remaining fields *)
-       let rec go done_rev fields =
+       let field_val = Evaluation.eval m.ctx.env field_tm in
+       let eval_env' = Bwd.Snoc (eval_env, field_val) in
+       (* Continue walking the remaining fields. *)
+       let rec go done_rev fields eval_env =
          match fields with
          | [] ->
            let result_fields = List.rev done_rev in
            m.result
            <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
-         | (b : Core.value_ty Syntax.binder) :: rest_fields ->
+         | (b : Core.typ Syntax.binder) :: rest_fields ->
            let fname = b.name in
            (match List.assoc_opt fname overrides with
             | Some expr ->
+              let ty = Evaluation.eval eval_env b.Syntax.bound in
               push
                 m
                 (KRecordUpdate_Field
-                   (loc, r_name, base_core, overrides, done_rev, fname, rest_fields));
-              push m (GCheck (loc, expr, b.Syntax.bound))
+                   ( loc
+                   , r_name
+                   , base_core
+                   , overrides
+                   , done_rev
+                   , fname
+                   , rest_fields
+                   , eval_env ));
+              push m (GCheck (loc, expr, ty))
             | None ->
               let proj_core = Core.RecordProj { record = base_core; field = fname } in
-              go ((fname, proj_core) :: done_rev) rest_fields)
+              let proj_val = Evaluation.eval m.ctx.env proj_core in
+              go
+                ((fname, proj_core) :: done_rev)
+                rest_fields
+                (Bwd.Snoc (eval_env, proj_val)))
        in
-       go done_rev' remaining_fields
+       go done_rev' remaining_term_fields eval_env'
      | other ->
        Reporter.fatalf
          Elab_error
@@ -1881,7 +1945,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
     (match take_result m with
      | PTermType (e_core, v_ty) ->
        (match Evaluation.force_head v_ty with
-        | Core.VRecordType { name = r_name; params = v_params; fields } ->
+        | Core.VRecordType { name = r_name; params = v_params; fields; _ } ->
           (* Validate that field f exists in the record type *)
           let field_names =
             List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields

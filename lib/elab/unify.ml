@@ -82,7 +82,7 @@ module PartialRenaming = struct
       LiftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
     | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
       UnliftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
-    | VRecordType { name; params; fields } ->
+    | VRecordType { name; params; fields; field_env = _; field_terms = _ } ->
       let t_params = List.map (rename m pr) params in
       let rec walk pr = function
         | [] -> []

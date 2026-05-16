@@ -157,9 +157,7 @@ let expected : (string * outcome) list =
   ; "../example/bad/bad-record-pattern-missing-field.vt", `Fail
   ; "../example/bad/bad-record-pattern-unknown-field.vt", `Fail
   ; "../example/bad/bad-record-duplicate-field.vt", `Fail
-    (* TODO: dependent record literal type-substitution
-       Expected to fail until record substitution is implemented. *)
-  ; "../example/bad/bad-dependent-record-literal.vt", `Fail
+  ; "../example/src/dependent-record-literal.vt", `Ok
   ]
 ;;
 
