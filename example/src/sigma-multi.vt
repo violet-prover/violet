@@ -1,7 +1,0 @@
-\export SigmaM
-
-\universe U V
-
-\record SigmaM (A : U) (B : A -> V) : U ⊔ V
-  | fst : A
-  | snd : B fst

@@ -1,6 +1,6 @@
-\import nat
-\import list
-\import equality
+\import std/nat
+\import std/list
+\import std/equality
 
 \export length
 

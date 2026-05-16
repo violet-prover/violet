@@ -1,5 +1,5 @@
-\import bool
-\import sigma
+\import std/bool
+\import std/sigma
 
 \export swap
 

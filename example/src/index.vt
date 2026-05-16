@@ -1,11 +1,11 @@
-\import nat
-\import nat/properties
-\import list
-\import vec
-\import equality
+\import std/nat
+\import std/nat/properties
+\import std/list
+\import std/vec
+\import std/equality
 \import compute
-\import sigma
-\import sigma-multi
+\import std/sigma
+\import std/sigma-multi
 \import pterodactyl
 
 # whatever

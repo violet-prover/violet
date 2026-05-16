@@ -1,7 +1,0 @@
-\export Sigma
-
-\universe U
-
-\record Sigma (A : U) (B : A -> U) : U
-  | fst : A
-  | snd : B fst

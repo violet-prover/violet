@@ -1,6 +1,6 @@
-\import nat
-\import vec
-\import sigma
+\import std/nat
+\import std/vec
+\import std/sigma
 
 \universe U
 

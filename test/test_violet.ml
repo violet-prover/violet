@@ -29,30 +29,48 @@ let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
        | Violet_project.Resolve.Project_error msg -> failwith msg)
     | None -> `Single_file (Filename.dirname filename)
   in
-  let rec walk key m =
+  (* `prefix_segs` are the canonical module-path segments above the file
+     currently being walked. Each child's canonical key is
+     `prefix_segs @ user_import`; the prefix grows by the crossed dep_key
+     whenever an import crosses into a dep. Both the mods hashtable and the
+     deps adjacency list use canonical keys, and the Surface.t stored in mods
+     has its `imports` field rewritten to canonical paths so the elaborator's
+     `renaming` finds the imported module's section. *)
+  let rec walk ctx prefix_segs key m =
     if Hashtbl.mem deps key
     then ()
     else begin
-      Hashtbl.add mods key m;
-      let values =
-        List.map (fun path -> String.concat "/" path) m.Violet_elab.Surface.imports
+      let canonical_libraries =
+        List.map (fun lib -> prefix_segs @ lib) m.Violet_elab.Surface.imports
       in
-      Hashtbl.add deps key values;
-      List.iter
-        (fun library ->
-           let import_key = String.concat "/" library in
-           let filepath =
-             match mode with
-             | `Project proj -> Violet_project.Resolve.resolve_import proj library
-             | `Single_file root -> root ^ "/" ^ import_key ^ ".vt"
+      Hashtbl.add mods key { m with Violet_elab.Surface.imports = canonical_libraries };
+      Hashtbl.add deps key (List.map (String.concat "/") canonical_libraries);
+      List.iter2
+        (fun user_library canonical_library ->
+           let canonical_key = String.concat "/" canonical_library in
+           let next_ctx, next_segs, filepath =
+             match ctx with
+             | `Project proj ->
+               let p, crossed, fp =
+                 Violet_project.Resolve.resolve_import_in proj user_library
+               in
+               let ns =
+                 match crossed with
+                 | Some k -> prefix_segs @ [ k ]
+                 | None -> prefix_segs
+               in
+               `Project p, ns, fp
+             | `Single_file root ->
+               ctx, prefix_segs, root ^ "/" ^ String.concat "/" user_library ^ ".vt"
            in
-           walk import_key (Violet_elab.Parser.parse_file filepath))
+           walk next_ctx next_segs canonical_key (Violet_elab.Parser.parse_file filepath))
         m.imports
+        canonical_libraries
     end
   in
   let m = Violet_elab.Parser.parse_file filename in
   let root_key = Filename.chop_extension @@ Filename.basename m.name in
-  walk root_key m;
+  walk mode [] root_key m;
   match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
   | Sorted r -> List.map (fun k -> k, Hashtbl.find mods k) r
   | ErrorCycle _ -> failwith "import cycle"
@@ -122,16 +140,9 @@ let outcome_str = function
    Refactor goal is to keep OK/OK working, and (eventually) push the FAIL/HUNG
    entries toward OK as unification improves. *)
 let expected : (string * outcome) list =
-  [ "../example/src/bool.vt", `Ok
-  ; "../example/src/nat.vt", `Ok
-  ; "../example/src/list.vt", `Ok
-  ; "../example/src/vec.vt", `Ok
-  ; "../example/src/equality.vt", `Ok
-  ; "../example/src/index.vt", `Ok
+  [ "../example/src/index.vt", `Ok
   ; "../example/src/compute.vt", `Ok
   ; "../example/src/universe-explicit.vt", `Ok
-  ; "../example/src/sigma.vt", `Ok
-  ; "../example/src/sigma-multi.vt", `Ok
   ; "../example/src/ind-namespacing.vt", `Ok
   ; "../example/src/pterodactyl.vt", `Ok
   ; "../example/src/operators.vt", `Ok

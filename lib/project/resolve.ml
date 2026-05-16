@@ -229,29 +229,39 @@ let resolve_in_dep (proj : project) (path : string list) : string =
       (Project_error (Printf.sprintf "unresolved import: %s" (String.concat "/" path)))
 ;;
 
-let resolve_import (proj : project) (path : string list) : string =
+(* Resolve an import and report which project owns the resolved file plus the
+   dep-key prefix (if any) acquired by crossing into that project. The prefix
+   is `Some "k"` when this import crosses into a dep keyed `k` in `proj`, and
+   `None` when the import stays local to `proj`. Callers thread the prefix to
+   build a canonical module path so the same physical file gets a single key
+   regardless of which consumer's spelling reached it. *)
+let resolve_import_in (proj : project) (path : string list)
+  : project * string option * string
+  =
   match path with
   | [] -> raise (Project_error "empty import path")
   | first :: rest ->
     if List.mem first proj.local_segments
     then (
       let joined = String.concat "/" (first :: rest) in
-      Filename.concat (Filename.concat proj.root "src") (joined ^ ".vt"))
+      proj, None, Filename.concat (Filename.concat proj.root "src") (joined ^ ".vt"))
     else (
       match List.assoc_opt first proj.dep_key_to_project with
       | Some dep_proj ->
-        (* Delegate the tail into the dep's own project, but only the dep's
-           local segments are visible. The dep's own deps are private and not
-           transitively visible to the consumer. *)
         (match rest with
          | [] ->
            raise
              (Project_error
                 (Printf.sprintf "import `%s` is just a dep key with no module path" first))
-         | _ -> resolve_in_dep dep_proj rest)
+         | _ -> dep_proj, Some first, resolve_in_dep dep_proj rest)
       | None ->
         raise
           (Project_error (Printf.sprintf "unresolved import: %s" (String.concat "/" path))))
+;;
+
+let resolve_import (proj : project) (path : string list) : string =
+  let _, _, fp = resolve_import_in proj path in
+  fp
 ;;
 
 let%expect_test "resolve_import: local" =

@@ -46,30 +46,52 @@ let rec walk_vt_files (dir : string) : string list =
 type dependencies = (string, string list) Hashtbl.t
 type modules = (string, Violet_elab.Surface.t) Hashtbl.t
 
+(* `prefix_segs` are the canonical module-path segments above the file being
+   prepared. Each child's canonical key is `prefix_segs @ user_import`; the
+   prefix grows by the crossed dep_key whenever an import crosses into a dep,
+   so the same physical file gets a single canonical key regardless of which
+   consumer's spelling reached it. The Surface.t stored in mods has its
+   `imports` rewritten to canonical paths so the elaborator's `renaming` finds
+   each imported module's section. *)
 let rec prepare_dependencies
           (mode : mode)
+          (prefix_segs : string list)
           (mods : modules)
           (deps : dependencies)
           (key : string)
           (m : Violet_elab.Surface.t)
   =
-  Hashtbl.add mods key m;
-  let values = List.map (fun path -> String.concat "/" path) m.imports in
-  match Hashtbl.find_opt deps key with
-  | Some _ -> ()
-  | None ->
-    Hashtbl.add deps key values;
-    List.iter
-      (fun library ->
-         let import_key = String.concat "/" library in
-         let filepath =
+  if Hashtbl.mem deps key
+  then ()
+  else begin
+    let canonical_libraries = List.map (fun lib -> prefix_segs @ lib) m.imports in
+    Hashtbl.add mods key { m with imports = canonical_libraries };
+    Hashtbl.add deps key (List.map (String.concat "/") canonical_libraries);
+    List.iter2
+      (fun user_library canonical_library ->
+         let canonical_key = String.concat "/" canonical_library in
+         let next_mode, next_segs, filepath =
            match mode with
-           | Project proj -> Violet_project.Resolve.resolve_import proj library
-           | Single_file root -> Filename.concat root (import_key ^ ".vt")
+           | Project proj ->
+             let p, crossed, fp =
+               Violet_project.Resolve.resolve_import_in proj user_library
+             in
+             let ns =
+               match crossed with
+               | Some k -> prefix_segs @ [ k ]
+               | None -> prefix_segs
+             in
+             Project p, ns, fp
+           | Single_file root ->
+             ( mode
+             , prefix_segs
+             , Filename.concat root (String.concat "/" user_library ^ ".vt") )
          in
          let m = Violet_elab.Parser.parse_file filepath in
-         prepare_dependencies mode mods deps import_key m)
+         prepare_dependencies next_mode next_segs mods deps canonical_key m)
       m.imports
+      canonical_libraries
+  end
 ;;
 
 let version = "0.1.0"
@@ -95,7 +117,7 @@ let load_cmd ~env =
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet_elab.Parser.parse_file filename in
         let mode = mode_for_entry ?explicit_root filename in
-        prepare_dependencies mode mods deps (module_name m.name) m;
+        prepare_dependencies mode [] mods deps (module_name m.name) m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
@@ -137,7 +159,7 @@ let check_cmd ~env =
         | Some filename ->
           let m = Violet_elab.Parser.parse_file filename in
           let mode = mode_for_entry ?explicit_root filename in
-          prepare_dependencies mode mods deps (module_name m.name) m;
+          prepare_dependencies mode [] mods deps (module_name m.name) m;
           (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
            | Sorted r ->
              List.iter
@@ -171,7 +193,7 @@ let check_cmd ~env =
           List.iter
             (fun filename ->
                let m = Violet_elab.Parser.parse_file filename in
-               prepare_dependencies mode mods deps (module_name m.name) m)
+               prepare_dependencies mode [] mods deps (module_name m.name) m)
             files;
           (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
            | Sorted r ->
