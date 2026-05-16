@@ -209,6 +209,95 @@ let check_cmd ~env =
       $ arg_file)
 ;;
 
+let write_file path contents =
+  let oc = open_out path in
+  Fun.protect ~finally:(fun () -> close_out oc) @@ fun () -> output_string oc contents
+;;
+
+let new_cmd ~env =
+  let _ = env in
+  let arg_name =
+    let doc = "Project directory to create (also used as the manifest \\name)." in
+    Arg.required
+    @@ Arg.pos 0 (Arg.some Arg.string) None
+    @@ Arg.info [] ~docv:"PROJECT" ~doc
+  in
+  let doc = "Create a new violet project scaffold" in
+  let info = Cmd.info "new" ~version ~doc in
+  Cmd.v
+    info
+    Term.(
+      const (fun project ->
+        if Sys.file_exists project
+        then
+          Violet_elab.Reporter.fatalf
+            Parse_error
+            "cannot create project: %s already exists"
+            project;
+        let name = Filename.basename project in
+        Unix.mkdir project 0o755;
+        Unix.mkdir (Filename.concat project "src") 0o755;
+        let info_path = Filename.concat project "info.vt" in
+        write_file info_path (Printf.sprintf "\\name %S\n\\version \"0.1.0\"\n" name);
+        Printf.printf "created %s\n" project)
+      $ arg_name)
+;;
+
+let add_cmd ~env =
+  let _ = env in
+  let arg_root =
+    let doc = "Explicit project root (directory containing info.vt)." in
+    Arg.value @@ Arg.opt (Arg.some Arg.dir) None @@ Arg.info [ "root" ] ~docv:"DIR" ~doc
+  in
+  let arg_rev =
+    let doc = "Git revision to pin in info.vt (branch, tag, or commit)." in
+    Arg.value @@ Arg.opt Arg.string "main" @@ Arg.info [ "rev" ] ~docv:"REV" ~doc
+  in
+  let arg_key =
+    let doc = "Dependency key (the prefix used in import paths)." in
+    Arg.required @@ Arg.pos 0 (Arg.some Arg.string) None @@ Arg.info [] ~docv:"KEY" ~doc
+  in
+  let arg_url =
+    let doc = "Git URL of the dependency." in
+    Arg.required @@ Arg.pos 1 (Arg.some Arg.string) None @@ Arg.info [] ~docv:"URL" ~doc
+  in
+  let doc = "Add a git dependency to info.vt" in
+  let info = Cmd.info "add" ~version ~doc in
+  Cmd.v
+    info
+    Term.(
+      const (fun explicit_root rev key url ->
+        let root =
+          match explicit_root with
+          | Some r -> r
+          | None ->
+            (match Violet_project.Root.find_root (Sys.getcwd ()) with
+             | Some r -> r
+             | None ->
+               Violet_elab.Reporter.fatalf
+                 Parse_error
+                 "no info.vt found in cwd or its ancestors")
+        in
+        let manifest =
+          try Violet_project.Resolve.load_manifest root with
+          | Violet_project.Resolve.Project_error msg ->
+            Violet_elab.Reporter.fatalf Parse_error "%s" msg
+        in
+        if
+          List.exists (fun (d : Violet_project.Manifest.dep) -> d.key = key) manifest.deps
+        then Violet_elab.Reporter.fatalf Parse_error "dep `%s` is already declared" key;
+        let info_path = Filename.concat root "info.vt" in
+        let oc = open_out_gen [ Open_append; Open_creat ] 0o644 info_path in
+        (Fun.protect ~finally:(fun () -> close_out oc)
+         @@ fun () ->
+         output_string oc (Printf.sprintf "\\dep %s (git = %S, rev = %S)\n" key url rev));
+        Printf.printf "added dep `%s` -> %s@%s; run `violet update`\n" key url rev)
+      $ arg_root
+      $ arg_rev
+      $ arg_key
+      $ arg_url)
+;;
+
 let update_cmd ~env =
   let _ = env in
   let arg_root =
@@ -260,7 +349,9 @@ let cmd ~env =
   let doc = "violet" in
   let man = [ `S Manpage.s_bugs; `S Manpage.s_authors; `P "Lîm Tsú-thuàn" ] in
   let info = Cmd.info "violet" ~version ~doc ~man in
-  Cmd.group info [ load_cmd ~env; check_cmd ~env; update_cmd ~env ]
+  Cmd.group
+    info
+    [ load_cmd ~env; check_cmd ~env; update_cmd ~env; new_cmd ~env; add_cmd ~env ]
 ;;
 
 let () =
