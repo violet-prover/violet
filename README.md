@@ -1,22 +1,6 @@
 # violet
 
-This project develop violet using nameful context (library Yuujinchou).
+Violet is a small dependent type language.
 
-- core unification and meta solving: elaboration-zoo, Pterodactyl
-- top level
-  - let definition
-  - import statement
-  - inductive types (view `nat`, `list`, `vec`, `equality` in `example/`)
-    - generated eliminator (type and computation) (e.g. `Nat-elim`)
-    - stack based syntax (`<= \elim`, `<= \intro`, `<= \split`)
-    - strictly positive check
-  - export statement for top-level definitions (`\export name+`); private by default
-- term
-  - variable
-  - application
-  - typed lambda
-  - lambda
-  - universe
-  - hole
-  - builtin record
-- universe polymorphism
+- site: https://violet-lang.org
+- standard library: https://github.com/violet-prover/std
