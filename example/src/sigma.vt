@@ -2,5 +2,6 @@
 
 \universe U
 
-\data Sigma (A : U) (B : A -> U) : U
-  | mk : (a : A) -> B a -> Sigma A B
+\record Sigma (A : U) (B : A -> U) : U
+  | fst : A
+  | snd : B fst

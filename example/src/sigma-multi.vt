@@ -2,5 +2,6 @@
 
 \universe U V
 
-\data SigmaM (A : U) (B : A -> V) : U ⊔ V
-  | mk : (a : A) -> B a -> SigmaM A B
+\record SigmaM (A : U) (B : A -> V) : U ⊔ V
+  | fst : A
+  | snd : B fst

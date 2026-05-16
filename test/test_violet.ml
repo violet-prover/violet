@@ -146,6 +146,18 @@ let expected : (string * outcome) list =
   ; "../example/bad/bad-operator-no-holes.vt", `Fail
   ; "../example/bad/bad-operator-duplicate.vt", `Fail
   ; "../example/bad/bad-operator-cycle.vt", `Fail
+  ; "../example/src/record.vt", `Ok
+  ; "../example/src/record-extras.vt", `Ok
+  ; "../example/src/record-eta.vt", `Ok
+  ; "../example/bad/bad-record-missing-field.vt", `Fail
+  ; "../example/bad/bad-proj-unknown-field.vt", `Fail
+  ; "../example/bad/bad-proj-non-record.vt", `Fail
+  ; "../example/bad/bad-record-update-unknown-field.vt", `Fail
+  ; "../example/bad/bad-record-update-empty.vt", `Fail
+  ; "../example/bad/bad-record-pattern-missing-field.vt", `Fail
+  ; "../example/bad/bad-record-pattern-unknown-field.vt", `Fail
+  ; "../example/bad/bad-record-duplicate-field.vt", `Fail
+  ; "../example/src/dependent-record-literal.vt", `Ok
   ]
 ;;
 

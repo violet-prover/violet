@@ -873,6 +873,11 @@ let lower_body
       Reporter.fatalf
         Elab_error
         "internal: Op_soup inside operator body (resolver should have lowered it)"
+    | Surface.RecordLit entries ->
+      Surface.RecordLit (List.map (fun (f, e) -> f, sub e) entries)
+    | Surface.RecordUpdate (base, entries) ->
+      Surface.RecordUpdate (sub base, List.map (fun (f, e) -> f, sub e) entries)
+    | Surface.Proj (e, f) -> Surface.Proj (sub e, f)
   in
   (* If the body has no hole references, treat it as a function and apply
      it positionally — this is the bare-ident sugar `:= ite`. *)
@@ -897,6 +902,11 @@ let lower_body
         walk b
       | Surface.Universe | Surface.Hole | Surface.Goal _ -> ()
       | Surface.Op_soup _ -> ()
+      | Surface.RecordLit entries -> List.iter (fun (_, e) -> walk e) entries
+      | Surface.RecordUpdate (base, entries) ->
+        walk base;
+        List.iter (fun (_, e) -> walk e) entries
+      | Surface.Proj (e, _) -> walk e
     in
     walk op.body;
     !r
@@ -1321,6 +1331,12 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
     Surface.Pi ({ b with bound = lower_preterm table b.bound }, lower_preterm table body)
   | Surface.Max (a, b) -> Surface.Max (lower_preterm table a, lower_preterm table b)
   | Surface.Universe | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
+  | Surface.RecordLit entries ->
+    Surface.RecordLit (List.map (fun (f, e) -> f, lower_preterm table e) entries)
+  | Surface.RecordUpdate (base, entries) ->
+    Surface.RecordUpdate
+      (lower_preterm table base, List.map (fun (f, e) -> f, lower_preterm table e) entries)
+  | Surface.Proj (e, f) -> Surface.Proj (lower_preterm table e, f)
 ;;
 
 let lower_binder (table : op_table) (b : Surface.preterm Violet_kernel.Syntax.binder)
@@ -1382,6 +1398,16 @@ let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
     Reporter.fatalf
       Elab_error
       "internal: lower_top_with should not be called on Operator_decl"
+  | Surface.Record { name; params; ind_ty; fields } ->
+    let lower_binders' =
+      List.map (fun b -> { b with Surface.bound = lower_preterm table b.Surface.bound })
+    in
+    Surface.Record
+      { name
+      ; params = lower_binders' params
+      ; ind_ty = lower_preterm table ind_ty
+      ; fields = lower_binders' fields
+      }
 ;;
 
 (* Cross-module flow: each module's exported operator table is recorded

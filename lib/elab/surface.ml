@@ -83,6 +83,25 @@ type preterm =
   [@printer
     fun fmt items ->
       fprintf fmt "<soup:[%s]>" (String.concat "; " (List.map show_soup_item items))]
+  | RecordLit of (string * preterm) list
+  [@printer
+    fun fmt aentries ->
+      fprintf
+        fmt
+        "{ %s }"
+        (String.concat
+           ", "
+           (List.map (fun (f, e) -> f ^ " = " ^ show_preterm e) aentries))]
+  | RecordUpdate of preterm * (string * preterm) list
+  [@printer
+    fun fmt (base, entries) ->
+      fprintf
+        fmt
+        "{ %s | %s }"
+        (show_preterm base)
+        (String.concat ", " (List.map (fun (f, e) -> f ^ " = " ^ show_preterm e) entries))]
+  | Proj of preterm * string
+  [@printer fun fmt (e, f) -> fprintf fmt "%s.%s" (show_preterm e) f]
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
@@ -105,6 +124,7 @@ type pattern =
   | PVar of string
   | PCon of string * string list
   | PImpVar of string
+  | PRecord of (string * pattern) list
 [@@deriving show]
 
 type clause =
@@ -195,6 +215,12 @@ type top =
       { template : string
       ; body : preterm
       ; options : op_option list
+      }
+  | Record of
+      { name : string
+      ; params : pretype binder list
+      ; ind_ty : pretype
+      ; fields : pretype binder list
       }
 [@@deriving show]
 

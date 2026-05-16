@@ -1,0 +1,5 @@
+\import nat
+
+\universe U
+
+\let bad : Nat => Nat/zero.x

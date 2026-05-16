@@ -15,6 +15,10 @@ type kernel_error =
       ; rhs : Level.level
       }
   | BadApplication of Core.value
+  | BadProjection of
+      { value : Core.value
+      ; field : string
+      }
   | LocalVarOutOfRange of
       { index : int
       ; env_size : int

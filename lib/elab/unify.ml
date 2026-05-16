@@ -82,6 +82,22 @@ module PartialRenaming = struct
       LiftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
     | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
       UnliftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
+    | VRecordType { name; params; fields; field_env = _; field_terms = _ } ->
+      let t_params = List.map (rename m pr) params in
+      let rec walk pr = function
+        | [] -> []
+        | (b : value Syntax.binder) :: rest ->
+          let t_bound = rename m pr b.bound in
+          Hashtbl.add pr.ren pr.cod pr.dom;
+          let pr' = { pr with cod = pr.cod + 1; dom = pr.dom + 1 } in
+          let t_rest = walk pr' rest in
+          Hashtbl.remove pr.ren pr.cod;
+          { Syntax.name = b.name; bound = t_bound; implicit = b.implicit } :: t_rest
+      in
+      RecordType { name; params = t_params; fields = walk pr fields }
+    | VRecordIntro { name; fields } ->
+      RecordIntro { name; fields = List.map (fun (f, v) -> f, rename m pr v) fields }
+    | VRecordProj (v, f) -> RecordProj { record = rename m pr v; field = f }
 
   and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
     match sp with
@@ -162,12 +178,55 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
     unify_spine ~loc lvl sp1 sp2
   | Elim (h1, sp1), Elim (h2, sp2) when String.equal h1.elim_name h2.elim_name ->
     unify_spine ~loc lvl sp1 sp2
+  | VRecordProj (v1, f1), VRecordProj (v2, f2) when String.equal f1 f2 ->
+    unify ~loc lvl v1 v2
   | VLambda { bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (lvl, Emp) in
     unify ~loc (lvl + 1) (b1 x) (b2 x)
   | VLambda { bound; _ }, t | t, VLambda { bound; _ } ->
     let x = Core.RigidLocal (lvl, Emp) in
     unify ~loc (lvl + 1) (bound x) (vapp t x)
+  (* Record types are equal if they have the same name and equal parameters. *)
+  | VRecordType r1, VRecordType r2 when String.equal r1.name r2.name ->
+    List.iter2 (unify ~loc lvl) r1.params r2.params
+  (* Record η. Standard surjective-pairing: a value of record type is
+     definitionally equal to the record literal of its projections. *)
+  | VRecordIntro r1, VRecordIntro r2 when r1.name = r2.name ->
+    if List.length r1.fields <> List.length r2.fields
+    then
+      Reporter.fatalf
+        ~loc
+        Type_error
+        "record %s: field count mismatch (%d vs %d)"
+        r1.name
+        (List.length r1.fields)
+        (List.length r2.fields);
+    (* Field sets must agree (modulo ordering); unify each by name. *)
+    List.iter
+      (fun (f, v1) ->
+         match List.assoc_opt f r2.fields with
+         | Some v2 -> unify ~loc lvl v1 v2
+         | None ->
+           Reporter.fatalf
+             ~loc
+             Type_error
+             "record %s: field `%s` not in both intros"
+             r1.name
+             f)
+      r1.fields
+  | VRecordIntro r, Flex (m, sp) | Flex (m, sp), VRecordIntro r ->
+    (* One side is a flex meta; solve it directly with the whole record literal.
+       Projecting fields from a flex produces stuck neutrals that the unifier
+       cannot resolve, so we short-circuit by solving m := VRecordIntro r. *)
+    solve lvl m sp (VRecordIntro r)
+  | VRecordIntro r, t | t, VRecordIntro r ->
+    (* One side is a record literal; eta-expand the other by projecting each
+       field. The expanded sides are then compared field-by-field. *)
+    List.iter
+      (fun (f, v_lit) ->
+         let v_proj = vrecord_proj t f in
+         unify ~loc lvl v_lit v_proj)
+      r.fields
   | VPi (_, b1), VPi (_, b2) ->
     let x = Core.RigidLocal (lvl, Emp) in
     unify ~loc (lvl + 1) (b1 x) (b2 x)
@@ -201,4 +260,24 @@ and unify_spine ~loc (lvl : int) (xs : Core.value bwd) (ys : Core.value bwd) : u
       "cannot unify spine `%s` and `%s`, spine mismatched"
       left
       right
+;;
+
+let%expect_test "record eta: VRecordIntro vs neutral unifies" =
+  (* If `t = RigidLocal 0` and lit = { x = t.x, y = t.y }, then
+     unify should succeed: the literal is definitionally equal to t. *)
+  let t : Core.value = Core.RigidLocal (0, Emp) in
+  let lit : Core.value =
+    Core.VRecordIntro
+      { name = "Point"
+      ; fields = [ "x", Core.VRecordProj (t, "x"); "y", Core.VRecordProj (t, "y") ]
+      }
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc:(Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)) 1 t lit;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| ok |}]
 ;;

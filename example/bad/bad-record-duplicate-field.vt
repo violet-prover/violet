@@ -1,0 +1,9 @@
+\import nat
+
+\universe U
+
+\record Point : U
+  | x : Nat
+  | y : Nat
+
+\let bad : Point => { x = Nat/zero, x = Nat/suc Nat/zero }
