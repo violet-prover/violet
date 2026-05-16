@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-linux-x86_64:
-    runs-on: docker
+    runs-on: codeberg-medium
     container:
       image: node:20-bookworm
     steps:
@@ -52,7 +52,7 @@ jobs:
   release:
     needs:
       - build-linux-x86_64
-    runs-on: docker
+    runs-on: medium
     container:
       image: node:20-bookworm
     steps:
