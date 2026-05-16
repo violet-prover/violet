@@ -23,18 +23,27 @@
  (name violet)
  (synopsis "A small dependent type language")
  (description "Violet is a small dependent type language.")
- (depends ocaml dune cmdliner eio eio_main violet_kernel violet_elab)
+ (depends
+  ocaml
+  dune
+  cmdliner
+  eio
+  eio_main
+  tsort
+  ppx_expect
+  violet_kernel
+  violet_elab)
  (tags
   ("dependent-types" "type-theory" "proof-assistant")))
 
 (package
  (name violet_kernel)
  (synopsis "Violet kernel (trusted core)")
- (depends ocaml dune ppx_deriving bwd))
+ (depends ocaml dune ppx_deriving ppx_expect bwd))
 
 (package
  (name violet_elab)
  (synopsis "Violet elaborator")
- (depends ocaml dune ppx_deriving asai algaeff yuujinchou bwd eio))
+ (depends ocaml dune ppx_deriving ppx_expect asai algaeff yuujinchou bwd eio))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project
