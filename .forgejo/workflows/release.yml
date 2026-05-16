@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-x86_64:
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libev-dev libgmp-dev \
+            m4 git curl unzip rsync sudo bubblewrap ca-certificates
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+          dune-cache: true
+
+      - name: Install opam dependencies
+        run: opam install . --deps-only --yes
+
+      - name: Build release binary
+        run: opam exec -- dune build --release bin/main.exe
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp _build/default/bin/main.exe dist/violet-linux-x86_64
+          strip dist/violet-linux-x86_64
+          (cd dist && sha256sum violet-linux-x86_64 > violet-linux-x86_64.sha256)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: violet-linux-x86_64
+          path: dist/
+
+  release:
+    needs:
+      - build-linux-x86_64
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish Forgejo release
+        uses: https://code.forgejo.org/actions/forgejo-release@v2
+        with:
+          direction: upload
+          tag: ${{ github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-dir: dist
+          prerelease: false
+          override: true
