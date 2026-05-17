@@ -17,6 +17,8 @@ jobs:
         include:
           - os: ubuntu-latest
             asset_name: violet-linux-x86_64
+          - os: ubuntu-24.04-arm
+            asset_name: violet-linux-aarch64
           - os: macos-latest
             asset_name: violet-macos-arm64
     runs-on: ${{ matrix.os }}
@@ -39,11 +41,19 @@ jobs:
           mkdir -p dist
           cp _build/install/default/bin/violet dist/${{ matrix.asset_name }}
           strip dist/${{ matrix.asset_name }} || true
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
+          else
+            shasum -a 256 ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}
+          path: |
+            dist/${{ matrix.asset_name }}
+            dist/${{ matrix.asset_name }}.sha256
 
   release:
     needs: build
