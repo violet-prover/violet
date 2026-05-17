@@ -27,3 +27,4 @@
 - Modules are now private by default; introduced the `\export` form to expose definitions.
 - Introduced the project concept: dependencies are managed through `info.vt`. See https://github.com/violet-prover/std for an example.
 - Added built-in records to the kernel.
+- Working REPL (run `violet load <file>`)
