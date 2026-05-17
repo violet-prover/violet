@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- project lock file now will record HEAD commit SHA correctly
+
 ## 0.2.0
 
 - Reworked the template variable syntax inside `\operator` definitions:

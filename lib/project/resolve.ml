@@ -116,7 +116,7 @@ and resolve_dep_project
                       run `violet update`"
                      d.key)))
       in
-      Cache.ensure_clone ~url ~rev:locked_rev
+      fst (Cache.ensure_clone ~url ~rev:locked_rev)
   in
   load dep_root
 ;;

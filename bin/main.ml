@@ -333,8 +333,8 @@ let update_cmd ~env =
                match d.source with
                | Violet_project.Manifest.Path _ -> None
                | Violet_project.Manifest.Git { url; rev } ->
-                 let _ : string = Violet_project.Cache.ensure_clone ~url ~rev in
-                 Some Violet_project.Lockfile.{ key = d.key; url; rev })
+                 let _, sha = Violet_project.Cache.ensure_clone ~url ~rev in
+                 Some Violet_project.Lockfile.{ key = d.key; url; rev = sha })
             manifest.deps
         in
         let lock = Violet_project.Lockfile.{ entries } in
