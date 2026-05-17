@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1
+
 - install script
 - project lock file now will record HEAD commit SHA correctly
 
