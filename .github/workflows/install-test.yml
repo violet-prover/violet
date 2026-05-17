@@ -40,12 +40,12 @@ jobs:
             else
               apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
             fi
-            VIOLET_VERSION=v0.2.0 VIOLET_NO_MODIFY_PATH=1 sh ./install.sh
+            VIOLET_VERSION=v0.2.1 VIOLET_NO_MODIFY_PATH=1 sh ./install.sh
             ~/.violet/bin/violet --version
           '
 
       - name: Smoke test (macOS, host)
         if: matrix.image == ''
         run: |
-          VIOLET_VERSION=v0.2.0 VIOLET_NO_MODIFY_PATH=1 sh ./install.sh
+          VIOLET_VERSION=v0.2.1 VIOLET_NO_MODIFY_PATH=1 sh ./install.sh
           ~/.violet/bin/violet --version
