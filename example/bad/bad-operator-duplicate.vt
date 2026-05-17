@@ -8,5 +8,5 @@
   | add (suc m) n => suc (add m n)
 
 # Duplicate template — the second `operator` declaration must be rejected.
-\operator "~x + ~y" => add
-\operator "~x + ~y" => add
+\operator "\x + \y" => add
+\operator "\x + \y" => add

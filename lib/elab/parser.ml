@@ -1617,8 +1617,8 @@ let%expect_test "lex string: simple" =
 ;;
 
 let%expect_test "lex string: template" =
-  print_string @@ [%show: Lexer.token list] (lex_to_list "\"~x + ~y\"");
-  [%expect {| [<string:~x + ~y>] |}]
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\"\\x + \\y\"");
+  [%expect {| [<string:\x + \y>] |}]
 ;;
 
 let%expect_test "lex operator keyword" =
@@ -1629,10 +1629,10 @@ let%expect_test "lex operator keyword" =
 let%expect_test "lex full operator decl" =
   print_string
   @@ [%show: Lexer.token list]
-       (lex_to_list "\\operator \"~x + ~y\" => add \\weaker_than: *");
+       (lex_to_list "\\operator \"\\x + \\y\" => add \\weaker_than: *");
   [%expect
     {|
-    [\operator; <string:~x + ~y>; =>; <identifier:add>; \weaker_than; :;
+    [\operator; <string:\x + \y>; =>; <identifier:add>; \weaker_than; :;
       <symbol:*>]
     |}]
 ;;
@@ -1667,34 +1667,35 @@ let%expect_test "parse: single \\export line, no decls" =
 
 let%expect_test "parse: bare operator decl, no options" =
   print_string
-  @@ [%show: Surface.top list] (parse_tops_for_test "\\operator \"~x + ~y\" => add\n");
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\operator \"\\x + \\y\" => add\n");
   [%expect
     {|
-    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+    [Surface.Operator_decl {template = "\\x + \\y"; body = <soup:[N(add)]>;
        options = []}
       ]
     |}]
 ;;
 
-let%expect_test "parse: operator with ~stronger_than" =
+let%expect_test "parse: operator with \\stronger_than" =
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "\\operator \"~x * ~y\" => mul\n  \\stronger_than: +\n");
+       (parse_tops_for_test "\\operator \"\\x * \\y\" => mul\n  \\stronger_than: +\n");
   [%expect
     {|
-    [Surface.Operator_decl {template = "~x * ~y"; body = <soup:[N(mul)]>;
+    [Surface.Operator_decl {template = "\\x * \\y"; body = <soup:[N(mul)]>;
        options = [(Surface.OO_Stronger_than [["+"]])]}
       ]
     |}]
 ;;
 
-let%expect_test "parse: operator with ~associativity" =
+let%expect_test "parse: operator with \\associativity" =
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "\\operator \"~x + ~y\" => add\n  \\associativity: \\left\n");
+       (parse_tops_for_test
+          "\\operator \"\\x + \\y\" => add\n  \\associativity: \\left\n");
   [%expect
     {|
-    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+    [Surface.Operator_decl {template = "\\x + \\y"; body = <soup:[N(add)]>;
        options = [(Surface.OO_Associativity Surface.OA_Left)]}
       ]
     |}]
@@ -1704,10 +1705,10 @@ let%expect_test "parse: operator mixfix with multi-part name in option" =
   print_string
   @@ [%show: Surface.top list]
        (parse_tops_for_test
-          "\\operator \"if ~x then ~y else ~z\" => ite\n  \\weaker_than: +\n");
+          "\\operator \"if \\x then \\y else \\z\" => ite\n  \\weaker_than: +\n");
   [%expect
     {|
-    [Surface.Operator_decl {template = "if ~x then ~y else ~z";
+    [Surface.Operator_decl {template = "if \\x then \\y else \\z";
        body = <soup:[N(ite)]>; options = [(Surface.OO_Weaker_than [["+"]])]}
       ]
     |}]
@@ -1717,10 +1718,10 @@ let%expect_test "parse: operator decl alongside let" =
   print_string
   @@ [%show: Surface.top list]
        (parse_tops_for_test
-          "\\operator \"~x + ~y\" => add\n\\let two : Nat => add zero zero\n");
+          "\\operator \"\\x + \\y\" => add\n\\let two : Nat => add zero zero\n");
   [%expect
     {|
-    [Surface.Operator_decl {template = "~x + ~y"; body = <soup:[N(add)]>;
+    [Surface.Operator_decl {template = "\\x + \\y"; body = <soup:[N(add)]>;
        options = []};
       (Surface.Let ("two", [], <soup:[N(Nat)]>, <soup:[N(add); N(zero); N(zero)]>
          ))

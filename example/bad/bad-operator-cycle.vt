@@ -6,7 +6,7 @@
   f a b <= \elim a
   | f x b => b
 
-\operator "~a A ~b" => f
+\operator "\a A \b" => f
   \stronger_than: B
-\operator "~a B ~b" => f
+\operator "\a B \b" => f
   \stronger_than: A

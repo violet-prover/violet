@@ -14,9 +14,9 @@
   | mul zero n => zero
   | mul (suc m) n => add n (mul m n)
 
-\operator "~x + ~y" => add
+\operator "\x + \y" => add
   \associativity: \left
 
-\operator "~x * ~y" => mul
+\operator "\x * \y" => mul
   \stronger_than: +
   \associativity: \left

@@ -21,8 +21,10 @@
    1. Template language
    ===========================================================================
    Templates come in as raw strings from the parser. We split on whitespace
-   into "parts"; each part is either a hole (`~name`) or a literal token
-   that must lex (via the main lexer) as exactly one IDENT or SYMBOL. *)
+   into "parts"; each part is either a hole (`\name`) or a literal token
+   that must lex (via the main lexer) as exactly one IDENT or SYMBOL.
+   Literal parts may not start with `\`, which is reserved for hole markers
+   and language keywords. *)
 
 type name_part =
   | Hole of string
@@ -79,19 +81,20 @@ let classify_chunk (s : string) : [ `Ident | `Symbol | `Bad ] =
   | _ -> `Bad
 ;;
 
-(* Parse one chunk into a name_part. Holes look like "~name" and the name
+(* Parse one chunk into a name_part. Holes look like "\name" and the name
    itself must be a valid identifier. Literal parts must classify as IDENT
-   or SYMBOL on re-lexing. *)
+   or SYMBOL on re-lexing — they may not start with `\`, which is reserved
+   for hole markers and language keywords. *)
 let parse_chunk ~template (chunk : string) : name_part =
   let n = String.length chunk in
-  if n >= 1 && chunk.[0] = '~'
+  if n >= 1 && chunk.[0] = '\\'
   then begin
     let name = String.sub chunk 1 (n - 1) in
     if String.length name = 0
     then
       Reporter.fatalf
         Parse_error
-        "invalid operator template `%s`: bare `~` is not a valid hole name"
+        "invalid operator template `%s`: bare `\\` is not a valid hole name"
         template;
     (* Hole name must lex as a single IDENT. *)
     (match classify_chunk name with
@@ -99,7 +102,7 @@ let parse_chunk ~template (chunk : string) : name_part =
      | _ ->
        Reporter.fatalf
          Parse_error
-         "invalid operator template `%s`: hole name `~%s` is not a valid identifier"
+         "invalid operator template `%s`: hole name `\\%s` is not a valid identifier"
          template
          name);
     Hole name
@@ -111,7 +114,8 @@ let parse_chunk ~template (chunk : string) : name_part =
       Reporter.fatalf
         Parse_error
         "invalid operator template `%s`: part `%s` must be a single identifier or symbol \
-         (no reserved punctuation, no spaces, no quotes)"
+         (no reserved punctuation, no spaces, no quotes; `\\` is reserved for hole names \
+         and may not begin a literal part)"
         template
         chunk
     end
@@ -134,7 +138,7 @@ let check_no_adjacent_holes ~template (parts : name_part list) : unit =
     | Hole h1 :: Hole h2 :: _ ->
       Reporter.fatalf
         Parse_error
-        "invalid operator template `%s`: holes `~%s` and `~%s` are adjacent (need a \
+        "invalid operator template `%s`: holes `\\%s` and `\\%s` are adjacent (need a \
          literal part between them)"
         template
         h1
@@ -152,7 +156,7 @@ let check_distinct_hole_names ~template (parts : name_part list) : unit =
     | Hole h :: _ when List.exists (String.equal h) seen ->
       Reporter.fatalf
         Parse_error
-        "invalid operator template `%s`: hole name `~%s` appears more than once"
+        "invalid operator template `%s`: hole name `\\%s` appears more than once"
         template
         h
     | Hole h :: rest -> walk (h :: seen) rest
@@ -190,7 +194,7 @@ let parse_template (template : string) : name_part list =
   then
     Reporter.fatalf
       Parse_error
-      "invalid operator template `%s`: template must contain at least one hole (`~name`)"
+      "invalid operator template `%s`: template must contain at least one hole (`\\name`)"
       template;
   if not has_lit
   then
@@ -204,7 +208,7 @@ let parse_template (template : string) : name_part list =
 ;;
 
 (* The literal parts of a template, in order, used as the cross-reference
-   name path for `~weaker_than:` / `~stronger_than:` / `~same_as:`. *)
+   name path for `\weaker_than:` / `\stronger_than:` / `\same_as:`. *)
 let ref_path_of_parts (parts : name_part list) : string list =
   List.filter_map
     (function
@@ -282,18 +286,18 @@ let make_op_decl
           | Some _ ->
             Reporter.fatalf
               Parse_error
-              "operator `%s` has more than one `~associativity:` option"
+              "operator `%s` has more than one `\\associativity:` option"
               template
           | None -> assoc_opt := Some a))
     options;
-  (* ~associativity is only meaningful for binary infix operators (exactly
+  (* \associativity is only meaningful for binary infix operators (exactly
      2 holes, Infix shape). *)
   let n_holes = List.length (hole_names_of_parts parts) in
   (match !assoc_opt with
    | Some _ when shape <> Infix || n_holes <> 2 ->
      Reporter.fatalf
        Parse_error
-       "operator `%s` is not binary infix; `~associativity:` is not allowed here"
+       "operator `%s` is not binary infix; `\\associativity:` is not allowed here"
        template
    | _ -> ());
   let assoc = Option.value !assoc_opt ~default:Surface.OA_None in
@@ -331,12 +335,12 @@ let merge_decl (decl : op_decl) (table : op_table) : op_table =
 ;;
 
 let%expect_test "parse_template: simple infix" =
-  print_string @@ [%show: name_part list] (parse_template "~x + ~y");
+  print_string @@ [%show: name_part list] (parse_template "\\x + \\y");
   [%expect {| [(Op_resolver.Hole "x"); (Op_resolver.Lit "+"); (Op_resolver.Hole "y")] |}]
 ;;
 
 let%expect_test "parse_template: ternary mixfix" =
-  print_string @@ [%show: name_part list] (parse_template "if ~x then ~y else ~z");
+  print_string @@ [%show: name_part list] (parse_template "if \\x then \\y else \\z");
   [%expect
     {|
     [(Op_resolver.Lit "if"); (Op_resolver.Hole "x"); (Op_resolver.Lit "then");
@@ -345,32 +349,32 @@ let%expect_test "parse_template: ternary mixfix" =
 ;;
 
 let%expect_test "parse_template: postfix" =
-  print_string @@ [%show: name_part list] (parse_template "~x !");
+  print_string @@ [%show: name_part list] (parse_template "\\x !");
   [%expect {| [(Op_resolver.Hole "x"); (Op_resolver.Lit "!")] |}]
 ;;
 
 let%expect_test "derive_shape: infix" =
-  print_string @@ show_op_shape (derive_shape (parse_template "~x + ~y"));
+  print_string @@ show_op_shape (derive_shape (parse_template "\\x + \\y"));
   [%expect {| Op_resolver.Infix |}]
 ;;
 
 let%expect_test "derive_shape: prefix" =
-  print_string @@ show_op_shape (derive_shape (parse_template "! ~x"));
+  print_string @@ show_op_shape (derive_shape (parse_template "! \\x"));
   [%expect {| Op_resolver.Prefix |}]
 ;;
 
 let%expect_test "derive_shape: postfix" =
-  print_string @@ show_op_shape (derive_shape (parse_template "~x !"));
+  print_string @@ show_op_shape (derive_shape (parse_template "\\x !"));
   [%expect {| Op_resolver.Postfix |}]
 ;;
 
 let%expect_test "derive_shape: closed" =
-  print_string @@ show_op_shape (derive_shape (parse_template "begin ~x end"));
+  print_string @@ show_op_shape (derive_shape (parse_template "begin \\x end"));
   [%expect {| Op_resolver.Closed |}]
 ;;
 
 let%expect_test "ref_path / hole_names" =
-  let parts = parse_template "if ~c then ~t else ~e" in
+  let parts = parse_template "if \\c then \\t else \\e" in
   Printf.printf
     "ref_path=%s hole_names=%s"
     ([%show: string list] (ref_path_of_parts parts))
@@ -397,29 +401,34 @@ let%expect_test "validate: rejects template with no holes" =
 ;;
 
 let%expect_test "validate: rejects template with no literal parts" =
-  print_string (try_validate "~x ~y");
+  print_string (try_validate "\\x \\y");
   [%expect {| rejected |}]
 ;;
 
 let%expect_test "validate: rejects adjacent holes" =
-  print_string (try_validate "~x ~y + ~z");
+  print_string (try_validate "\\x \\y + \\z");
   [%expect {| rejected |}]
 ;;
 
 let%expect_test "validate: rejects duplicate hole names" =
-  print_string (try_validate "~x + ~x");
+  print_string (try_validate "\\x + \\x");
   [%expect {| rejected |}]
 ;;
 
 let%expect_test "validate: rejects reserved punctuation as literal" =
   (* `->` is a reserved token, not IDENT/SYMBOL. *)
-  print_string (try_validate "~x -> ~y");
+  print_string (try_validate "\\x -> \\y");
   [%expect {| rejected |}]
 ;;
 
 let%expect_test "validate: accepts a normal binary infix" =
-  print_string (try_validate "~x + ~y");
+  print_string (try_validate "\\x + \\y");
   [%expect {| ok |}]
+;;
+
+let%expect_test "validate: bare `\\` is not a valid hole name" =
+  print_string (try_validate "\\x \\ \\y");
+  [%expect {| rejected |}]
 ;;
 
 let%expect_test "add_decl: detects duplicate template" =
@@ -430,15 +439,15 @@ let%expect_test "add_decl: detects duplicate template" =
       ~fatal:(fun _ -> "rejected")
       (fun () ->
          let t = empty_table in
-         let t = add_decl (mk "~x + ~y") t in
-         let _ = add_decl (mk "~x + ~y") t in
+         let t = add_decl (mk "\\x + \\y") t in
+         let _ = add_decl (mk "\\x + \\y") t in
          "ok")
   in
   print_string outcome;
   [%expect {| rejected |}]
 ;;
 
-let%expect_test "make_op_decl: ~associativity on non-infix is rejected" =
+let%expect_test "make_op_decl: \\associativity on non-infix is rejected" =
   let outcome =
     Reporter.run
       ~emit:(fun _ -> ())
@@ -446,7 +455,7 @@ let%expect_test "make_op_decl: ~associativity on non-infix is rejected" =
       (fun () ->
          let _ =
            make_op_decl
-             ~template:"if ~x then ~y else ~z"
+             ~template:"if \\x then \\y else \\z"
              ~body:(Surface.Var [ "ite" ])
              ~options:[ Surface.OO_Associativity Surface.OA_Left ]
          in
@@ -686,24 +695,24 @@ let compute_levels (table : op_table) : prec_levels =
 let%expect_test "compute_levels: two independent operators land in one level" =
   let mk t = make_op_decl ~template:t ~body:(Surface.Var [ "f" ]) ~options:[] in
   let t = empty_table in
-  let t = add_decl (mk "~x + ~y") t in
-  let t = add_decl (mk "~x % ~y") t in
+  let t = add_decl (mk "\\x + \\y") t in
+  let t = add_decl (mk "\\x % \\y") t in
   let levels = compute_levels t in
   Printf.printf
     "%d levels: %s"
     (List.length levels)
     ([%show: string list list]
        (List.map (fun lvl -> List.map (fun d -> d.raw_template) lvl) levels));
-  [%expect {| 1 levels: [["~x + ~y"; "~x % ~y"]] |}]
+  [%expect {| 1 levels: [["\\x + \\y"; "\\x % \\y"]] |}]
 ;;
 
 let%expect_test "compute_levels: stronger_than gives tighter level" =
   let mk_plus =
-    make_op_decl ~template:"~x + ~y" ~body:(Surface.Var [ "add" ]) ~options:[]
+    make_op_decl ~template:"\\x + \\y" ~body:(Surface.Var [ "add" ]) ~options:[]
   in
   let mk_times =
     make_op_decl
-      ~template:"~x * ~y"
+      ~template:"\\x * \\y"
       ~body:(Surface.Var [ "mul" ])
       ~options:[ Surface.OO_Stronger_than [ [ "+" ] ] ]
   in
@@ -713,16 +722,16 @@ let%expect_test "compute_levels: stronger_than gives tighter level" =
     "%s"
     ([%show: string list list]
        (List.map (fun lvl -> List.map (fun d -> d.raw_template) lvl) levels));
-  [%expect {| [["~x * ~y"]; ["~x + ~y"]] |}]
+  [%expect {| [["\\x * \\y"]; ["\\x + \\y"]] |}]
 ;;
 
 let%expect_test "compute_levels: weaker_than is the inverse" =
   let mk_plus =
-    make_op_decl ~template:"~x + ~y" ~body:(Surface.Var [ "add" ]) ~options:[]
+    make_op_decl ~template:"\\x + \\y" ~body:(Surface.Var [ "add" ]) ~options:[]
   in
   let mk_or =
     make_op_decl
-      ~template:"~x or ~y"
+      ~template:"\\x or \\y"
       ~body:(Surface.Var [ "or_" ])
       ~options:[ Surface.OO_Weaker_than [ [ "+" ] ] ]
   in
@@ -732,16 +741,16 @@ let%expect_test "compute_levels: weaker_than is the inverse" =
     "%s"
     ([%show: string list list]
        (List.map (fun lvl -> List.map (fun d -> d.raw_template) lvl) levels));
-  [%expect {| [["~x + ~y"]; ["~x or ~y"]] |}]
+  [%expect {| [["\\x + \\y"]; ["\\x or \\y"]] |}]
 ;;
 
 let%expect_test "compute_levels: same_as puts ops in one level" =
   let mk_plus =
-    make_op_decl ~template:"~x + ~y" ~body:(Surface.Var [ "add" ]) ~options:[]
+    make_op_decl ~template:"\\x + \\y" ~body:(Surface.Var [ "add" ]) ~options:[]
   in
   let mk_minus =
     make_op_decl
-      ~template:"~x - ~y"
+      ~template:"\\x - \\y"
       ~body:(Surface.Var [ "sub" ])
       ~options:[ Surface.OO_Same_as [ [ "+" ] ] ]
   in
@@ -751,19 +760,19 @@ let%expect_test "compute_levels: same_as puts ops in one level" =
     "%s"
     ([%show: string list list]
        (List.map (fun lvl -> List.map (fun d -> d.raw_template) lvl) levels));
-  [%expect {| [["~x + ~y"; "~x - ~y"]] |}]
+  [%expect {| [["\\x + \\y"; "\\x - \\y"]] |}]
 ;;
 
 let%expect_test "compute_levels: detects a cycle" =
   let mk_a =
     make_op_decl
-      ~template:"~x A ~y"
+      ~template:"\\x A \\y"
       ~body:(Surface.Var [ "a" ])
       ~options:[ Surface.OO_Stronger_than [ [ "B" ] ] ]
   in
   let mk_b =
     make_op_decl
-      ~template:"~x B ~y"
+      ~template:"\\x B \\y"
       ~body:(Surface.Var [ "b" ])
       ~options:[ Surface.OO_Stronger_than [ [ "A" ] ] ]
   in
@@ -1192,7 +1201,7 @@ let%expect_test "parse_soup: empty table, implicit arg" =
 let%expect_test "parse_soup: binary infix" =
   let plus =
     make_op_decl
-      ~template:"~x + ~y"
+      ~template:"\\x + \\y"
       ~body:(Surface.Var [ "add" ])
       ~options:[ Surface.OO_Associativity Surface.OA_Left ]
   in
@@ -1207,13 +1216,13 @@ let%expect_test "parse_soup: binary infix" =
 let%expect_test "parse_soup: precedence — `*` tighter than `+`" =
   let plus =
     make_op_decl
-      ~template:"~x + ~y"
+      ~template:"\\x + \\y"
       ~body:(Surface.Var [ "add" ])
       ~options:[ Surface.OO_Associativity Surface.OA_Left ]
   in
   let times =
     make_op_decl
-      ~template:"~x * ~y"
+      ~template:"\\x * \\y"
       ~body:(Surface.Var [ "mul" ])
       ~options:
         [ Surface.OO_Stronger_than [ [ "+" ] ]; Surface.OO_Associativity Surface.OA_Left ]
@@ -1237,7 +1246,7 @@ let%expect_test "parse_soup: precedence — `*` tighter than `+`" =
 let%expect_test "parse_soup: ternary mixfix" =
   let ite =
     make_op_decl
-      ~template:"if ~x then ~y else ~z"
+      ~template:"if \\x then \\y else \\z"
       ~body:(Surface.Var [ "ite" ])
       ~options:[]
   in
@@ -1259,7 +1268,7 @@ let%expect_test "parse_soup: ternary mixfix" =
 
 let%expect_test "parse_soup: postfix `!`" =
   let bang =
-    make_op_decl ~template:"~x !" ~body:(Surface.Var [ "factorial" ]) ~options:[]
+    make_op_decl ~template:"\\x !" ~body:(Surface.Var [ "factorial" ]) ~options:[]
   in
   let table = add_decl bang empty_table in
   let result = parse_soup table [ Surface.SI_Name "n"; Surface.SI_Name "!" ] in
@@ -1269,7 +1278,7 @@ let%expect_test "parse_soup: postfix `!`" =
 
 let%expect_test "parse_soup: prefix `not`" =
   let not_op =
-    make_op_decl ~template:"not ~x" ~body:(Surface.Var [ "negate" ]) ~options:[]
+    make_op_decl ~template:"not \\x" ~body:(Surface.Var [ "negate" ]) ~options:[]
   in
   let table = add_decl not_op empty_table in
   let result = parse_soup table [ Surface.SI_Name "not"; Surface.SI_Name "b" ] in
@@ -1277,10 +1286,10 @@ let%expect_test "parse_soup: prefix `not`" =
   [%expect {| (negate b) |}]
 ;;
 
-let%expect_test "parse_soup: ~associativity ~right" =
+let%expect_test "parse_soup: \\associativity \\right" =
   let arrow =
     make_op_decl
-      ~template:"~x ==> ~y"
+      ~template:"\\x ==> \\y"
       ~body:(Surface.Var [ "imp" ])
       ~options:[ Surface.OO_Associativity Surface.OA_Right ]
   in
@@ -1487,7 +1496,7 @@ let%expect_test "resolve_module: operator then let — soup uses operator, decl 
     { loc = None
     ; value =
         Surface.Operator_decl
-          { template = "~x + ~y"
+          { template = "\\x + \\y"
           ; body = Surface.Var [ "add" ]
           ; options = [ Surface.OO_Associativity Surface.OA_Left ]
           }
@@ -1519,7 +1528,7 @@ let%expect_test "resolve_module: diamond import of common library does not dupli
     { loc = None
     ; value =
         Surface.Operator_decl
-          { template = "~x = ~y"
+          { template = "\\x = \\y"
           ; body = Surface.Var [ "Id" ]
           ; options = [ Surface.OO_Associativity Surface.OA_Left ]
           }
@@ -1554,7 +1563,7 @@ let%expect_test "resolve_module: same template from two distinct modules still c
     { Asai.Range.loc = None
     ; value =
         Surface.Operator_decl
-          { template = "~x + ~y"
+          { template = "\\x + \\y"
           ; body = Surface.Var [ body ]
           ; options = [ Surface.OO_Associativity Surface.OA_Left ]
           }

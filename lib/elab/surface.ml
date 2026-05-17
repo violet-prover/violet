@@ -136,7 +136,7 @@ type clause =
 
 (* A name path naming another operator in cross-reference position: the
    referenced operator's literal parts, in template order. E.g., template
-   `"~x + ~y"` is referenced as `["+"]`; template `"if ~x then ~y else ~z"`
+   `"\x + \y"` is referenced as `["+"]`; template `"if \x then \y else \z"`
    as `["if"; "then"; "else"]`. *)
 type op_name_path = string list [@@deriving show]
 
@@ -204,9 +204,9 @@ type top =
       ; clauses : clause list
       }
   (*
-     operator "~x + ~y" := add
-       ~associativity: ~left
-       ~stronger_than: *
+     \operator "\x + \y" => add
+       \associativity: \left
+       \stronger_than: *
      The template is a raw string with whitespace-separated parts; the body
      is an arbitrary preterm whose free vars include the hole names from
      the template; options control precedence / associativity.
