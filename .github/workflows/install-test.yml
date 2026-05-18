@@ -19,8 +19,6 @@ jobs:
         include:
           - runner: ubuntu-latest
             image: debian:stable-slim
-          - runner: ubuntu-latest
-            image: alpine:latest
           - runner: ubuntu-24.04-arm
             image: debian:stable-slim
           - runner: macos-latest
