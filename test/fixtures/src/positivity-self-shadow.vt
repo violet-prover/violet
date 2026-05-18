@@ -1,0 +1,12 @@
+\universe U
+
+# The constructor argument type `(Foo : U) -> Foo` has an INNER Pi-binder
+# named `Foo` that shadows the inductive being defined. Inside that binder,
+# the trailing `Foo` refers to the *bound* variable (a type), NOT the
+# inductive `Foo`. Strict positivity must therefore accept this ctor.
+#
+# This exercises the shadow-stop branch in positivity.ml's [sp]:
+# scan_binders stops the chain at the binder whose name matches ind_name,
+# so the body is not analyzed as a self-use of the inductive.
+\data Foo : U
+  | mk : ((Foo : U) -> Foo) -> Foo

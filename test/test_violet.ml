@@ -1,16 +1,33 @@
-(* Baseline regression test for example/*.vt.
+(* Baseline regression test for the .vt fixture corpus.
 
-   Each example is run in a forked subprocess with a SIGALRM-based timeout.
-   We compare actual outcome (OK / FAIL / HUNG) against the recorded
-   expectations below.  This lets us detect both improvement *and* regression
-   during refactors.
+   Each fixture is run in a forked subprocess with a SIGALRM-based timeout
+   and a per-fixture temp file that the child writes its diagnostic
+   explanation to on fatal error.  We compare the actual outcome
+   (`Ok / `Fail msg / `Hung) against a `want` annotation:
 
-   When the refactor lands and an example starts behaving differently, update
-   `expected` to match — that's the point.  Don't paper over the diff. *)
+   - `Ok            — expect successful elaboration.
+   - `Fail          — expect any failure (legacy; new entries should
+                      use `FailWith to pin the cause).
+   - `FailWith subs — expect failure whose explanation contains EVERY
+                      substring in `subs`. Use [single_phrase] for the
+                      common one-substring case; multi-substring is for
+                      pinning category+context (e.g. "duplicate field"
+                      AND "record update").
+   - `Hung          — expect to exceed `timeout_sec`.
+
+   When a refactor lands and a fixture behaves differently, update the
+   annotation to match — that's the point.  Don't paper over the diff. *)
 
 type outcome =
   [ `Ok
+  | `Fail of string
+  | `Hung
+  ]
+
+type want =
+  [ `Ok
   | `Fail
+  | `FailWith of string list
   | `Hung
   ]
 
@@ -76,7 +93,10 @@ let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
   | ErrorCycle _ -> failwith "import cycle"
 ;;
 
-let run_check_in_child filename =
+(* In the child: silence stdout/stderr (to keep the test log clean), then
+   run the elaborator. On fatal error, render the diagnostic's explanation
+   to `msg_file` and exit 1. The parent reads `msg_file` after waitpid. *)
+let run_check_in_child filename ~msg_file =
   let devnull = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
   Unix.dup2 devnull Unix.stdout;
   Unix.dup2 devnull Unix.stderr;
@@ -85,7 +105,16 @@ let run_check_in_child filename =
   (try
      Eio_main.run
      @@ fun _env ->
-     Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+     Violet_elab.Reporter.run
+       ~emit:(fun _ -> ())
+       ~fatal:(fun (d : Violet_elab.Reporter.Message.t Asai.Diagnostic.t) ->
+         (try
+            let oc = open_out msg_file in
+            output_string oc (Asai.Diagnostic.string_of_text d.explanation.value);
+            close_out oc
+          with
+          | _ -> ());
+         exit 1)
      @@ fun () ->
      let open Violet_elab.Context.Handler in
      Violet_elab.Context.S.run ~shadow ~not_found ~hook
@@ -103,72 +132,158 @@ let run_check_in_child filename =
   exit !exit_code
 ;;
 
+let read_msg_file path : string =
+  try
+    let ic = open_in path in
+    let n = in_channel_length ic in
+    let buf = Bytes.create n in
+    really_input ic buf 0 n;
+    close_in ic;
+    Bytes.to_string buf
+  with
+  | _ -> ""
+;;
+
 let outcome_of filename : outcome =
+  let msg_file = Filename.temp_file "violet-test-" ".txt" in
   flush stdout;
-  match Unix.fork () with
-  | 0 -> run_check_in_child filename
-  | pid ->
-    let prev_handler =
-      Sys.signal
-        Sys.sigalrm
-        (Sys.Signal_handle
-           (fun _ ->
-             try Unix.kill pid Sys.sigkill with
-             | _ -> ()))
-    in
-    let _ = Unix.alarm timeout_sec in
-    let rec wait () =
-      try snd (Unix.waitpid [] pid) with
-      | Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
-    in
-    let status = wait () in
-    let _ = Unix.alarm 0 in
-    Sys.set_signal Sys.sigalrm prev_handler;
-    (match status with
-     | Unix.WEXITED 0 -> `Ok
-     | Unix.WSIGNALED s when s = Sys.sigkill -> `Hung
-     | _ -> `Fail)
+  let result =
+    match Unix.fork () with
+    | 0 -> run_check_in_child filename ~msg_file
+    | pid ->
+      let prev_handler =
+        Sys.signal
+          Sys.sigalrm
+          (Sys.Signal_handle
+             (fun _ ->
+               try Unix.kill pid Sys.sigkill with
+               | _ -> ()))
+      in
+      let _ = Unix.alarm timeout_sec in
+      let rec wait () =
+        try snd (Unix.waitpid [] pid) with
+        | Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+      in
+      let status = wait () in
+      let _ = Unix.alarm 0 in
+      Sys.set_signal Sys.sigalrm prev_handler;
+      (match status with
+       | Unix.WEXITED 0 -> `Ok
+       | Unix.WSIGNALED s when s = Sys.sigkill -> `Hung
+       | _ -> `Fail (read_msg_file msg_file))
+  in
+  (try Unix.unlink msg_file with
+   | _ -> ());
+  result
 ;;
 
 let outcome_str = function
   | `Ok -> "OK"
-  | `Fail -> "FAIL"
+  | `Fail _ -> "FAIL"
   | `Hung -> "HUNG"
 ;;
 
-(* Current behaviour of each example under the existing elaborator.
-   Refactor goal is to keep OK/OK working, and (eventually) push the FAIL/HUNG
-   entries toward OK as unification improves. *)
-let expected : (string * outcome) list =
+let want_str = function
+  | `Ok -> "OK"
+  | `Fail -> "FAIL"
+  | `FailWith subs -> Printf.sprintf "FAIL/%s" (String.concat " ⊕ " subs)
+  | `Hung -> "HUNG"
+;;
+
+(* Result of comparing actual against expected. The `Mismatch payload
+   records what went wrong so the run loop can print a useful diff. *)
+type cmp =
+  [ `Match
+  | `Mismatch_outcome
+  | `Missing_substring of string * string (* expected sub, actual msg *)
+  ]
+
+let contains haystack needle =
+  let lh = String.length haystack
+  and ln = String.length needle in
+  if ln = 0
+  then true
+  else (
+    let rec scan i =
+      if i + ln > lh
+      then false
+      else if String.sub haystack i ln = needle
+      then true
+      else scan (i + 1)
+    in
+    scan 0)
+;;
+
+let compare_outcome (got : outcome) (want : want) : cmp =
+  match got, want with
+  | `Ok, `Ok -> `Match
+  | `Hung, `Hung -> `Match
+  | `Fail _, `Fail -> `Match
+  | `Fail msg, `FailWith subs ->
+    (match List.find_opt (fun s -> not (contains msg s)) subs with
+     | None -> `Match
+     | Some missing -> `Missing_substring (missing, msg))
+  | _ -> `Mismatch_outcome
+;;
+
+(* Current behaviour of each fixture under the existing elaborator. The four
+   files under ../example/ are user-facing demos kept alongside the project's
+   docs; everything else lives under ./fixtures/. New bad fixtures should
+   prefer `FailWith over `Fail so the error path is pinned. *)
+let expected : (string * want) list =
   [ "../example/src/index.vt", `Ok
-  ; "../example/src/compute.vt", `Ok
-  ; "../example/src/universe-explicit.vt", `Ok
-  ; "../example/src/ind-namespacing.vt", `Ok
   ; "../example/src/pterodactyl.vt", `Ok
   ; "../example/src/operators.vt", `Ok
-  ; "../example/src/operators-user.vt", `Ok
-  ; "../example/src/goal_demo.vt", `Ok
-  ; "../example/bad/bad-stack-not-pi.vt", `Fail
-  ; "../example/bad/bad-stack-coverage.vt", `Fail
-  ; "../example/bad/independent-universes-bad.vt", `Fail
-  ; "../example/bad/bad-positivity-negative.vt", `Fail
-  ; "../example/bad/bad-positivity-nested.vt", `Fail
-  ; "../example/bad/bad-positivity-non-uniform.vt", `Fail
-  ; "../example/bad/bad-operator-no-holes.vt", `Fail
-  ; "../example/bad/bad-operator-duplicate.vt", `Fail
-  ; "../example/bad/bad-operator-cycle.vt", `Fail
   ; "../example/src/record.vt", `Ok
-  ; "../example/src/record-extras.vt", `Ok
-  ; "../example/src/record-eta.vt", `Ok
-  ; "../example/bad/bad-record-missing-field.vt", `Fail
-  ; "../example/bad/bad-proj-unknown-field.vt", `Fail
-  ; "../example/bad/bad-proj-non-record.vt", `Fail
-  ; "../example/bad/bad-record-update-unknown-field.vt", `Fail
-  ; "../example/bad/bad-record-update-empty.vt", `Fail
-  ; "../example/bad/bad-record-pattern-missing-field.vt", `Fail
-  ; "../example/bad/bad-record-pattern-unknown-field.vt", `Fail
-  ; "../example/bad/bad-record-duplicate-field.vt", `Fail
-  ; "../example/src/dependent-record-literal.vt", `Ok
+  ; "./fixtures/src/compute.vt", `Ok
+  ; "./fixtures/src/universe-explicit.vt", `Ok
+  ; "./fixtures/src/ind-namespacing.vt", `Ok
+  ; "./fixtures/src/operators-user.vt", `Ok
+  ; "./fixtures/src/goal_demo.vt", `Ok
+  ; "./fixtures/bad/bad-stack-not-pi.vt", `FailWith [ "needs a function type" ]
+  ; "./fixtures/bad/bad-stack-coverage.vt", `FailWith [ "no clause for constructor" ]
+  ; ( "./fixtures/bad/independent-universes-bad.vt"
+    , `FailWith [ "cannot unify"; "universe" ] )
+  ; "./fixtures/bad/bad-positivity-negative.vt", `FailWith [ "negative position" ]
+  ; "./fixtures/bad/bad-positivity-nested.vt", `FailWith [ "non-positive slot" ]
+  ; "./fixtures/bad/bad-positivity-non-uniform.vt", `FailWith [ "non-uniformly" ]
+  ; ( "./fixtures/bad/bad-operator-no-holes.vt"
+    , `FailWith [ "template must contain at least one hole" ] )
+  ; ( "./fixtures/bad/bad-operator-duplicate.vt"
+    , `FailWith [ "duplicate operator template" ] )
+  ; "./fixtures/bad/bad-operator-cycle.vt", `FailWith [ "precedence cycle" ]
+  ; "./fixtures/src/record-extras.vt", `Ok
+  ; "./fixtures/src/record-eta.vt", `Ok
+  ; ( "./fixtures/bad/bad-record-missing-field.vt"
+    , `FailWith [ "missing field"; "record literal" ] )
+  ; "./fixtures/bad/bad-proj-unknown-field.vt", `FailWith [ "has no field" ]
+  ; ( "./fixtures/bad/bad-proj-non-record.vt"
+    , `FailWith [ "expected a record type for projection" ] )
+  ; ( "./fixtures/bad/bad-record-update-unknown-field.vt"
+    , `FailWith [ "unknown field"; "record update" ] )
+  ; "./fixtures/bad/bad-record-update-empty.vt", `FailWith [ "empty record update" ]
+  ; ( "./fixtures/bad/bad-record-pattern-missing-field.vt"
+    , `FailWith [ "missing field"; "record pattern" ] )
+  ; ( "./fixtures/bad/bad-record-pattern-unknown-field.vt"
+    , `FailWith [ "unknown field"; "record pattern" ] )
+  ; ( "./fixtures/bad/bad-record-duplicate-field.vt"
+    , `FailWith [ "duplicate field"; "record literal" ] )
+  ; "./fixtures/src/dependent-record-literal.vt", `Ok
+  ; "./fixtures/src/elim-unify.vt", `Ok
+  ; "./fixtures/src/vec-head.vt", `Ok
+  ; "./fixtures/bad/bad-elim-stuck.vt", `FailWith [ "unifier got stuck" ]
+  ; ( "./fixtures/bad/bad-record-literal-unknown.vt"
+    , `FailWith [ "unknown field"; "record literal" ] )
+  ; ( "./fixtures/bad/bad-record-update-duplicate.vt"
+    , `FailWith [ "duplicate field"; "record update" ] )
+  ; "./fixtures/src/positivity-self-shadow.vt", `Ok
+  ; "./fixtures/src/record-update-dep-chain.vt", `Ok
+  ; "./fixtures/src/stress-pi-chain.vt", `Ok
+  ; "./fixtures/src/stress-long-spine.vt", `Ok
+  ; "./fixtures/src/stress-many-fields.vt", `Ok
+  ; "./fixtures/src/stress-many-ctors.vt", `Ok
+  ; "./fixtures/src/stress-deep-vec.vt", `Ok
+  ; "./fixtures/src/stress-deep-nat.vt", `Ok
   ]
 ;;
 
@@ -177,16 +292,22 @@ let () =
   List.iter
     (fun (filename, want) ->
        let got = outcome_of filename in
-       if got = want
-       then Printf.printf "%s: %s (as expected)\n" filename (outcome_str got)
-       else begin
+       match compare_outcome got want with
+       | `Match -> Printf.printf "%s: %s (as expected)\n" filename (outcome_str got)
+       | `Mismatch_outcome ->
          Printf.printf
            "%s: got %s, expected %s\n"
            filename
            (outcome_str got)
-           (outcome_str want);
+           (want_str want);
          incr mismatches
-       end)
+       | `Missing_substring (sub, msg) ->
+         Printf.printf
+           "%s: FAIL but explanation did not contain %S\n  actual: %s\n"
+           filename
+           sub
+           msg;
+         incr mismatches)
     expected;
   if !mismatches > 0
   then begin

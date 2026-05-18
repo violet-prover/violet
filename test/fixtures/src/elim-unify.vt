@@ -1,0 +1,12 @@
+\import std/equality
+\import std/nat
+\import std/empty
+
+\export Foo extract
+
+\data Foo : Nat -> U
+  | mk : (n : Nat) -> Foo (Nat/suc n)
+
+\let extract : (m : Nat) -> Foo (Nat/suc m) -> Nat \where
+  extract m v <= \elim v
+  | extract m (mk n) => n

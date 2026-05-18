@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `\elim` following clause no need to claim impossible case
+
 ## 0.2.1
 
 - install script

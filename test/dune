@@ -1,7 +1,8 @@
 (test
  (name test_violet)
  (deps
-  (source_tree ../example))
+  (source_tree ../example)
+  (source_tree fixtures))
  (preprocess
   (pps ppx_deriving.show))
  (libraries

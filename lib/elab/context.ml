@@ -32,8 +32,8 @@ type modifier_cmd = Trace
 module TypeContext = struct
   type data = Core.value_ty
 
-  (* Locals don't live in Yuujinchou anymore — they're handled in Checker's
-     local_ctx with de Bruijn indices.  Only globals remain here. *)
+  (* Locals are handled in Elab's local_ctx with de Bruijn indices.
+     Only globals remain here. *)
   type tag =
     [ `Imported
     | `Defn
@@ -141,8 +141,8 @@ module Handler = struct
   ;;
 end
 
-(* Level variables declared by `universe U V` in the current module's scope.
-   Reset per module (see Checker.check_module). *)
+(* Level variables declared by `\universe U V` in the current module's scope.
+   Reset per module (see Elab.check_module). *)
 let level_vars : (string, unit) Hashtbl.t = Hashtbl.create ~random:true 16
 let declare_level_var (name : string) : unit = Hashtbl.replace level_vars name ()
 let is_level_var (name : string) : bool = Hashtbl.mem level_vars name

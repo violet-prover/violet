@@ -29,6 +29,13 @@ let lvar (s : string) : level = LVar s
 let lsuc (l : level) : level = LSuc l
 let lmax (a : level) (b : level) : level = LMax (a, b)
 
+let rec pretty : level -> string = function
+  | LZero -> "𝓤₀"
+  | LVar v -> v
+  | LSuc l -> "(" ^ pretty l ^ "+1)"
+  | LMax (a, b) -> pretty a ^ " ⊔ " ^ pretty b
+;;
+
 (* Normalize a level expression to canonical nf. *)
 let normalize (l : level) : nf =
   let rec go (offset : int) (acc_const : int) (acc_atoms : atom list) = function

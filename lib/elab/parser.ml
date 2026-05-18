@@ -701,8 +701,8 @@ module Grammar = struct
         { tp; parse }
       in
       (* `atom_no_bracket` covers all single-token structural forms PLUS bare
-         identifiers, but excludes {…}-forms.  Used as Var atoms in legacy
-         spine positions and as the building block for record-entry values. *)
+         identifiers, but excludes {…}-forms.  Used as Var atoms in soup
+         positions and as the building block for record-entry values. *)
       let atom_no_bracket : S.preterm t =
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
@@ -948,8 +948,8 @@ module Grammar = struct
         S.SI_Atom a
       in
       (* Soup-tail item. In tail position, `{...}` is ALWAYS an implicit
-         argument (`{ atom }`); the binder form is illegal here, matching
-         the legacy `arg` rule. First sets disjoint with each other. *)
+         argument (`{ atom }`); the binder form is illegal here. First sets
+         disjoint with each other. *)
       let soup_tail_item : S.soup_item t =
         p_ident_soup_item
         || (let+ n = p_symbol_name in
@@ -1380,7 +1380,9 @@ module Grammar = struct
         else i, List.rev acc
       in
       let i', path = loop i [] in
-      if List.length path = 0 then P.fail_at buf i else i', path
+      match path with
+      | [] -> P.fail_at buf i
+      | _ -> i', path
     in
     { tp; parse }
   ;;

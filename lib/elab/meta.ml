@@ -25,9 +25,9 @@ let goal_metas : (metavar, unit) Hashtbl.t = Hashtbl.create 32
 let register_goal (mvar : metavar) : unit = Hashtbl.replace goal_metas mvar ()
 let is_goal (mvar : metavar) : bool = Hashtbl.mem goal_metas mvar
 
-(* Used by elaborator (Checker): fresh meta as a core term, applied to all
-   currently-bound locals 0..lvl-1.  Eval of `InsertedMeta (m, lvl)` later will
-   reconstruct the spine from the live env. *)
+(* Fresh meta as a core term, applied to all currently-bound locals 0..lvl-1.
+   Eval of `InsertedMeta (m, lvl)` later reconstructs the spine from the live
+   env. *)
 let meta_fresh (lvl : int) : term =
   let r = InsertedMeta (MetaVar !count, lvl) in
   incr count;

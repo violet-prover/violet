@@ -1,0 +1,213 @@
+\import std/nat
+\import std/bool
+
+\universe U
+
+# Constructor enumeration plus an elim that pattern-matches each ctor.
+# Stresses: ctor_outcomes generation, find_clause_for_ctor (linear scan
+# over clauses per ctor → O(n²) total), motive construction across all
+# arms, and the qualify_ctor_namespaces shadowing list construction.
+\data E : U
+  | c0001 : E
+  | c0002 : E
+  | c0003 : E
+  | c0004 : E
+  | c0005 : E
+  | c0006 : E
+  | c0007 : E
+  | c0008 : E
+  | c0009 : E
+  | c0010 : E
+  | c0011 : E
+  | c0012 : E
+  | c0013 : E
+  | c0014 : E
+  | c0015 : E
+  | c0016 : E
+  | c0017 : E
+  | c0018 : E
+  | c0019 : E
+  | c0020 : E
+  | c0021 : E
+  | c0022 : E
+  | c0023 : E
+  | c0024 : E
+  | c0025 : E
+  | c0026 : E
+  | c0027 : E
+  | c0028 : E
+  | c0029 : E
+  | c0030 : E
+  | c0031 : E
+  | c0032 : E
+  | c0033 : E
+  | c0034 : E
+  | c0035 : E
+  | c0036 : E
+  | c0037 : E
+  | c0038 : E
+  | c0039 : E
+  | c0040 : E
+  | c0041 : E
+  | c0042 : E
+  | c0043 : E
+  | c0044 : E
+  | c0045 : E
+  | c0046 : E
+  | c0047 : E
+  | c0048 : E
+  | c0049 : E
+  | c0050 : E
+  | c0051 : E
+  | c0052 : E
+  | c0053 : E
+  | c0054 : E
+  | c0055 : E
+  | c0056 : E
+  | c0057 : E
+  | c0058 : E
+  | c0059 : E
+  | c0060 : E
+  | c0061 : E
+  | c0062 : E
+  | c0063 : E
+  | c0064 : E
+  | c0065 : E
+  | c0066 : E
+  | c0067 : E
+  | c0068 : E
+  | c0069 : E
+  | c0070 : E
+  | c0071 : E
+  | c0072 : E
+  | c0073 : E
+  | c0074 : E
+  | c0075 : E
+  | c0076 : E
+  | c0077 : E
+  | c0078 : E
+  | c0079 : E
+  | c0080 : E
+  | c0081 : E
+  | c0082 : E
+  | c0083 : E
+  | c0084 : E
+  | c0085 : E
+  | c0086 : E
+  | c0087 : E
+  | c0088 : E
+  | c0089 : E
+  | c0090 : E
+  | c0091 : E
+  | c0092 : E
+  | c0093 : E
+  | c0094 : E
+  | c0095 : E
+  | c0096 : E
+  | c0097 : E
+  | c0098 : E
+  | c0099 : E
+  | c0100 : E
+
+\let is-c0001 : E -> Bool \where
+  is-c0001 x <= \elim x
+  | is-c0001 c0001 => Bool/true
+  | is-c0001 c0002 => Bool/false
+  | is-c0001 c0003 => Bool/false
+  | is-c0001 c0004 => Bool/false
+  | is-c0001 c0005 => Bool/false
+  | is-c0001 c0006 => Bool/false
+  | is-c0001 c0007 => Bool/false
+  | is-c0001 c0008 => Bool/false
+  | is-c0001 c0009 => Bool/false
+  | is-c0001 c0010 => Bool/false
+  | is-c0001 c0011 => Bool/false
+  | is-c0001 c0012 => Bool/false
+  | is-c0001 c0013 => Bool/false
+  | is-c0001 c0014 => Bool/false
+  | is-c0001 c0015 => Bool/false
+  | is-c0001 c0016 => Bool/false
+  | is-c0001 c0017 => Bool/false
+  | is-c0001 c0018 => Bool/false
+  | is-c0001 c0019 => Bool/false
+  | is-c0001 c0020 => Bool/false
+  | is-c0001 c0021 => Bool/false
+  | is-c0001 c0022 => Bool/false
+  | is-c0001 c0023 => Bool/false
+  | is-c0001 c0024 => Bool/false
+  | is-c0001 c0025 => Bool/false
+  | is-c0001 c0026 => Bool/false
+  | is-c0001 c0027 => Bool/false
+  | is-c0001 c0028 => Bool/false
+  | is-c0001 c0029 => Bool/false
+  | is-c0001 c0030 => Bool/false
+  | is-c0001 c0031 => Bool/false
+  | is-c0001 c0032 => Bool/false
+  | is-c0001 c0033 => Bool/false
+  | is-c0001 c0034 => Bool/false
+  | is-c0001 c0035 => Bool/false
+  | is-c0001 c0036 => Bool/false
+  | is-c0001 c0037 => Bool/false
+  | is-c0001 c0038 => Bool/false
+  | is-c0001 c0039 => Bool/false
+  | is-c0001 c0040 => Bool/false
+  | is-c0001 c0041 => Bool/false
+  | is-c0001 c0042 => Bool/false
+  | is-c0001 c0043 => Bool/false
+  | is-c0001 c0044 => Bool/false
+  | is-c0001 c0045 => Bool/false
+  | is-c0001 c0046 => Bool/false
+  | is-c0001 c0047 => Bool/false
+  | is-c0001 c0048 => Bool/false
+  | is-c0001 c0049 => Bool/false
+  | is-c0001 c0050 => Bool/false
+  | is-c0001 c0051 => Bool/false
+  | is-c0001 c0052 => Bool/false
+  | is-c0001 c0053 => Bool/false
+  | is-c0001 c0054 => Bool/false
+  | is-c0001 c0055 => Bool/false
+  | is-c0001 c0056 => Bool/false
+  | is-c0001 c0057 => Bool/false
+  | is-c0001 c0058 => Bool/false
+  | is-c0001 c0059 => Bool/false
+  | is-c0001 c0060 => Bool/false
+  | is-c0001 c0061 => Bool/false
+  | is-c0001 c0062 => Bool/false
+  | is-c0001 c0063 => Bool/false
+  | is-c0001 c0064 => Bool/false
+  | is-c0001 c0065 => Bool/false
+  | is-c0001 c0066 => Bool/false
+  | is-c0001 c0067 => Bool/false
+  | is-c0001 c0068 => Bool/false
+  | is-c0001 c0069 => Bool/false
+  | is-c0001 c0070 => Bool/false
+  | is-c0001 c0071 => Bool/false
+  | is-c0001 c0072 => Bool/false
+  | is-c0001 c0073 => Bool/false
+  | is-c0001 c0074 => Bool/false
+  | is-c0001 c0075 => Bool/false
+  | is-c0001 c0076 => Bool/false
+  | is-c0001 c0077 => Bool/false
+  | is-c0001 c0078 => Bool/false
+  | is-c0001 c0079 => Bool/false
+  | is-c0001 c0080 => Bool/false
+  | is-c0001 c0081 => Bool/false
+  | is-c0001 c0082 => Bool/false
+  | is-c0001 c0083 => Bool/false
+  | is-c0001 c0084 => Bool/false
+  | is-c0001 c0085 => Bool/false
+  | is-c0001 c0086 => Bool/false
+  | is-c0001 c0087 => Bool/false
+  | is-c0001 c0088 => Bool/false
+  | is-c0001 c0089 => Bool/false
+  | is-c0001 c0090 => Bool/false
+  | is-c0001 c0091 => Bool/false
+  | is-c0001 c0092 => Bool/false
+  | is-c0001 c0093 => Bool/false
+  | is-c0001 c0094 => Bool/false
+  | is-c0001 c0095 => Bool/false
+  | is-c0001 c0096 => Bool/false
+  | is-c0001 c0097 => Bool/false
+  | is-c0001 c0098 => Bool/false
+  | is-c0001 c0099 => Bool/false
+  | is-c0001 c0100 => Bool/false

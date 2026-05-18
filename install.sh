@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://violet-lang.org/install.sh | sh
 #
 # Env vars:
-#   VIOLET_VERSION         pin a release tag (e.g. v0.2.0); default: latest
+#   VIOLET_VERSION         pin a release tag (e.g. v0.2.1); default: latest
 #   VIOLET_PREFIX          install root; default: $HOME/.violet
 #   VIOLET_NO_MODIFY_PATH  if set, skip rc-file editing
 set -eu

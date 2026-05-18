@@ -41,6 +41,7 @@ module Make (M : Views.META_VIEW) = struct
       walk lvl fields
     | Core.RecordIntro { fields; _ } -> List.iter (fun (_, t) -> check_term lvl t) fields
     | Core.RecordProj { record; _ } -> check_term lvl record
+    | Core.IdAbsurd t -> check_term lvl t
   ;;
 
   let accept_let m ~name ~ty ~body =

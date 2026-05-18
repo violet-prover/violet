@@ -1,0 +1,41 @@
+\import std/nat
+
+\universe U
+
+# 30-field record. Stresses validate_record_fields' three List.iter passes
+# (duplicate / unknown / missing detection are O(n²) over field names),
+# canonicalisation into declaration order, and the KRecordLit_Field
+# continuation chain (one suspension per field).
+\record Big : U
+  | f01 : Nat
+  | f02 : Nat
+  | f03 : Nat
+  | f04 : Nat
+  | f05 : Nat
+  | f06 : Nat
+  | f07 : Nat
+  | f08 : Nat
+  | f09 : Nat
+  | f10 : Nat
+  | f11 : Nat
+  | f12 : Nat
+  | f13 : Nat
+  | f14 : Nat
+  | f15 : Nat
+  | f16 : Nat
+  | f17 : Nat
+  | f18 : Nat
+  | f19 : Nat
+  | f20 : Nat
+  | f21 : Nat
+  | f22 : Nat
+  | f23 : Nat
+  | f24 : Nat
+  | f25 : Nat
+  | f26 : Nat
+  | f27 : Nat
+  | f28 : Nat
+  | f29 : Nat
+  | f30 : Nat
+
+\let big : Big => { f01 = Nat/zero, f02 = Nat/zero, f03 = Nat/zero, f04 = Nat/zero, f05 = Nat/zero, f06 = Nat/zero, f07 = Nat/zero, f08 = Nat/zero, f09 = Nat/zero, f10 = Nat/zero, f11 = Nat/zero, f12 = Nat/zero, f13 = Nat/zero, f14 = Nat/zero, f15 = Nat/zero, f16 = Nat/zero, f17 = Nat/zero, f18 = Nat/zero, f19 = Nat/zero, f20 = Nat/zero, f21 = Nat/zero, f22 = Nat/zero, f23 = Nat/zero, f24 = Nat/zero, f25 = Nat/zero, f26 = Nat/zero, f27 = Nat/zero, f28 = Nat/zero, f29 = Nat/zero, f30 = Nat/zero }

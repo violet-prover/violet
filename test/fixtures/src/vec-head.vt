@@ -1,0 +1,16 @@
+# Positive test for the index-unification path's Conflict auto-removed.
+#
+# `head` eliminates `v : Vec A (Nat/suc n)`. The unifier flags `nil`
+# (whose index is `zero`) as Conflict at index position 0 - `zero` and
+# `Nat/suc n` have orthogonal constructor heads, so this case is
+# unreachable when the elim fires. The elaborator auto-fills the
+# missing `nil` clause body with an absurd.
+
+\import std/nat
+\import std/vec
+\import std/equality
+\import std/empty
+
+\let head {A : U} : (n : Nat) -> Vec A (Nat/suc n) -> A \where
+  head n v <= \elim v
+  | head n (cons m x xs) => x

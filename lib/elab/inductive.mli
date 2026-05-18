@@ -19,7 +19,18 @@ val compute_effective_intros
   -> intros:(string * bool) list
   -> (string * bool) list
 
-(* Build a Surface preterm body for an Elim_def. *)
+(* Build a Surface preterm body for an Elim_def.
+
+   `target_type_value` is the Core-evaluated type of the target binder. It is
+   used only to drive the new index-unification path (non-variable indices
+   in the target's type); for purely variable indices the existing
+   renaming-based path is taken and `target_type_value` is unused.
+
+   `start_lvl` is the local context level at the point where the wrapping
+   intro-lambdas begin binding. The new path uses it to assign de Bruijn
+   levels to user intros and to fresh ctor-field flex binders, consistent
+   with what the elaborator will see when it later checks the generated
+   term. *)
 val build_elim_body
   :  loc:Asai.Range.t
   -> func_name:string
@@ -29,4 +40,6 @@ val build_elim_body
   -> intros:(string * bool) list
   -> target:string
   -> clauses:Surface.clause list
+  -> target_type_value:Violet_kernel.Syntax.Core.value
+  -> start_lvl:int
   -> Surface.preterm

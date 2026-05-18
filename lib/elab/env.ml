@@ -8,8 +8,8 @@ type modifier_cmd = Trace
 module ValueEnvironment = struct
   type data = Core.value
 
-  (* Locals don't live in Yuujinchou anymore — they're handled in Checker's
-     local_ctx with de Bruijn indices.  Only globals remain here. *)
+  (* Locals are handled in Elab's local_ctx with de Bruijn indices.
+     Only globals remain here. *)
   type tag =
     [ `Imported
     | `Defn

@@ -1,0 +1,11 @@
+\import std/nat
+\import std/vec
+
+# Vec literal of length 30, right-nested via Vec/cons. Each layer creates a
+# fresh VPi application during evaluation of the index argument and a fresh
+# VRecordIntro / VCon (whichever Vec uses) during normalisation. This
+# stresses the kernel evaluator's recursion depth and the unifier's
+# spine-matching when the elaborator confirms the literal's index.
+
+\let big-vec : Vec Nat (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc (Nat/suc Nat/zero)))))))))))))))))))))))))))))) =>
+  Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/cons Nat/zero (Vec/nil))))))))))))))))))))))))))))))

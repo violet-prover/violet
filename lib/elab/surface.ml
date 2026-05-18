@@ -102,6 +102,13 @@ type preterm =
         (String.concat ", " (List.map (fun (f, e) -> f ^ " = " ^ show_preterm e) entries))]
   | Proj of preterm * string
   [@printer fun fmt (e, f) -> fprintf fmt "%s.%s" (show_preterm e) f]
+  (* Builtin disjointness primitive: `\absurd-id <p>` where `p` has type
+     `Id (c1 args1) (c2 args2)` for distinct same-inductive constructors
+     `c1` and `c2`. Elaborates to `Core.IdAbsurd` with type `Empty`.
+     Generated only by [Inductive.build_elim_body_unify] to discharge
+     unreachable cases; no surface syntax. *)
+  | IdAbsurd of preterm
+  [@printer fun fmt p -> fprintf fmt "(\\absurd-id %s)" (show_preterm p)]
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
@@ -155,19 +162,15 @@ type op_option =
 
 type top =
   | Let of string * pretype binder list * pretype * preterm
-  (*
-     data <name> <params> : <deps> <ind_ty> where
-       <ctors>
-  *)
+  (* `\data <name> <params> : <deps> -> <ind_ty> | <ctors>` *)
   | Data of
-      { name : string (* parameters is a list of bindings that will be opaque *)
-      ; params : pretype binder list
-        (* dependencies is a list of bindings that can be concrete *)
-      ; deps : pretype binder list (* ind_ty should always be U *)
-      ; ind_ty : pretype
+      { name : string
+      ; params : pretype binder list (* opaque parameters *)
+      ; deps : pretype binder list (* concrete dependencies *)
+      ; ind_ty : pretype (* should always be U *)
       ; ctors : pretype binder list
       }
-  (* `universe U V W` declares per-module level variables. *)
+  (* `\universe U V W` declares per-module level variables. *)
   | Universe_decl of string list
   (*
      let <name> <params> : <signature> where

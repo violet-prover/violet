@@ -98,6 +98,7 @@ module PartialRenaming = struct
     | VRecordIntro { name; fields } ->
       RecordIntro { name; fields = List.map (fun (f, v) -> f, rename m pr v) fields }
     | VRecordProj (v, f) -> RecordProj { record = rename m pr v; field = f }
+    | VIdAbsurd v -> IdAbsurd (rename m pr v)
 
   and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
     match sp with

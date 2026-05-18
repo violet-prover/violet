@@ -1,0 +1,24 @@
+\import std/nat
+\import std/vec
+
+\universe U
+
+# Dependent record where field `c`'s type mentions an earlier field `b`.
+# A record update that overrides `b` (changing its value) and `c` (whose
+# type depends on the new `b`) while letting `a` be projected from the
+# base exercises walk_record_update_fields' interleaving of projections
+# and override-suspensions.
+\record Triple : U
+  | a : Nat
+  | b : Nat
+  | c : Vec Nat b
+
+\let base : Triple =>
+  { a = Nat/zero, b = Nat/zero, c = Vec/nil }
+
+# Override b → c's type becomes Vec Nat 1.
+# - a : projected from base
+# - b : suspended (override), then resumed
+# - c : suspended (override), its type is checked against the new b's value
+\let updated : Triple =>
+  { base | b = Nat/suc Nat/zero, c = Vec/cons Nat/zero Vec/nil }

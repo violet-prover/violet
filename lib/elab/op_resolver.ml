@@ -169,12 +169,13 @@ let check_distinct_hole_names ~template (parts : name_part list) : unit =
    problem with a precise message. *)
 let parse_template (template : string) : name_part list =
   let chunks = split_parts template in
-  if chunks = []
-  then
-    Reporter.fatalf
-      Parse_error
-      "invalid operator template `%s`: template must contain at least one part"
-      template;
+  (match chunks with
+   | [] ->
+     Reporter.fatalf
+       Parse_error
+       "invalid operator template `%s`: template must contain at least one part"
+       template
+   | _ -> ());
   let parts = List.map (parse_chunk ~template) chunks in
   let has_hole =
     List.exists
@@ -231,8 +232,7 @@ let hole_names_of_parts (parts : name_part list) : string list =
    2. Operator declarations and table
    ===========================================================================
    An `op_decl` is a fully-validated, table-ready operator: template,
-   derived shape, associativity, body, and the raw precedence constraints.
-   The constraints become graph edges in Task #8. *)
+   derived shape, associativity, body, and the raw precedence constraints. *)
 
 type op_constraint =
   | C_Weaker_than of string list
@@ -471,7 +471,7 @@ let%expect_test "make_op_decl: \\associativity on non-infix is rejected" =
    Each op_decl carries a list of `op_constraint`s naming OTHER operators by
    their ref_path. From those we build a directed graph where an edge
    `u → v` means "u parses TIGHTER than v" (u is at a lower precedence
-   level number). `~same_as:` merges nodes into equivalence classes via
+   level number). `\same_as:` merges nodes into equivalence classes via
    union-find. Cycles between non-equivalent classes are errors. *)
 
 module Path_map = Map.Make (struct
@@ -550,7 +550,7 @@ let build_graph (table : op_table) : prec_graph =
   let g = make_graph () in
   (* First pass: register every operator's ref_path as a node. *)
   List.iter (fun d -> add_node g d.ref_path) table.decls;
-  (* Second pass: process ~same_as first so subsequent edges land on the
+  (* Second pass: process \same_as first so subsequent edges land on the
      right class representatives. *)
   List.iter
     (fun d ->
@@ -798,9 +798,9 @@ let%expect_test "compute_levels: detects a cycle" =
    loosest-first (level 0 is the loosest). For an operator at level L:
    - Inner holes (between two literal parts) parse at level 0 (loosest).
    - Outer slots respect associativity:
-       infix ~left  : lhs same-level, rhs tighter
-       infix ~right : lhs tighter,    rhs same-level
-       infix ~none  : both tighter
+       infix \left  : lhs same-level, rhs tighter
+       infix \right : lhs tighter,    rhs same-level
+       infix \none  : both tighter
        prefix       : rhs same-level (multiple prefix may stack)
        postfix      : lhs same-level (multiple postfix may stack)
    At the tightest "atom" level, juxtaposition of atom-like tokens (atoms
@@ -852,10 +852,9 @@ let mk_state (table : op_table) (items : Surface.soup_item list) : parser_state 
 let is_op_lit (st : parser_state) (s : string) : bool = Hashtbl.mem st.lits s
 
 (* Substitute hole-name occurrences in `body` with the matched subterms.
-   The simplest correct substitution: walk body, replace `Var h` with the
-   matched term when `h` is one of the operator's hole names. For the
-   bare-ident sugar `:= f`, body = `Var "f"` where "f" is NOT a hole name
-   — in that case we fold f applied to the holes positionally instead. *)
+   Walk body and replace `Var h` with the matched term whenever `h` is one
+   of the operator's hole names. If the body mentions no hole, treat it as
+   a function and apply it positionally to the holes (bare-ident sugar). *)
 let lower_body
       (op : op_decl)
       (matches : Surface.preterm list (* one per hole, in template order *))
@@ -878,6 +877,7 @@ let lower_body
     | Surface.Pi (b, body) -> Surface.Pi ({ b with bound = sub b.bound }, sub body)
     | Surface.Max (a, b) -> Surface.Max (sub a, sub b)
     | (Surface.Universe | Surface.Hole | Surface.Goal _) as t -> t
+    | Surface.IdAbsurd p -> Surface.IdAbsurd (sub p)
     | Surface.Op_soup _ ->
       Reporter.fatalf
         Elab_error
@@ -889,7 +889,7 @@ let lower_body
     | Surface.Proj (e, f) -> Surface.Proj (sub e, f)
   in
   (* If the body has no hole references, treat it as a function and apply
-     it positionally — this is the bare-ident sugar `:= ite`. *)
+     it positionally — bare-ident sugar like `=> ite`. *)
   let mentions_holes =
     let r = ref false in
     let rec walk = function
@@ -910,6 +910,7 @@ let lower_body
         walk a;
         walk b
       | Surface.Universe | Surface.Hole | Surface.Goal _ -> ()
+      | Surface.IdAbsurd p -> walk p
       | Surface.Op_soup _ -> ()
       | Surface.RecordLit entries -> List.iter (fun (_, e) -> walk e) entries
       | Surface.RecordUpdate (base, entries) ->
@@ -1340,6 +1341,7 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
     Surface.Pi ({ b with bound = lower_preterm table b.bound }, lower_preterm table body)
   | Surface.Max (a, b) -> Surface.Max (lower_preterm table a, lower_preterm table b)
   | Surface.Universe | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
+  | Surface.IdAbsurd p -> Surface.IdAbsurd (lower_preterm table p)
   | Surface.RecordLit entries ->
     Surface.RecordLit (List.map (fun (f, e) -> f, lower_preterm table e) entries)
   | Surface.RecordUpdate (base, entries) ->
@@ -1539,7 +1541,7 @@ let%expect_test "resolve_module: diamond import of common library does not dupli
     { name = "diamond_a.vt"; imports = []; exports = []; tops = [ mk_op ] }
   in
   let _ = resolve_module a in
-  (* Module B: imports A; inherits the operator transitively. *)
+  (* Module B: imports A but declares nothing of its own. *)
   let b : Surface.t =
     { name = "diamond_b.vt"; imports = [ [ "diamond_a" ] ]; exports = []; tops = [] }
   in
@@ -1593,8 +1595,3 @@ let%expect_test "resolve_module: same template from two distinct modules still c
    | _ -> print_string "got conflict");
   [%expect {| got conflict |}]
 ;;
-
-(* The actual lower function is defined further down (after the op_table and
-   parse_soup machinery). The signature is:
-     lower_preterm : op_table -> Surface.preterm -> Surface.preterm
-   Each Op_soup in the input is replaced by parse_soup table items. *)

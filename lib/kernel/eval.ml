@@ -129,6 +129,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | RecordProj { record; field } ->
       let v = eval env record in
       vrecord_proj v field
+    | IdAbsurd t -> VIdAbsurd (eval env t)
 
   (* 把 v 套上 env 的 outermost n 個 local。env 從外往內，
      所以 outermost 是 env 從左數起的 n 個元素。 *)
@@ -172,14 +173,12 @@ module Test = Make (NullMeta) (NullEnv)
 
 let%expect_test "eval Universe" =
   print_string @@ [%show: value] (Test.eval Emp (Universe Level.LZero));
-  [%expect {| 𝓤 |}]
+  [%expect {| universe 𝓤₀ |}]
 ;;
 
 let%expect_test "lift unlift cancels" =
   let zero = Level.lzero in
   let one = Level.lsuc Level.lzero in
-  (* env contains a single value `x` (printed as `$0`) at de Bruijn index 0.
-     `Var "A"` is also stored as a value so eval doesn't hit Env.lookup. *)
   let x_val = rigid_local 0 in
   let a_val = rigid_local 1 in
   let env = Bwd.Infix.(Bwd.Emp <: a_val <: x_val) in
@@ -232,7 +231,7 @@ let%expect_test "RecordProj on RecordIntro reduces" =
       }
   in
   print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
-  [%expect {| 𝓤 |}]
+  [%expect {| universe 𝓤₀ |}]
 ;;
 
 let%expect_test "RecordProj on neutral stays neutral" =

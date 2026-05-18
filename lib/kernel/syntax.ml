@@ -13,11 +13,7 @@ module Core = struct
 
   type term =
     | Universe of Level.level
-    [@printer
-      fun fmt l ->
-        if Level.equal l Level.LZero
-        then fprintf fmt "𝓤"
-        else fprintf fmt "𝓤(%s)" (Level.show_level l)]
+    [@printer fun fmt l -> fprintf fmt "universe %s" (Level.pretty l)]
     (* local variable: de Bruijn INDEX (0 = innermost binder) *)
     | LocalVar of int [@printer fun fmt i -> fprintf fmt "$%d" i]
     (* global name: top-level let / data / constructor *)
@@ -85,9 +81,9 @@ module Core = struct
     [@printer
       fun fmt aname aparams afields ->
         let p =
-          if aparams = []
-          then ""
-          else " " ^ String.concat " " (List.map show_term aparams)
+          match aparams with
+          | [] -> ""
+          | _ -> " " ^ String.concat " " (List.map show_term aparams)
         in
         let fs =
           String.concat
@@ -110,6 +106,12 @@ module Core = struct
         ; field : string
         }
     [@printer fun fmt arecord afield -> fprintf fmt "%s.%s" (show_term arecord) afield]
+    (* Disjointness primitive: given a term whose TYPE is `Id (c1 args1)
+       (c2 args2)` with c1 ≠ c2 same-inductive constructors, IdAbsurd
+       inhabits Empty. Elaborator verifies the type-shape; kernel treats
+       it as a stuck neutral (never reduces because the underlying Id is
+       uninhabited, so this term is never demanded at runtime). *)
+    | IdAbsurd of term [@printer fun fmt t -> fprintf fmt "id-absurd %s" (show_term t)]
 
   and typ = term [@@deriving show]
 
@@ -203,9 +205,9 @@ module Core = struct
                     if Bwd.is_empty sp then show_value v else "(" ^ show_value v ^ ")"
                   | _ -> show_value v)
                 @@ Bwd.to_list spine))]
-      (* Elim 是一個 inductive type 的 eliminator。head.reducer 帶著 ι-rule。
-         Evaluation.force_head 在 spine 足夠時呼叫 reducer 看能不能 ι-reduce；
-         否則 Elim 維持像個帶 spine 的 neutral head。 *)
+      (* Elim 是 inductive type 的 eliminator；head.reducer 帶 ι-rule。
+         Evaluation.force_head 呼叫 reducer 嘗試 ι-reduce，否則 Elim 維持為
+         neutral head with spine。 *)
     | Elim of elim_head * value bwd
     [@printer
       fun fmt ({ elim_name = head; _ }, spine) ->
@@ -234,11 +236,7 @@ module Core = struct
         then fprintf fmt "{%s : %s} -> %s" name (show_value bound) (show_value result)
         else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
     | Universe of Level.level
-    [@printer
-      fun fmt l ->
-        if Level.equal l Level.LZero
-        then fprintf fmt "𝓤"
-        else fprintf fmt "𝓤(%s)" (Level.show_level l)]
+    [@printer fun fmt l -> fprintf fmt "universe %s" (Level.pretty l)]
     | VLift of
         { from_lvl : Level.level
         ; to_lvl : Level.level
@@ -275,9 +273,9 @@ module Core = struct
     [@printer
       fun fmt aname aparams afields _aenv _aterms ->
         let p =
-          if aparams = []
-          then ""
-          else " " ^ String.concat " " (List.map show_value aparams)
+          match aparams with
+          | [] -> ""
+          | _ -> " " ^ String.concat " " (List.map show_value aparams)
         in
         let fs =
           String.concat
@@ -297,6 +295,9 @@ module Core = struct
         fprintf fmt "%s{ %s }" aname fs]
     | VRecordProj of value * string
     [@printer fun fmt (v, f) -> fprintf fmt "%s.%s" (show_value v) f]
+    (* Stuck-neutral value for [Core.IdAbsurd]: the underlying Id is
+       uninhabited at type-check time, so this value never reduces. *)
+    | VIdAbsurd of value [@printer fun fmt v -> fprintf fmt "id-absurd %s" (show_value v)]
   [@@deriving show]
 
   and elim_head =

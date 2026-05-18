@@ -1,0 +1,19 @@
+# Negative test for the new index-unification path: a stuck unifier.
+#
+# `weird` eliminates `v : Vec A (f n)` where `f` is a function the unifier
+# can't whnf into a constructor. The unifier reports Stuck at index
+# position 0 for each constructor (ctor index `zero` / `suc m_flex` vs
+# the neutral `f n`), and the elaborator turns that into a precise error.
+
+\import std/nat
+\import std/vec
+
+\let f : Nat -> Nat \where
+  f x <= \elim x
+  | f zero => zero
+  | f (suc m) => suc (f m)
+
+\let weird {A : U} : (n : Nat) -> Vec A (f n) -> A \where
+  weird n v <= \elim v
+  | weird n nil => ?
+  | weird n (cons m x xs) => x
