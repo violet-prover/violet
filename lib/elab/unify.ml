@@ -1,6 +1,8 @@
 module Syntax = Violet_kernel.Syntax
 module Evaluation = Wiring.Eval
 module Level = Violet_kernel.Level
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 open Syntax
 open Bwd
 open Evaluation
@@ -17,7 +19,7 @@ module PartialRenaming = struct
     ; ren : (int, int) Hashtbl.t
     }
 
-  let invert (gamma : int) (sp : value bwd) : t =
+  let invert (cv : Context_view.t) (sp : value bwd) : t =
     let ren = Hashtbl.create ~random:true 16 in
     (* Iterate the spine LEFT-TO-RIGHT (outermost arg first) so the dom-side
        position we assign matches argument-order in the solution.  Bwd.iter
@@ -31,9 +33,12 @@ module PartialRenaming = struct
            then Reporter.fatalf Elab_error "non-linear spine (level $%d repeated)" l
            else Hashtbl.add ren l pos
          | other ->
-           Reporter.fatalf Elab_error "non-variable in spine: %s" ([%show: value] other))
+           Reporter.fatalf
+             Elab_error
+             "non-variable in spine: %s"
+             (Pretty.pp_value cv other))
       sp_list;
-    { dom = List.length sp_list; cod = gamma; ren }
+    { dom = List.length sp_list; cod = Context_view.lvl cv; ren }
   ;;
 
   let rec rename (m : metavar) (pr : t) (v : value) : term =
@@ -43,7 +48,7 @@ module PartialRenaming = struct
       Reporter.fatalf
         Elab_error
         "meta variable %s occurs in its own solution"
-        ([%show: metavar] m)
+        (Pretty.pp_metavar m)
     | Flex (m', sp) -> rename_sp m pr (Meta m') sp
     | RigidLocal (l, sp) ->
       (match Hashtbl.find_opt pr.ren l with
@@ -121,8 +126,8 @@ module PartialRenaming = struct
     go 0 tm
   ;;
 
-  let run (gamma : int) (m : metavar) (sp : value bwd) (rhs : value) : value =
-    let pr = invert gamma sp in
+  let run (cv : Context_view.t) (m : metavar) (sp : value bwd) (rhs : value) : value =
+    let pr = invert cv sp in
     let rhs_tm = rename m pr rhs in
     let solution = lams pr.dom rhs_tm in
     Reporter.tracef "solution is: %s" ([%show: term] solution)
@@ -130,23 +135,24 @@ module PartialRenaming = struct
   ;;
 end
 
-let solve (gamma : int) (m : Core.metavar) (sp : Core.value bwd) (rhs : Core.value) : unit
+let solve
+      (cv : Context_view.t)
+      (m : Core.metavar)
+      (sp : Core.value bwd)
+      (rhs : Core.value)
+  : unit
   =
   let spine_str =
-    String.concat " <: " @@ List.map (fun v -> [%show: Core.value] v) (Bwd.to_list sp)
+    String.concat " <: " @@ List.map (Pretty.pp_value cv) (Bwd.to_list sp)
   in
   Reporter.tracef "spine: %s" spine_str
   @@ fun () ->
-  let solution = PartialRenaming.run gamma m sp rhs in
+  let solution = PartialRenaming.run cv m sp rhs in
   Meta.insert_meta m solution
 ;;
 
-let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
-  Reporter.tracef
-    ~loc
-    "unify `%s` and `%s`"
-    ([%show: Core.value] a)
-    ([%show: Core.value] b)
+let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
+  Reporter.tracef ~loc "unify `%s` and `%s`" (Pretty.pp_value cv a) (Pretty.pp_value cv b)
   @@ fun () ->
   (* force_head unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
@@ -154,7 +160,7 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
   | Universe l1, Universe l2 when Level.equal l1 l2 -> ()
   | VLift a, VLift b ->
     if Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl
-    then unify ~loc lvl a.ty b.ty
+    then unify ~loc cv a.ty b.ty
     else
       Reporter.fatalf
         ~loc
@@ -164,32 +170,31 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
         ([%show: Level.level] b.to_lvl)
   | VLiftTerm a, VLiftTerm b
     when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
-    unify ~loc lvl a.ty b.ty;
-    unify ~loc lvl a.tm b.tm
+    unify ~loc cv a.ty b.ty;
+    unify ~loc cv a.tm b.tm
   | VUnliftTerm a, VUnliftTerm b
     when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
-    unify ~loc lvl a.ty b.ty;
-    unify ~loc lvl a.tm b.tm
-  | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 ->
-    unify_spine ~loc lvl sp1 sp2
-  | Var (h1, sp1), Var (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc lvl sp1 sp2
+    unify ~loc cv a.ty b.ty;
+    unify ~loc cv a.tm b.tm
+  | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 -> unify_spine ~loc cv sp1 sp2
+  | Var (h1, sp1), Var (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc cv sp1 sp2
   | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 ->
-    unify_spine ~loc lvl sp1 sp2
+    unify_spine ~loc cv sp1 sp2
   | IndType (h1, sp1), IndType (h2, sp2) when String.equal h1 h2 ->
-    unify_spine ~loc lvl sp1 sp2
+    unify_spine ~loc cv sp1 sp2
   | Elim (h1, sp1), Elim (h2, sp2) when String.equal h1.elim_name h2.elim_name ->
-    unify_spine ~loc lvl sp1 sp2
+    unify_spine ~loc cv sp1 sp2
   | VRecordProj (v1, f1), VRecordProj (v2, f2) when String.equal f1 f2 ->
-    unify ~loc lvl v1 v2
-  | VLambda { bound = b1; _ }, VLambda { bound = b2; _ } ->
-    let x = Core.RigidLocal (lvl, Emp) in
-    unify ~loc (lvl + 1) (b1 x) (b2 x)
-  | VLambda { bound; _ }, t | t, VLambda { bound; _ } ->
-    let x = Core.RigidLocal (lvl, Emp) in
-    unify ~loc (lvl + 1) (bound x) (vapp t x)
+    unify ~loc cv v1 v2
+  | VLambda { name; bound = b1; _ }, VLambda { bound = b2; _ } ->
+    let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
+    unify ~loc (Context_view.extend cv name) (b1 x) (b2 x)
+  | VLambda { name; bound; _ }, t | t, VLambda { name; bound; _ } ->
+    let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
+    unify ~loc (Context_view.extend cv name) (bound x) (vapp t x)
   (* Record types are equal if they have the same name and equal parameters. *)
   | VRecordType r1, VRecordType r2 when String.equal r1.name r2.name ->
-    List.iter2 (unify ~loc lvl) r1.params r2.params
+    List.iter2 (unify ~loc cv) r1.params r2.params
   (* Record η. Standard surjective-pairing: a value of record type is
      definitionally equal to the record literal of its projections. *)
   | VRecordIntro r1, VRecordIntro r2 when r1.name = r2.name ->
@@ -206,7 +211,7 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
     List.iter
       (fun (f, v1) ->
          match List.assoc_opt f r2.fields with
-         | Some v2 -> unify ~loc lvl v1 v2
+         | Some v2 -> unify ~loc cv v1 v2
          | None ->
            Reporter.fatalf
              ~loc
@@ -219,42 +224,44 @@ let rec unify ~loc (lvl : int) (a : Core.value) (b : Core.value) : unit =
     (* One side is a flex meta; solve it directly with the whole record literal.
        Projecting fields from a flex produces stuck neutrals that the unifier
        cannot resolve, so we short-circuit by solving m := VRecordIntro r. *)
-    solve lvl m sp (VRecordIntro r)
+    solve cv m sp (VRecordIntro r)
   | VRecordIntro r, t | t, VRecordIntro r ->
     (* One side is a record literal; eta-expand the other by projecting each
        field. The expanded sides are then compared field-by-field. *)
     List.iter
       (fun (f, v_lit) ->
          let v_proj = vrecord_proj t f in
-         unify ~loc lvl v_lit v_proj)
+         unify ~loc cv v_lit v_proj)
       r.fields
-  | VPi (_, b1), VPi (_, b2) ->
-    let x = Core.RigidLocal (lvl, Emp) in
-    unify ~loc (lvl + 1) (b1 x) (b2 x)
+  | VPi ({ name; _ }, b1), VPi (_, b2) ->
+    let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
+    unify ~loc (Context_view.extend cv name) (b1 x) (b2 x)
   | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
-    let x = Meta.fresh_meta_value lvl in
-    unify ~loc lvl (b x) t
-  | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc lvl sp1 sp2
-  | t, Flex (m, sp) | Flex (m, sp), t -> solve lvl m sp t
+    let x = Meta.fresh_meta_value (Context_view.lvl cv) in
+    unify ~loc cv (b x) t
+  | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc cv sp1 sp2
+  | t, Flex (m, sp) | Flex (m, sp), t -> solve cv m sp t
   | expected, actual ->
     Reporter.fatalf
       ~loc
       Type_error
       "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
-      ([%show: Core.value] expected)
-      ([%show: Core.value] actual)
-      ([%show: Core.value] a)
-      ([%show: Core.value] b)
+      (Pretty.pp_value cv expected)
+      (Pretty.pp_value cv actual)
+      (Pretty.pp_value cv a)
+      (Pretty.pp_value cv b)
 
-and unify_spine ~loc (lvl : int) (xs : Core.value bwd) (ys : Core.value bwd) : unit =
+and unify_spine ~loc (cv : Context_view.t) (xs : Core.value bwd) (ys : Core.value bwd)
+  : unit
+  =
   match xs, ys with
   | Emp, Emp -> ()
   | Snoc (xs, x), Snoc (ys, y) ->
-    unify_spine ~loc lvl xs ys;
-    unify ~loc lvl x y
+    unify_spine ~loc cv xs ys;
+    unify ~loc cv x y
   | _, _ ->
-    let left = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value xs in
-    let right = String.concat " <: " @@ Bwd.to_list @@ Bwd.map Core.show_value ys in
+    let left = String.concat " <: " @@ Bwd.to_list @@ Bwd.map (Pretty.pp_value cv) xs in
+    let right = String.concat " <: " @@ Bwd.to_list @@ Bwd.map (Pretty.pp_value cv) ys in
     Reporter.fatalf
       ~loc
       Elab_error
@@ -276,9 +283,22 @@ let%expect_test "record eta: VRecordIntro vs neutral unifies" =
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
     @@ fun () ->
-    unify ~loc:(Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)) 1 t lit;
+    unify
+      ~loc:(Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos))
+      (Context_view.make ~names:(Snoc (Emp, "_")) ~lvl:1)
+      t
+      lit;
     "ok"
   in
   print_endline result;
   [%expect {| ok |}]
+;;
+
+let%expect_test "Pretty.pp_value renders a local by binder name in a unify context" =
+  let cv = Context_view.extend (Context_view.extend Context_view.empty "n") "x" in
+  (* lvl 0 = outermost = "n"; lvl 1 = innermost = "x" *)
+  let v0 : Core.value = Core.RigidLocal (0, Emp) in
+  let v1 : Core.value = Core.RigidLocal (1, Emp) in
+  Printf.printf "%s, %s" (Pretty.pp_value cv v0) (Pretty.pp_value cv v1);
+  [%expect {| n, x |}]
 ;;

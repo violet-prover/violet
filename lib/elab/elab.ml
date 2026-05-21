@@ -1,5 +1,7 @@
 module Syntax = Violet_kernel.Syntax
 module Level = Violet_kernel.Level
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 module Evaluation = Wiring.Eval
 module Check = Wiring.Check
 module Unification = Unify
@@ -31,6 +33,10 @@ let extend (ctx : local_ctx) (name : string) (ty : Core.value) (value : Core.val
   ; names = Bwd.Snoc (ctx.names, name)
   ; lvl = ctx.lvl + 1
   }
+;;
+
+let view_of_ctx (ctx : local_ctx) : Context_view.t =
+  Context_view.make ~names:ctx.names ~lvl:ctx.lvl
 ;;
 
 (* `bind` is the common case: pushing a new binder.  The value placeholder is
@@ -706,130 +712,6 @@ let resolve_goal_name (m : machine) (n : string option) : string =
     string_of_int i
 ;;
 
-(* Context-aware pretty-printer for Core.value used by goal reports.
-   Replaces de Bruijn levels (`$N`) with the surface name from ctx.names,
-   and renders levels and universes in a user-facing form. Falls back to
-   `$N` when a level escapes the supplied context (e.g. closure-feed
-   placeholders used while descending into VPi/VLambda). *)
-let pretty_local_name (ctx : local_ctx) (lvl : int) : string =
-  if lvl >= 0 && lvl < ctx.lvl
-  then Bwd.nth ctx.names (ctx.lvl - 1 - lvl)
-  else Printf.sprintf "$%d" lvl
-;;
-
-let rec pretty_level_atom (l : Level.level) : string =
-  match l with
-  | Level.LZero -> "0"
-  | Level.LVar v -> v
-  | Level.LSuc _ | Level.LMax _ -> "(" ^ pretty_level l ^ ")"
-
-and pretty_level (l : Level.level) : string =
-  match l with
-  | Level.LZero -> "0"
-  | Level.LVar v -> v
-  | Level.LSuc l' -> "S " ^ pretty_level_atom l'
-  | Level.LMax (a, b) -> pretty_level_atom a ^ " ⊔ " ^ pretty_level_atom b
-;;
-
-let pretty_universe (l : Level.level) : string =
-  match l with
-  | Level.LZero -> "universe 𝓤₀"
-  | _ -> "universe " ^ pretty_level l
-;;
-
-let pretty_metavar (Core.MetaVar i : Core.metavar) : string = Printf.sprintf "?%d" i
-
-let rec pretty_value (ctx : local_ctx) (v : Core.value) : string =
-  match v with
-  | Core.Universe l -> pretty_universe l
-  | Core.RigidLocal (lvl, spine) -> pretty_neutral ctx (pretty_local_name ctx lvl) spine
-  | Core.Var (n, spine) -> pretty_neutral ctx n spine
-  | Core.IndType (n, spine) -> pretty_neutral ctx n spine
-  | Core.Label (n, spine) -> pretty_neutral ctx n spine
-  | Core.Flex (m, spine) -> pretty_neutral ctx (pretty_metavar m) spine
-  | Core.Elim ({ elim_name; _ }, spine) -> pretty_neutral ctx elim_name spine
-  | Core.VPi ({ name; bound; implicit }, closure) ->
-    let body = closure (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
-    let ctx' = bind ctx name bound in
-    let l, r = if implicit then "{", "}" else "(", ")" in
-    Printf.sprintf
-      "%s%s : %s%s -> %s"
-      l
-      name
-      (pretty_value ctx bound)
-      r
-      (pretty_value ctx' body)
-  | Core.VLambda { name; bound = closure; implicit } ->
-    let body = closure (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
-    (* Binder type is not stored on VLambda; placeholder type doesn't affect
-       the printed body. *)
-    let ctx' = bind ctx name (Core.Universe Level.LZero) in
-    if implicit
-    then Printf.sprintf "(fun {%s} => %s)" name (pretty_value ctx' body)
-    else Printf.sprintf "(fun %s => %s)" name (pretty_value ctx' body)
-  | Core.VLift { from_lvl; to_lvl; ty } ->
-    Printf.sprintf
-      "lift[%s→%s] %s"
-      (pretty_level from_lvl)
-      (pretty_level to_lvl)
-      (pretty_value ctx ty)
-  | Core.VLiftTerm { from_lvl; to_lvl; ty; tm } ->
-    Printf.sprintf
-      "liftₜ[%s→%s] (%s : %s)"
-      (pretty_level from_lvl)
-      (pretty_level to_lvl)
-      (pretty_value ctx tm)
-      (pretty_value ctx ty)
-  | Core.VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
-    Printf.sprintf
-      "unliftₜ[%s→%s] (%s : %s)"
-      (pretty_level from_lvl)
-      (pretty_level to_lvl)
-      (pretty_value ctx tm)
-      (pretty_value ctx ty)
-  | Core.VRecordType { name; params; fields; _ } ->
-    let p_params = List.map (pretty_value ctx) params in
-    let rec walk ctx = function
-      | [] -> []
-      | (b : Core.value_ty Syntax.binder) :: rest ->
-        let t_str = pretty_value ctx b.bound in
-        let ctx' = bind ctx b.name b.bound in
-        (b.name ^ " : " ^ t_str) :: walk ctx' rest
-    in
-    let field_strs = walk ctx fields in
-    let p =
-      match p_params with
-      | [] -> ""
-      | _ -> " " ^ String.concat " " p_params
-    in
-    let fs = String.concat " " (List.map (fun s -> "| " ^ s) field_strs) in
-    Printf.sprintf "(record %s%s %s)" name p fs
-  | Core.VRecordIntro { name; fields } ->
-    let fs =
-      String.concat ", " (List.map (fun (f, v) -> f ^ " = " ^ pretty_value ctx v) fields)
-    in
-    Printf.sprintf "%s{ %s }" name fs
-  | Core.VRecordProj (v, f) -> Printf.sprintf "%s.%s" (pretty_value ctx v) f
-  | Core.VIdAbsurd v -> Printf.sprintf "id-absurd %s" (pretty_value ctx v)
-
-and pretty_neutral (ctx : local_ctx) (head : string) (spine : Core.value bwd) : string =
-  if Bwd.is_empty spine
-  then head
-  else (
-    let args = List.map (pretty_arg ctx) (Bwd.to_list spine) in
-    head ^ " " ^ String.concat " " args)
-
-and pretty_arg (ctx : local_ctx) (v : Core.value) : string =
-  match v with
-  | Core.Universe _
-  | Core.RigidLocal (_, Emp)
-  | Core.Var (_, Emp)
-  | Core.IndType (_, Emp)
-  | Core.Label (_, Emp)
-  | Core.Flex (_, Emp) -> pretty_value ctx v
-  | _ -> "(" ^ pretty_value ctx v ^ ")"
-;;
-
 let emit_goal_report
       ~(loc : Asai.Range.t)
       (m : machine)
@@ -845,11 +727,15 @@ let emit_goal_report
   let types = Bwd.to_list m.ctx.types in
   List.iter2
     (fun n ty ->
-       Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n (pretty_value m.ctx ty)))
+       Buffer.add_string
+         buf
+         (Printf.sprintf "  %s : %s\n" n (Pretty.pp_value (view_of_ctx m.ctx) ty)))
     names
     types;
   Buffer.add_string buf "  --- target ---\n";
-  Buffer.add_string buf (Printf.sprintf "  %s" (pretty_value m.ctx target));
+  Buffer.add_string
+    buf
+    (Printf.sprintf "  %s" (Pretty.pp_value (view_of_ctx m.ctx) target));
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
 ;;
 
@@ -1195,7 +1081,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Elab_error
          "expected a record type for record literal, got %s"
-         (pretty_value m.ctx other))
+         (Pretty.pp_value (view_of_ctx m.ctx) other))
   | KRecordLit_Field
       ( loc
       , r_name
@@ -1273,7 +1159,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Elab_error
          "expected a record type for record update, got %s"
-         (pretty_value m.ctx other))
+         (Pretty.pp_value (view_of_ctx m.ctx) other))
   | KRecordUpdate_HaveBase (loc, r_name, overrides, term_fields, field_env) ->
     (match take_result m with
      | PTerm base_core ->
@@ -1486,7 +1372,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
         | Core.Universe l1, Core.Universe l2 when Level.not_equal l1 l2 && Level.le l2 l1
           -> m.result <- Some (PTerm (Core.Lift { from_lvl = l2; to_lvl = l1; ty = tm }))
         | _ ->
-          Unification.unify ~loc m.ctx.lvl expected infer_ty;
+          Unification.unify ~loc (view_of_ctx m.ctx) expected infer_ty;
           m.result <- Some (PTerm tm))
      | other ->
        Reporter.fatalf
@@ -2718,7 +2604,7 @@ let normalize_term (tm : Core.term) : Core.value = Evaluation.eval Bwd.Emp tm
 (* User-facing pretty-printer for REPL output. The empty local context is fine
    because expressions typed at the REPL don't introduce free locals — every
    surface name resolves against the global scope. *)
-let pretty_repl_value (v : Core.value) : string = pretty_value empty_ctx v
+let pretty_repl_value (v : Core.value) : string = Pretty.pp_value Context_view.empty v
 
 let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
   let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
