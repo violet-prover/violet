@@ -108,17 +108,14 @@ and pp_arg (cv : Context_view.t) (v : Core.value) : string =
   | _ -> "(" ^ pp_value cv v ^ ")"
 ;;
 
-let pp_local_ix_name (cv : Context_view.t) (ix : int) : string =
-  let lvl = Context_view.lvl cv - 1 - ix in
-  match Context_view.nth_name_from_lvl cv lvl with
-  | Some n -> n
-  | None -> Printf.sprintf "$%d" ix
-;;
-
 let rec pp_term (cv : Context_view.t) (t : Core.term) : string =
   match t with
   | Core.Universe l -> pp_universe l
-  | Core.LocalVar ix -> pp_local_ix_name cv ix
+  | Core.LocalVar ix ->
+    let lvl = Context_view.lvl cv - 1 - ix in
+    (match Context_view.nth_name_from_lvl cv lvl with
+     | Some n -> n
+     | None -> Printf.sprintf "$%d" ix)
   | Core.Var n -> n
   | Core.App (a, b) -> pp_term cv a ^ " " ^ pp_term_arg cv b
   | Core.Lambda { name; bound; implicit } ->
