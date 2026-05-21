@@ -16,7 +16,6 @@ type flex_set = int list
 
 let is_flex (flex : flex_set) (lvl : int) : bool = List.mem lvl flex
 
-(* Substitution: maps a flex level to the term it was bound to. *)
 type subst = (int * Core.value) list
 
 type outcome =

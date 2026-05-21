@@ -34,7 +34,6 @@ let meta_fresh (lvl : int) : term =
   r
 ;;
 
-(* Like [meta_fresh] but also records the new meta as a user goal. *)
 let fresh_goal (lvl : int) : term =
   let mvar = MetaVar !count in
   incr count;

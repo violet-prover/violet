@@ -1,5 +1,7 @@
 module Syntax = Violet_kernel.Syntax
 module Level = Violet_kernel.Level
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 open Syntax
 open Bwd
 open Bwd.Infix
@@ -271,7 +273,11 @@ let vapp (t : Core.value) (u : Core.value) : Core.value =
   | Core.Flex (m, sp) -> Core.Flex (m, sp <: u)
   | Core.RigidLocal (l, sp) -> Core.RigidLocal (l, sp <: u)
   | Core.IndType (h, sp) -> Core.IndType (h, sp <: u)
-  | v -> Reporter.fatalf Elab_error "ι-reduction: cannot apply %s" ([%show: Core.value] v)
+  | v ->
+    Reporter.fatalf
+      Elab_error
+      "ι-reduction: cannot apply %s"
+      (Pretty.pp_value Context_view.empty v)
 ;;
 
 let vapp_list t args = List.fold_left vapp t args

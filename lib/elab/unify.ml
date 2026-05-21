@@ -130,7 +130,7 @@ module PartialRenaming = struct
     let pr = invert cv sp in
     let rhs_tm = rename m pr rhs in
     let solution = lams pr.dom rhs_tm in
-    Reporter.tracef "solution is: %s" ([%show: term] solution)
+    Reporter.tracef "solution is: %s" (Pretty.pp_term Context_view.empty solution)
     @@ fun () -> eval Emp solution
   ;;
 end
@@ -166,8 +166,8 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
         ~loc
         Type_error
         "cannot unify Lift at different levels: %s vs %s"
-        ([%show: Level.level] a.to_lvl)
-        ([%show: Level.level] b.to_lvl)
+        (Pretty.pp_level a.to_lvl)
+        (Pretty.pp_level b.to_lvl)
   | VLiftTerm a, VLiftTerm b
     when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
     unify ~loc cv a.ty b.ty;
@@ -296,7 +296,6 @@ let%expect_test "record eta: VRecordIntro vs neutral unifies" =
 
 let%expect_test "Pretty.pp_value renders a local by binder name in a unify context" =
   let cv = Context_view.extend (Context_view.extend Context_view.empty "n") "x" in
-  (* lvl 0 = outermost = "n"; lvl 1 = innermost = "x" *)
   let v0 : Core.value = Core.RigidLocal (0, Emp) in
   let v1 : Core.value = Core.RigidLocal (1, Emp) in
   Printf.printf "%s, %s" (Pretty.pp_value cv v0) (Pretty.pp_value cv v1);

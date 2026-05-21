@@ -10,7 +10,6 @@ type atom =
   }
 [@@deriving show]
 
-(* Internal normal form. *)
 type nf =
   { const : int
   ; atoms : atom list (* sorted by var, distinct *)
@@ -36,7 +35,6 @@ let rec pretty : level -> string = function
   | LMax (a, b) -> pretty a ^ " ⊔ " ^ pretty b
 ;;
 
-(* Normalize a level expression to canonical nf. *)
 let normalize (l : level) : nf =
   let rec go (offset : int) (acc_const : int) (acc_atoms : atom list) = function
     | LZero -> max acc_const offset, acc_atoms
@@ -60,7 +58,6 @@ let normalize (l : level) : nf =
   { const = c; atoms }
 ;;
 
-(* Canonical (decidable) equality. *)
 let equal (a : level) (b : level) : bool =
   let na = normalize a in
   let nb = normalize b in

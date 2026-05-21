@@ -1,12 +1,12 @@
 module Syntax = Violet_kernel.Syntax
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 module Evaluation = Wiring.Eval
 open Syntax
 open Asai.Range
 open Surface_utils
 open Bwd
 
-(* Best location for a Surface preterm, falling back to [default] when the
-   term has no recorded range. *)
 let loc_or (default : Asai.Range.t) (t : Surface.preterm) : Asai.Range.t =
   Option.value (loc_of t) ~default
 ;;
@@ -23,7 +23,6 @@ let close_ctor_type (params : Surface.pretype binder list) (typ : Surface.pretyp
     typ
 ;;
 
-(* Shadow `name` in an assoc-keyed scope by removing entries with that key. *)
 let drop_key (name : string) (assoc : (string * 'a) list) : (string * 'a) list =
   List.filter (fun (k, _) -> not (String.equal k name)) assoc
 ;;
@@ -130,8 +129,6 @@ let rewrite_recursive_calls
               "non-structural recursive call to `%s` in clause body"
               func_name)
        | _ ->
-         (* Not a recursive call — recurse into f and args, preserving the
-            original implicit flag on each App node. *)
          let args' = List.map (fun (impl, a) -> impl, rw a) args in
          List.fold_left (fun acc (impl, a) -> Surface.App (impl, acc, a)) (rw head) args')
     | Surface.Lambda b -> Surface.Lambda { b with bound = rw b.bound }
@@ -280,7 +277,7 @@ let rec peel_vpi (v : Core.value) (n : int) (start_lvl : int)
         Elab_error
         "elim: VPi peel ran out of binders (expected %d more), got `%s`"
         n
-        ([%show: Core.value] v))
+        (Pretty.pp_value Context_view.empty v))
 ;;
 
 (* Promote bare [PVar n] to [PCon (n, [])] when [n] is itself a constructor.
@@ -325,9 +322,6 @@ let find_clause_for_ctor
     clauses
 ;;
 
-(* Validate a clause for [ctor_name] and produce the bindings + rewritten
-   body needed to assemble its case arm. Errors with a precise location if
-   the clause's head, arity, or trailing-pattern count doesn't match. *)
 let process_clause
       ~(loc : Asai.Range.t)
       ~(func_name : string)
@@ -484,8 +478,7 @@ let build_owner_map ~(ind_head : string) (info : Context.ind_info)
 
 (* Readback a Core value into a Surface preterm so it can be re-elaborated.
    Rigid locals are recovered through [user_level_names]; ctor labels are
-   qualified through [owner_map]. Used to lower σ-substituted index values
-   into clause bodies. *)
+   qualified through [owner_map]. *)
 let readback_value_to_surface
       ~(loc : Asai.Range.t)
       ~(user_level_names : (int * string) list)
@@ -519,15 +512,13 @@ let readback_value_to_surface
         ~loc
         Elab_error
         "elim: readback can't lower core value `%s` to surface"
-        ([%show: Core.value] other)
+        (Pretty.pp_value Context_view.empty other)
   and rb_spine acc args =
     List.fold_left (fun acc a -> Surface.App (false, acc, rb a)) acc args
   in
   rb v
 ;;
 
-(* Force the target's type to an [IndType] spine and split it into the
-   leading [n_total_params] parameters and the remaining indices. *)
 let split_target_params_indices
       ~(loc : Asai.Range.t)
       ~(n_total_params : int)
@@ -543,7 +534,7 @@ let split_target_params_indices
       ~loc
       Elab_error
       "elim: target type is not an inductive value, got `%s`"
-      ([%show: Core.value] other)
+      (Pretty.pp_value Context_view.empty other)
 ;;
 
 (* For a constructor, peel its core type past the data params and its own
@@ -610,7 +601,7 @@ let ctor_spine_and_flex
         Elab_error
         "elim: ctor `%s`'s peeled codomain is not an inductive: `%s`"
         ctor_name
-        ([%show: Core.value] other)
+        (Pretty.pp_value Context_view.empty other)
   in
   indices, flex_levels, flex_name_map
 ;;
@@ -771,8 +762,8 @@ let build_elim_body_unify
             `%s` ≟ `%s`"
            s.position
            ctor_name
-           ([%show: Core.value] s.lhs)
-           ([%show: Core.value] s.rhs)
+           (Pretty.pp_value Context_view.empty s.lhs)
+           (Pretty.pp_value Context_view.empty s.rhs)
        | _ -> ())
     ctor_outcomes;
   let normalize = make_normalize ctors in
@@ -817,9 +808,6 @@ let build_elim_body_unify
              (fun (i : Context.ctor_info) -> String.equal i.ctor_name ctor_name)
              ctor_infos
          in
-         (* Build `\v -> \ih-v -> body` for each field-binder of this ctor,
-            dispatching on Recursive/Regular and threading implicit flags
-            from the surface ctor signature. *)
          let close_ctor_lambdas ~check_loc names body =
            if List.length names <> List.length implicits
            then
@@ -864,8 +852,8 @@ let build_elim_body_unify
                 ind_head
                 ctor_name
                 k
-                ([%show: Core.value] lhs)
-                ([%show: Core.value] rhs)
+                (Pretty.pp_value Context_view.empty lhs)
+                (Pretty.pp_value Context_view.empty rhs)
             | None -> ());
            (* Auto-remove: the case's `p_k : Id T_k idx_k actual_k` has
               orthogonal ctor heads on both sides, so `\absurd-id` derives
@@ -1121,7 +1109,6 @@ let build_elim_body
         inner
     in
     let trailing_intros = List.filteri (fun i _ -> i > target_pos) intros in
-    (* Per-ctor case arm. *)
     let case_args : Surface.preterm list =
       List.map
         (fun (ctor_name, arity) ->
@@ -1201,8 +1188,6 @@ let build_elim_body
       trailing_intros)
 ;;
 
-(* Internal: run a thunk under all elaboration effect handlers. Used by
-   inline tests below. *)
 let with_handlers (k : unit -> 'a) : 'a =
   Reporter.run
     ~emit:(fun _ -> ())

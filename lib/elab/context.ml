@@ -1,6 +1,8 @@
 open Yuujinchou
 open Bwd
 module Syntax = Violet_kernel.Syntax
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 open Syntax
 
 type binder_kind =
@@ -80,7 +82,6 @@ let lookup_path (xs : string list) : Core.value_ty =
 
 let has_path (xs : string list) : bool = Option.is_some (S.resolve xs)
 
-(* Handle scoping effects *)
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
@@ -93,12 +94,14 @@ module Handler = struct
     | None -> ()
   ;;
 
-  let pp_item fmt = function
-    | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value_ty] x)
-    | x, `Defn -> Format.fprintf fmt "%s (defn)" ([%show: Core.value_ty] x)
-    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value_ty] x)
-    | x, `Eliminator -> Format.fprintf fmt "%s (eliminator)" ([%show: Core.value_ty] x)
-    | x, `Inductive _ -> Format.fprintf fmt "%s (inductive)" ([%show: Core.value_ty] x)
+  let pp_item fmt (x, tag) =
+    let s = Pretty.pp_value Context_view.empty x in
+    match tag with
+    | `Imported -> Format.fprintf fmt "%s (imported)" s
+    | `Defn -> Format.fprintf fmt "%s (defn)" s
+    | `Constructor -> Format.fprintf fmt "%s (constructor)" s
+    | `Eliminator -> Format.fprintf fmt "%s (eliminator)" s
+    | `Inductive _ -> Format.fprintf fmt "%s (inductive)" s
   ;;
 
   let shadow context path x y =

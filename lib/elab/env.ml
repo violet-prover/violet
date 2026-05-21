@@ -1,6 +1,8 @@
 open Yuujinchou
 open Bwd
 module Syntax = Violet_kernel.Syntax
+module Context_view = Violet_kernel.Context_view
+module Pretty = Violet_kernel.Pretty
 open Syntax
 
 type modifier_cmd = Trace
@@ -55,7 +57,6 @@ let register_definition (name : string) (v : Core.value) : unit =
 
 let unfold_def (name : string) : Core.value option = Hashtbl.find_opt definitions name
 
-(* Handle scoping effects *)
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
@@ -68,11 +69,13 @@ module Handler = struct
     | None -> ()
   ;;
 
-  let pp_item fmt = function
-    | x, `Imported -> Format.fprintf fmt "%s (imported)" ([%show: Core.value] x)
-    | x, `Defn -> Format.fprintf fmt "%s (defn)" ([%show: Core.value] x)
-    | x, `Constructor -> Format.fprintf fmt "%s (constructor)" ([%show: Core.value] x)
-    | x, `Eliminator -> Format.fprintf fmt "%s (eliminator)" ([%show: Core.value] x)
+  let pp_item fmt (x, tag) =
+    let s = Pretty.pp_value Context_view.empty x in
+    match tag with
+    | `Imported -> Format.fprintf fmt "%s (imported)" s
+    | `Defn -> Format.fprintf fmt "%s (defn)" s
+    | `Constructor -> Format.fprintf fmt "%s (constructor)" s
+    | `Eliminator -> Format.fprintf fmt "%s (eliminator)" s
   ;;
 
   let shadow context path x y =

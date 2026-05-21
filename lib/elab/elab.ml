@@ -39,8 +39,6 @@ let view_of_ctx (ctx : local_ctx) : Context_view.t =
   Context_view.make ~names:ctx.names ~lvl:ctx.lvl
 ;;
 
-(* `bind` is the common case: pushing a new binder.  The value placeholder is
-   a fresh RigidLocal at the current level. *)
 let bind (ctx : local_ctx) (name : string) (ty : Core.value) : local_ctx =
   extend ctx name ty (Core.RigidLocal (ctx.lvl, Emp))
 ;;
@@ -55,13 +53,10 @@ let resolve_local (ctx : local_ctx) (x : string) : int option =
   go 0 ctx.names
 ;;
 
-(* Resolve a surface identifier that might refer to a declared universe
-   variable.  Returns Some level if the name is a level var, else None. *)
 let resolve_universe_var (x : string) : Level.level option =
   if Context.is_level_var x then Some (Level.LVar x) else None
 ;;
 
-(* Look up the type of a local by index, mirroring resolve_local. *)
 let local_type (ctx : local_ctx) (ix : int) : Core.value =
   let rec nth env i =
     match env, i with
@@ -72,11 +67,8 @@ let local_type (ctx : local_ctx) (ix : int) : Core.value =
   nth ctx.types ix
 ;;
 
-(* Helpers for stack-style (Pterodactyl) definitions. *)
-
-(* Pick a binder name for the LHS pattern position. If the first clause has a
-   PVar at that position, reuse it; otherwise (e.g. PCon at a split site)
-   synthesize a fresh name. *)
+(* If the first clause has a PVar at that position, reuse it; otherwise
+   (e.g. PCon at a split site) synthesize a fresh name. *)
 let pick_binder_name (clauses : Surface.clause list) (position : int) : string =
   match clauses with
   | [] -> Printf.sprintf "__x%d" position
@@ -186,9 +178,6 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
   | Surface.IdAbsurd _ -> t
 ;;
 
-(* Peel `length bindings` Pi-layers off `typ_val`, extending ctx with the
-   user-supplied param names and types. Returns the inner ctx and the goal
-   value after all params are consumed. *)
 let rec walk_params
           ~(loc : Asai.Range.t)
           (ctx : local_ctx)
@@ -209,14 +198,10 @@ let rec walk_params
          ~loc
          Elab_error
          "stack-def: fewer Pi-layers than params, got `%s`"
-         ([%show: Core.value] other))
+         (Pretty.pp_value (view_of_ctx ctx) other))
 ;;
 
-(* Walk through the move list, peeling Pi-layers off `goal` and constructing
-   a Surface preterm body that the elaborator will later check against the
-   full Pi type. `position` is the next LHS pattern position to consult for
-   binder naming (counted from the start of params + intros).
-   `signature` and `n_params` are unchanged across recursion; they're used at
+(* `signature` and `n_params` are unchanged across recursion; they're used at
    the `<= split` site to reconstruct the result type as a Surface preterm
    (needed for the motive — a Hole there would over-capture and break
    pattern unification on constructor case args). *)
@@ -270,7 +255,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= intro` needs a function type, got `%s`"
-         ([%show: Core.value] other))
+         (Pretty.pp_value (view_of_ctx ctx) other))
   | Surface.Split :: rest ->
     if rest <> []
     then
@@ -286,7 +271,6 @@ let rec walk_moves
     let pattern_position = position - 1 in
     (match Evaluation.force_head target_ty with
      | Core.VRecordType { name = r_name; fields; _ } ->
-       (* Record split: one clause, PRecord pattern, bind each field via projection. *)
        if List.length clauses <> 1
        then
          Reporter.fatalf
@@ -321,7 +305,6 @@ let rec walk_moves
              "clause `%s` has too few patterns"
              clause.head
        in
-       (* Validate: no duplicates in pattern entries *)
        let _ =
          List.fold_left
            (fun seen (fname, _) ->
@@ -341,7 +324,6 @@ let rec walk_moves
          List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
        in
        let entry_names = List.map fst entries in
-       (* Validate: no unknown fields *)
        List.iter
          (fun fname ->
             if not (List.mem fname field_names)
@@ -353,7 +335,6 @@ let rec walk_moves
                 fname
                 r_name)
          entry_names;
-       (* Validate: no missing fields *)
        List.iter
          (fun fname ->
             if not (List.mem fname entry_names)
@@ -516,7 +497,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= split`: target type must be an inductive or record type, got `%s`"
-         ([%show: Core.value] other))
+         (Pretty.pp_value (view_of_ctx ctx) other))
 ;;
 
 type produced =
@@ -749,9 +730,6 @@ let name_of_top : Surface.top -> string = function
   | Surface.Record { name; _ } -> name
 ;;
 
-(* Publish to Yuujinchou: visible-only if private, visible+export if public.
-   Switches the API based on the export flag without changing the binding
-   data, modifier contexts, or path. *)
 let publish_to_context ~exported path datum =
   if exported
   then
@@ -813,12 +791,6 @@ let rec shift_term ?(cutoff = 0) (n : int) (t : Core.term) : Core.term =
   | Core.IdAbsurd t -> Core.IdAbsurd (shift_term ~cutoff n t)
 ;;
 
-(* Walk the term-fields of a record (in declaration order) for a record-update
-   elaboration. For each field: if overridden, suspend by pushing a GCheck
-   against the field's type instantiated with prior-field values plus a
-   KRecordUpdate_Field continuation that resumes the walk; otherwise,
-   synthesize `RecordProj base_core fname`, evaluate it, and continue with
-   [eval_env] extended by the projected value. Drives [m] in place. *)
 let walk_record_update_fields
       (m : machine)
       ~(loc : Asai.Range.t)
@@ -900,8 +872,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
             ~loc
             Type_error
             "expected a type, but got `%s : %s`"
-            ([%show: Core.term] tm)
-            ([%show: Core.value] other))
+            (Pretty.pp_term (view_of_ctx m.ctx) tm)
+            (Pretty.pp_value (view_of_ctx m.ctx) other))
      | other ->
        Reporter.fatalf
          Elab_error
@@ -948,7 +920,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Elab_error
          "Lambda checked against non-Pi: %s"
-         ([%show: Core.value] ty))
+         (Pretty.pp_value (view_of_ctx m.ctx) ty))
   | KLam_Body (_loc, name, implicit) ->
     (match take_result m with
      | PTerm body_tm ->
@@ -1009,14 +981,19 @@ let rec dispatch (m : machine) (g : goal) : unit =
             m.result <- Some (PTermType (new_f_tm, new_f_ty));
             push m (KApp_HaveFn (loc, is_implicit, arg))
           end
-          else Reporter.fatalf ~loc Elab_error "Bad apply at %s" ([%show: Core.term] f_tm)
+          else
+            Reporter.fatalf
+              ~loc
+              Elab_error
+              "Bad apply at %s"
+              (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
         | ty ->
           Reporter.fatalf
             ~loc
             Type_error
             "cannot apply to `(%s) : %s`"
-            ([%show: Core.term] f_tm)
-            ([%show: Core.value_ty] ty))
+            (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
+            (Pretty.pp_value (view_of_ctx m.ctx) ty))
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" ([%show: produced] other))
   | KApp_HaveArg (_loc, f_tm, b) ->
@@ -1056,8 +1033,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let canonical_entries =
          List.map (fun fname -> fname, List.assoc fname entries) field_names
        in
-       (* 5. Start the telescope walk. The first field has no prior values to
-          substitute, so `eval field_env t0.bound` reduces to the same value as
+       (* The first field has no prior values to substitute, so
+          `eval field_env t0.bound` reduces to the same value as
           `type_fields[0].bound`. *)
        (match canonical_entries, field_terms with
         | [], [] ->
@@ -1146,7 +1123,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~expected_fields:field_names
          ~provided:(List.map fst overrides)
          ~check_missing:false;
-       (* Check base against the expected record type; fire KRecordUpdate_HaveBase *)
        push m (KRecordUpdate_HaveBase (loc, r_name, overrides, field_terms, field_env));
        push m (GCheck (loc, base, expected_ty))
      | Core.Flex _ ->
@@ -1213,7 +1189,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | PTermType (e_core, v_ty) ->
        (match Evaluation.force_head v_ty with
         | Core.VRecordType { name = r_name; params = v_params; fields; _ } ->
-          (* Validate that field f exists in the record type *)
           let field_names =
             List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
           in
@@ -1223,7 +1198,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
              to recover the result type for this projection. *)
           let companion_name = r_name ^ "/" ^ f in
           let companion_ty = Context.lookup companion_name in
-          (* Apply companion_ty (a VPi) successively to each param, then to the record value *)
           let apply_vpi ty arg =
             match Evaluation.force_head ty with
             | Core.VPi (_, b) -> b arg
@@ -1231,7 +1205,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
               Reporter.fatalf
                 Elab_error
                 "KProj_HaveRec: companion type is not a Pi when applying params, got %s"
-                ([%show: Core.value] other)
+                (Pretty.pp_value (view_of_ctx m.ctx) other)
           in
           let ty_after_params = List.fold_left apply_vpi companion_ty v_params in
           let v_record = Evaluation.eval m.ctx.env e_core in
@@ -1250,7 +1224,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             Type_error
             "expected a record type for projection `.%s`, got %s"
             f
-            ([%show: Core.value] other))
+            (Pretty.pp_value (view_of_ctx m.ctx) other))
      | other ->
        Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" ([%show: produced] other))
   | GInfer (loc, Lambda _) -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
@@ -1284,7 +1258,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Type_error
          "operands of `⊔` must be universes, got `%s`"
-         ([%show: Core.term] other_tm)
+         (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
        Reporter.fatalf Elab_error "KMax_HaveLeft: bad result %s" ([%show: produced] other))
   | KMax_HaveRight (loc, l_a) ->
@@ -1297,7 +1271,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Type_error
          "operands of `⊔` must be universes, got `%s`"
-         ([%show: Core.term] other_tm)
+         (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
        Reporter.fatalf
          Elab_error
@@ -1334,14 +1308,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
                ~loc
                Elab_error
                "\\absurd-id: expected Id of distinct-ctor-headed values, got `Id _ %s %s`"
-               ([%show: Core.value] l)
-               ([%show: Core.value] r))
+               (Pretty.pp_value (view_of_ctx m.ctx) l)
+               (Pretty.pp_value (view_of_ctx m.ctx) r))
         | other ->
           Reporter.fatalf
             ~loc
             Elab_error
             "\\absurd-id: argument is not Id-typed, got `%s`"
-            ([%show: Core.value] other))
+            (Pretty.pp_value (view_of_ctx m.ctx) other))
      | other ->
        Reporter.fatalf
          Elab_error
@@ -1588,7 +1562,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
              Elab_error
              "data type `%s`'s spine should end in a Universe, got `%s`"
              name
-             ([%show: Core.value] other)
+             (Pretty.pp_value (view_of_ctx m.ctx) other)
        in
        let user_sort = final_sort_of_val m.ctx.lvl typ_val in
        if not (Level.le inferred_sort (Level.lsuc user_sort))
@@ -1599,8 +1573,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
            "inductive type `%s`'s declared return sort `%s` is not large enough; \
             constructed Pi-tower lives at sort `%s`"
            name
-           ([%show: Level.level] user_sort)
-           ([%show: Level.level] inferred_sort);
+           (Pretty.pp_level user_sort)
+           (Pretty.pp_level inferred_sort);
        let lookup_polarity (n : string) : Context.polarity list option =
          match Context.S.resolve [ n ] with
          | Some (_, `Inductive info) -> Some (info : Context.ind_info).param_polarity
@@ -1692,7 +1666,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
              name
              b.name)
       fields;
-    (* Build the Pi-tower: params → ind_ty, and infer it. *)
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -1705,15 +1678,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | KTopRecord_HaveType (loc, name, params, ind_ty, fields) ->
     (match take_result m with
      | PType (typ_tm, _inferred_sort) ->
-       (* --- Record head ---
-          The type of the head (as a term) is just `typ_tm`, which is the
-          inferred type of the full params → ind_ty Pi-tower.
-          The body is a Lambda over the params that returns RecordType. *)
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
-       (* Check each field type in context extended by params + previous fields.
-          We accumulate (field_name, field_ty_core_term) pairs. *)
        let ctx_with_params =
-         (* Extend ctx with params as rigid locals so field types can refer to them. *)
+         (* Params extend ctx as rigid locals so field types can refer to them. *)
          let rec extend_params ctx = function
            | [] -> ctx
            | (b : Surface.pretype binder) :: rest ->
@@ -1740,22 +1707,15 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let n_params = List.length params in
        let n_fields = List.length fields in
        let field_names = List.map (fun (b : Surface.pretype binder) -> b.name) fields in
-       (* --- Publish record head ---
-          Type: typ_val (the Pi params → ind_ty)
-          Body: Lambda(P₁, ..., Lambda(Pₖ, RecordType { name; params=[LocalVar(k-1)...0]; fields=... }))
-          The RecordType body also needs the field telescope in Core.
-          We build it directly. *)
-       (* Build the field telescope in Core under k param lambdas.
-          Reuse the Core terms already produced by the first pass above.
-          Those terms were checked in ctx_with_params (depth = k, since m.ctx.lvl=0),
-          so their LocalVar indices already match what RecordType needs under k param-lambdas. *)
+       (* Field telescope built under k param-lambdas. The Core terms produced
+          above were checked in ctx_with_params (depth k, m.ctx.lvl=0), so
+          their LocalVar indices already match what RecordType needs under
+          k param-lambdas; no re-check needed. *)
        let head_body : Core.term =
-         (* Under k param-lambdas, param_i is at LocalVar (k-1-i) for i in [0,k-1].
-            Build RecordType with params = [LocalVar(k-1), LocalVar(k-2), ..., LocalVar 0]. *)
+         (* Under k param-lambdas, param_i is at LocalVar (k-1-i) for i in [0,k-1]. *)
          let param_vars =
            List.init n_params (fun i -> Core.LocalVar (n_params - 1 - i))
          in
-         (* Build core_fields directly from field_ty_terms — no re-check needed. *)
          let core_fields =
            List.map
              (fun (fname, fty_tm) ->
@@ -1765,7 +1725,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
          let record_ty_tm =
            Core.RecordType { name; params = param_vars; fields = core_fields }
          in
-         (* Wrap in lambdas for each param *)
          List.fold_right
            (fun (b : Surface.pretype binder) body ->
               Core.Lambda { name = b.name; bound = body; implicit = b.implicit })
@@ -1779,10 +1738,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        Env.register_definition name head_body_val;
        let qname = m.module_name ^ "." ^ name in
        Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:head_body;
-       (* --- Helper: build param Pi-tower wrapping inner_ty ---
-          Re-checks param types in m.ctx to get Core terms. *)
        let param_binder_core_terms =
-         (* Check each param type in ctx extended by previous params *)
          let _, terms =
            List.fold_left
              (fun (ctx_acc, acc) (b : Surface.pretype binder) ->
@@ -1795,7 +1751,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
          in
          terms
        in
-       (* Build: Pi(P₁:Q₁, Pi(P₂:Q₂, ..., Pi(Pₖ:Qₖ, inner))) *)
        let wrap_param_pis (inner : Core.term) : Core.term =
          List.fold_right
            (fun (n, impl, qty_tm) body ->
@@ -1813,7 +1768,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
            param_binder_core_terms
            inner
        in
-       (* Build: Lambda(P₁, Lambda(P₂, ..., Lambda(Pₖ, inner))) *)
        let wrap_param_lambdas (inner : Core.term) : Core.term =
          List.fold_right
            (fun (n, impl, _qty_tm) body ->
@@ -1839,8 +1793,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
            base
            (List.init n_params (fun i -> i))
        in
-       (* --- Build field type Core terms for companion types ---
-          field_core_tys.(i) = Core.term for Tᵢ, valid under (params + f₁…fᵢ₋₁) binders *)
+       (* field_core_tys.(i) = Core.term for Tᵢ, valid under
+          (params + f₁…fᵢ₋₁) binders *)
        let field_core_tys =
          let _, tys =
            List.fold_left
@@ -1854,13 +1808,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
          in
          Array.of_list tys
        in
-       (* --- R/mk companion ---
-          ty = Pi(P₁:Q₁, ..., Pi(Pₖ:Qₖ, Pi(f₁:T₁, ..., Pi(fₙ:Tₙ, R P₁…Pₖ))))
-          body = Lambda(P₁, ..., Lambda(Pₖ, Lambda(f₁, ..., Lambda(fₙ,
-                   RecordIntro { name=R; fields=[(f₁,LocalVar(n-1)),...,(fₙ,LocalVar 0)] }))))
-
-          Under k+n binders: fₙ=ix 0, ..., f₁=ix(n-1), Pₖ=ix n, ..., P₁=ix(k+n-1).
-       *)
+       (* R/mk: under k+n binders, fₙ=ix 0, ..., f₁=ix(n-1),
+          Pₖ=ix n, ..., P₁=ix(k+n-1). *)
        let mk_name = name ^ "/mk" in
        let mk_ty : Core.term =
          (* Build the field Pi-tower inside the param Pi-tower.
@@ -1889,7 +1838,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
            List.mapi (fun i fname -> fname, Core.LocalVar (n_fields - 1 - i)) field_names
          in
          let intro = Core.RecordIntro { name; fields = intro_fields } in
-         (* Wrap in field lambdas (inner) then param lambdas (outer) *)
          let with_field_lambdas =
            List.fold_right
              (fun (b : Surface.pretype binder) body ->
@@ -2014,7 +1962,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
             let prev_field_names =
               Array.to_list (Array.sub (Array.of_list field_names) 0 i)
             in
-            (* Tᵢ_projected *)
             let proj_result_ty =
               subst_proj_result_ty
                 ~n_before:i
@@ -2032,7 +1979,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
               in
               wrap_param_pis_implicit r_pi
             in
-            (* body = Lambda({params...}, Lambda(r, RecordProj { record=LocalVar 0; field })) *)
             let proj_body : Core.term =
               let proj_expr =
                 Core.RecordProj { record = Core.LocalVar 0; field = field_name }
@@ -2055,19 +2001,13 @@ let rec dispatch (m : machine) (g : goal) : unit =
          fields;
        let ind_ty_tm = check_type ~loc m.ctx ind_ty in
        let elim_name = name ^ "/elim" in
-       (* R/elim companion:
-            ty   = Pi(params, Pi(r:R, Pi(M:R→ind_ty, Pi(case: field_tele → M(R/mk field_tele), M r))))
-            body = Lambda(params, Lambda(r, Lambda(M, Lambda(case, case r.f₁ ... r.fₙ)))) *)
-       (* M's type: R_applied → ind_ty. Under k+1 binders (params+r). *)
+       (* R/elim. M's type: R_applied → ind_ty, under k+1 binders (params+r).
+          ind_ty_tm was checked in m.ctx (depth 0), so it has no local vars;
+          under k+1 binders R_applied is at ix 0. *)
        let motive_ty_tm : Core.term =
-         (* Pi(r_for_M : R_applied, ind_ty_shifted) where ind_ty_shifted
-            has ind_ty_tm indices shifted by (k+1) compared to top level...
-            But ind_ty_tm was checked in m.ctx (depth 0 lvl), so it has no local vars.
-            Under k+1 binders: R_applied at ix 0. *)
          Core.Pi
            ( { name = "_"; bound = rec_applied_under 0; implicit = false }
-           , (* shift ind_ty_tm by 1 for this binder *)
-             shift_term 1 ind_ty_tm )
+           , shift_term 1 ind_ty_tm )
        in
        (* Build the case type: Pi(f₁:T₁, ..., Pi(fₙ:Tₙ', M (R/mk f₁...fₙ)))
           Under k+2 binders (params + r + M), then inside n more field binders.
@@ -2104,7 +2044,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
          (* Build innermost: M(R/mk f₁...fₙ) under k+2+n binders.
             M = ix n, params P₁=ix(k+n+1)...Pₖ=ix(n+2), fields f₁=ix(n-1)...fₙ=ix 0. *)
          let mk_full_applied =
-           (* Apply R/mk to params then to fields *)
            let with_params =
              List.fold_left
                (fun f i ->
@@ -2133,8 +2072,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
               fields
               (m_applied, 0)
        in
-       (* Full elim type:
-          Pi(params, Pi(r:R, Pi(M:R->ind_ty, Pi(case:case_ty, M r)))) *)
        let elim_ty : Core.term =
          (* Under params + r + M + case binders: M=ix 1, r=ix 2. *)
          let m_r = Core.App (Core.LocalVar 1, Core.LocalVar 2) in
@@ -2149,10 +2086,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          in
          wrap_param_pis r_pi
        in
-       (* Elim body:
-          Lambda(params, Lambda(r, Lambda(M, Lambda(case, case r.f₁ ... r.fₙ))))
-          Under k+3 binders: case=ix 0, M=ix 1, r=ix 2, ...
-          case r.f₁ ... r.fₙ = App(...App(LocalVar 0, RecordProj(LocalVar 2, f₁)), ..., RecordProj(LocalVar 2, fₙ)) *)
+       (* Under k+3 binders: case=ix 0, M=ix 1, r=ix 2. *)
        let elim_body : Core.term =
          let r_var = Core.LocalVar 2 in
          let projections =
@@ -2242,7 +2176,6 @@ and bind_constructor
   Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_ty_tm
 ;;
 
-(* Internal: run a thunk under all elaboration effect handlers. *)
 let with_handlers (k : unit -> 'a) : 'a =
   Reporter.run
     ~emit:(fun _ -> ())
@@ -2280,7 +2213,6 @@ let with_handlers_emitting (k : unit -> 'a) : 'a =
   @@ k
 ;;
 
-(* Test harness: run a single GInfer to completion against the empty ctx. *)
 let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   with_handlers
   @@ fun () ->
@@ -2377,9 +2309,7 @@ let%expect_test "infer App" =
         ()
     in
     let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-    (* Bind x : U at level 0 *)
     m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
-    (* Bind f : (U -> U) at level 1 *)
     let f_ty =
       Core.VPi
         ( { name = "a"; bound = Core.Universe Level.LZero; implicit = false }
@@ -2552,7 +2482,6 @@ let check_module ?module_path (file : Surface.t) : unit =
        let loc = Option.get top.loc in
        check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value)
     file.tops;
-  (* Validate that every name listed in \export was actually defined. *)
   let bound_names : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   Yuujinchou.Trie.iter
     (fun path _ ->
@@ -2598,7 +2527,6 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
     Reporter.fatalf ~loc Elab_error "infer_expression: got %s" ([%show: produced] other)
 ;;
 
-(* Evaluate an inferred term to its normal-form value. *)
 let normalize_term (tm : Core.term) : Core.value = Evaluation.eval Bwd.Emp tm
 
 (* User-facing pretty-printer for REPL output. The empty local context is fine
@@ -2921,7 +2849,6 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
     let is_exported _ = false in
     Context.clear_level_vars ();
     Context.declare_level_var "U";
-    (* Elaborate Nat *)
     check_top
       ~module_name:"test"
       ~kernel_module
@@ -2929,7 +2856,6 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       ~is_exported
       ~loc:dummy_loc
       nat_data;
-    (* Elaborate Point *)
     check_top
       ~module_name:"test"
       ~kernel_module
@@ -3036,7 +2962,6 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       ~is_exported
       ~loc:dummy_loc
       p_let);
-  (* Look up `test.p` in the kernel module and print its body *)
   (match Violet_kernel.Module.lookup kernel_module "test.p" with
    | Some (Violet_kernel.Module.Let { body; _ }) ->
      Printf.printf "body: %s\n" ([%show: Core.term] body)
