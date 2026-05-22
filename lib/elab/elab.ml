@@ -746,6 +746,7 @@ let emit_goal_report
     names
     types;
   Buffer.add_string buf "  --- target ---\n";
+  let target = Evaluation.force_head target in
   Buffer.add_string
     buf
     (Printf.sprintf "  %s" (Pretty.pp_value (view_of_ctx m.ctx) target));

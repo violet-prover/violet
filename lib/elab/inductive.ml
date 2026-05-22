@@ -27,6 +27,33 @@ let drop_key (name : string) (assoc : (string * 'a) list) : (string * 'a) list =
   List.filter (fun (k, _) -> not (String.equal k name)) assoc
 ;;
 
+(* A stateful name-freshener: pick names that avoid collisions with an
+   evolving "known" set. [freshen base] returns the first variant of
+   [base] (adding `'`s as needed) that isn't already known, and records
+   the chosen name. [claim name] records [name] without freshening, for
+   user-written binders that we want to leave alone but still want
+   subsequent freshenings to skip. *)
+type freshener =
+  { freshen : string -> string
+  ; claim : string -> unit
+  }
+
+let make_freshener (initial : string list) : freshener =
+  let known = ref initial in
+  let freshen (base : string) : string =
+    let rec go cand =
+      if List.mem cand !known
+      then go (cand ^ "'")
+      else (
+        known := cand :: !known;
+        cand)
+    in
+    go base
+  in
+  let claim (name : string) : unit = known := name :: !known in
+  { freshen; claim }
+;;
+
 (* Rename free Var occurrences in a Surface preterm. Respects binders: when
    we descend under a Lambda/TypedLambda/Pi whose name shadows a key in the
    renaming, that key is dropped for the inner scope. *)
@@ -953,8 +980,11 @@ let build_elim_body_unify
     ctor_outcomes;
   let normalize = make_normalize ctors in
   let m_indices = List.length target_indices in
-  let idx_name i = Printf.sprintf "__elim_idx_%d" i in
-  let p_name i = Printf.sprintf "__elim_p_%d" i in
+  let elim_freshener = make_freshener intro_names in
+  let idx_names_arr = Array.init m_indices (fun _ -> elim_freshener.freshen "i") in
+  let p_names_arr = Array.init m_indices (fun _ -> elim_freshener.freshen "p") in
+  let idx_name i = idx_names_arr.(i) in
+  let p_name i = p_names_arr.(i) in
   let has_conflict =
     List.exists
       (fun (_, _, _, o, _) ->
@@ -1302,11 +1332,13 @@ let build_elim_body
       ~target_type_value
       ~start_lvl
   else (
+    let intro_names = List.map fst intros in
+    let dep_freshener = make_freshener intro_names in
     let dep_renaming : (string * string) list =
-      List.mapi
-        (fun i a ->
+      List.map
+        (fun a ->
            match strip_loc a with
-           | Surface.Var [ n ] -> n, Printf.sprintf "__elim_idx_%d" i
+           | Surface.Var [ n ] -> n, dep_freshener.freshen "i"
            | _ ->
              Reporter.fatalf
                ~loc
@@ -1645,8 +1677,15 @@ let build_inline_elim_dispatch
        | _ -> ())
     ctor_outcomes;
   let m_indices = List.length target_indices in
-  let idx_name i = Printf.sprintf "__inline_elim_idx_%d" i in
-  let p_name i = Printf.sprintf "__inline_elim_p_%d" i in
+  let outer_scope_names = List.map snd user_level_names in
+  let motive_freshener = make_freshener outer_scope_names in
+  let idx_names_arr = Array.init m_indices (fun _ -> motive_freshener.freshen "i") in
+  let p_names_arr = Array.init m_indices (fun _ -> motive_freshener.freshen "p") in
+  let idx_name i = idx_names_arr.(i) in
+  let p_name i = p_names_arr.(i) in
+  let post_motive_scope =
+    outer_scope_names @ Array.to_list p_names_arr @ Array.to_list idx_names_arr
+  in
   let id_reify = outer_subst = [] in
   let target_index_surfaces : Surface.preterm list =
     if id_reify then List.map readback_v target_indices else []
@@ -1818,7 +1857,7 @@ let build_inline_elim_dispatch
                ~binder_names:ctor_info_.binder_names
                vs
            in
-           let auto_fresh_counter = ref 0 in
+           let case_freshener = make_freshener post_motive_scope in
            let rename_auto_implicit (orig : string) (user_pat : Surface.pattern option)
              : string
              =
@@ -1828,10 +1867,10 @@ let build_inline_elim_dispatch
                | _ -> false
              in
              if user_wrote_it
-             then orig
-             else (
-               incr auto_fresh_counter;
-               Printf.sprintf "__inline_elim_%s_%d" orig !auto_fresh_counter)
+             then (
+               case_freshener.claim orig;
+               orig)
+             else case_freshener.freshen orig
            in
            let head_sub_pats_aligned =
              let n_user = List.length head_sub_pats in
@@ -2036,15 +2075,18 @@ let build_inline_elim_dispatch
                let body = subst_vars_surface sigma_renamings other in
                List.fold_left
                  (fun acc (bind_name, coerced_expr, refined_ty) ->
-                    Surface.App
-                      ( false
-                      , Surface.TypedLambda
-                          ( { Syntax.name = Syntax.Named bind_name
-                            ; bound = refined_ty
-                            ; implicit = false
-                            }
-                          , acc )
-                      , coerced_expr ))
+                    if not (occurs_in bind_name acc)
+                    then acc
+                    else
+                      Surface.App
+                        ( false
+                        , Surface.TypedLambda
+                            ( { Syntax.name = Syntax.Named bind_name
+                              ; bound = refined_ty
+                              ; implicit = false
+                              }
+                            , acc )
+                        , coerced_expr ))
                  body
                  coerce_wraps
            in
