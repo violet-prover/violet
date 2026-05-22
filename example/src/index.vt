@@ -12,5 +12,22 @@
 \let id2 {B : U} (x : B) : B => id x
 
 \let z : Nat => zero
-\let one : Nat => Nat/suc zero
 \let s : Nat -> Nat => Nat/suc
+\let one : Nat => Nat/suc zero
+\let two : Nat => Nat/suc one
+\let add1 (x : Nat) : Nat => Nat/suc x
+\let eq-1 : Id (add1 zero) (Nat/suc zero) => refl
+\let eq-0 : Id {Nat} zero zero => refl
+\let eq-0-implicit : Id {Nat} zero zero => refl
+\let eq-2 : Id (add one one) two => refl
+
+# eliminator
+\let motive (x : Nat) : U => Nat -> Nat
+\let case-zero (y : Nat) : Nat => y
+\let case-suc (x- : Nat) (add-x- : motive x-) (y : Nat) : Nat => Nat/suc (add-x- y)
+\let eliminator-add (x : Nat) : Nat -> Nat =>
+  Nat/elim
+    x
+    motive
+    case-zero
+    case-suc

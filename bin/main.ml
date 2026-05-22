@@ -94,7 +94,7 @@ let rec prepare_dependencies
   end
 ;;
 
-let version = "0.3.0"
+let version = "0.3.1"
 
 let load_cmd ~env =
   let _ = env in
