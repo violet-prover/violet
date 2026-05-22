@@ -109,13 +109,33 @@ type preterm =
      unreachable cases; no surface syntax. *)
   | IdAbsurd of preterm
   [@printer fun fmt p -> fprintf fmt "(\\absurd-id %s)" (show_preterm p)]
+  (* `<= \elim x` in a clause body. The sub-clauses sit as siblings in the
+     enclosing `Elim_def.clauses` and are picked up by the elaborator's
+     first-match rule, so we don't need to embed them here. *)
+  | Inline_elim of inline_elim_data
+  [@printer fun fmt d -> fprintf fmt "(<= elim %s)" d.target]
+
+and inline_elim_data = { target : string }
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
   | SI_Name of string [@printer fun fmt s -> fprintf fmt "N(%s)" s]
   | SI_Imp_arg of preterm [@printer fun fmt p -> fprintf fmt "I{%s}" (show_preterm p)]
 
-and pretype = preterm [@@deriving show]
+and pretype = preterm
+
+and pattern =
+  | PVar of string
+  | PCon of string * pattern list
+  | PImpVar of string
+  | PRecord of (string * pattern) list
+
+and clause =
+  { head : string
+  ; patterns : pattern list
+  ; body : preterm
+  }
+[@@deriving show]
 
 type as_arg =
   { term : preterm
@@ -125,20 +145,6 @@ type as_arg =
 type stack_move =
   | Intro
   | Split
-[@@deriving show]
-
-type pattern =
-  | PVar of string
-  | PCon of string * string list
-  | PImpVar of string
-  | PRecord of (string * pattern) list
-[@@deriving show]
-
-type clause =
-  { head : string
-  ; patterns : pattern list
-  ; body : preterm
-  }
 [@@deriving show]
 
 (* A name path naming another operator in cross-reference position: the

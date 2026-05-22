@@ -242,6 +242,7 @@ let expected : (string * want) list =
   ; "./fixtures/src/goal_demo.vt", `Ok
   ; "./fixtures/bad/bad-stack-not-pi.vt", `FailWith [ "needs a function type" ]
   ; "./fixtures/bad/bad-stack-coverage.vt", `FailWith [ "no clause for constructor" ]
+  ; "./fixtures/src/stack-machine.vt", `Ok
   ; ( "./fixtures/bad/independent-universes-bad.vt"
     , `FailWith [ "cannot unify"; "universe" ] )
   ; "./fixtures/bad/bad-positivity-negative.vt", `FailWith [ "negative position" ]

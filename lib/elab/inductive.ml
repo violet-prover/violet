@@ -147,6 +147,7 @@ let rewrite_recursive_calls
     | Surface.RecordUpdate (base, entries) ->
       Surface.RecordUpdate (rw base, List.map (fun (f, e) -> f, rw e) entries)
     | Surface.Proj (e, f) -> Surface.Proj (rw e, f)
+    | Surface.Inline_elim _ as t -> t
   in
   rw body
 ;;
@@ -322,11 +323,47 @@ let find_clause_for_ctor
     clauses
 ;;
 
+(* Accept either the full-arity form or just the explicit slots; if the
+   latter, fill implicit slots with the ctor's original binder names. *)
+let expand_pattern_binders
+      ~(loc : Asai.Range.t)
+      ~(ctor_name : string)
+      ~(implicits : bool list)
+      ~(binder_names : string list)
+      (vs : string list)
+  : string list
+  =
+  let arity = List.length implicits in
+  let explicit_arity = List.length (List.filter (fun b -> not b) implicits) in
+  if List.length vs = arity
+  then vs
+  else if List.length vs = explicit_arity
+  then (
+    let rec go names imps user =
+      match names, imps, user with
+      | [], [], [] -> []
+      | n :: rest_n, true :: rest_i, _ -> n :: go rest_n rest_i user
+      | _ :: rest_n, false :: rest_i, v :: rest_v -> v :: go rest_n rest_i rest_v
+      | _ -> assert false
+    in
+    go binder_names implicits vs)
+  else
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "constructor `%s` expects %d field-binders (or %d if implicits are omitted), got %d"
+      ctor_name
+      arity
+      explicit_arity
+      (List.length vs)
+;;
+
 let process_clause
       ~(loc : Asai.Range.t)
       ~(func_name : string)
       ~(ctor_name : string)
       ~(arity : int)
+      ~(implicits : bool list)
       ~(ctor_info_ : Context.ctor_info)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
@@ -336,6 +373,7 @@ let process_clause
       (clause : Surface.clause)
   : processed_clause
   =
+  let _ = arity in
   let clause_loc = loc_or loc clause.body in
   let aligned_patterns = align_clause_patterns ~loc:clause_loc intros clause.patterns in
   if not (String.equal clause.head func_name)
@@ -346,20 +384,37 @@ let process_clause
       "elim clause head `%s` does not match function name `%s`"
       clause.head
       func_name;
-  let vs =
+  let raw_vs =
     match Option.map normalize (List.nth_opt aligned_patterns target_pos) with
     | Some (Surface.PCon (_, vs)) -> vs
     | _ -> []
   in
-  if List.length vs <> arity
-  then
-    Reporter.fatalf
+  let vs =
+    List.map
+      (function
+        | Surface.PVar n -> n
+        | Surface.PCon _ ->
+          Reporter.fatalf
+            ~loc:clause_loc
+            Elab_error
+            "elim: deep constructor patterns at the elim target are not yet supported — \
+             use a nested `<= \\elim` instead"
+        | Surface.PImpVar n -> n
+        | Surface.PRecord _ ->
+          Reporter.fatalf
+            ~loc:clause_loc
+            Elab_error
+            "elim: record patterns nested inside a constructor are not supported")
+      raw_vs
+  in
+  let vs =
+    expand_pattern_binders
       ~loc:clause_loc
-      Elab_error
-      "constructor `%s` expects %d field-binders, got %d"
-      ctor_name
-      arity
-      (List.length vs);
+      ~ctor_name
+      ~implicits
+      ~binder_names:ctor_info_.binder_names
+      vs
+  in
   let rec_arg_to_ih : (string * string) list =
     List.filter_map
       (fun (v, kind) ->
@@ -886,6 +941,7 @@ let build_elim_body_unify
                ~func_name
                ~ctor_name
                ~arity
+               ~implicits
                ~ctor_info_
                ~intros
                ~target_pos
@@ -1130,12 +1186,14 @@ let build_elim_body
                  ind_head
                  ctor_name
            in
+           let implicits = ctor_binder_implicits info ctor_name in
            let pc =
              process_clause
                ~loc
                ~func_name
                ~ctor_name
                ~arity
+               ~implicits
                ~ctor_info_
                ~intros
                ~target_pos
@@ -1164,15 +1222,15 @@ let build_elim_body
                qualified_body
            in
            List.fold_right
-             (fun (v, kind) body ->
+             (fun ((v, kind), implicit) body ->
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
                     Surface.Lambda { name = "ih-" ^ v; bound = body; implicit = false }
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = v; bound = inner; implicit = false })
-             (List.combine pc.vs ctor_info_.binder_kinds)
+                Surface.Lambda { name = v; bound = inner; implicit })
+             (List.combine (List.combine pc.vs ctor_info_.binder_kinds) implicits)
              with_trailing)
         ctors
     in

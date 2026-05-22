@@ -1122,11 +1122,12 @@ module Grammar = struct
       let+ name = ident in
       S.PVar name
     in
-    (* PCon: `( ctor arg… )` *)
+    (* PCon: `( ctor arg… )` where each arg is itself a pattern (so
+       `(cons n1 (cons n2 stk))` works). *)
     let p_con =
       let+ _ = tok C.T_LPAREN
       and+ ctor = ident
-      and+ vs = star ident
+      and+ vs = star self
       and+ _ = tok C.T_RPAREN in
       S.PCon (ctor, vs)
     in
@@ -1207,8 +1208,16 @@ module Grammar = struct
     let+ _ = tok C.T_VERT
     and+ head = ident
     and+ patterns = star p_pattern
-    and+ _ = tok C.T_FAT_ARROW
-    and+ body = p_term in
+    and+ body =
+      (let+ _ = tok C.T_FAT_ARROW
+       and+ tm = p_term in
+       tm)
+      ||
+      let+ _ = tok C.T_STACK_ARROW
+      and+ _ = tok C.T_ELIM
+      and+ target = ident in
+      S.Inline_elim { target }
+    in
     { S.head; patterns; body }
   ;;
 

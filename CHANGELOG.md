@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- improve stacked syntax
 - lexer accepts unicode range to allow user defined operator use unicode
 - `\elim` following clause no need to claim impossible case
 

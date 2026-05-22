@@ -176,6 +176,7 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
          items)
   | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
   | Surface.IdAbsurd _ -> t
+  | Surface.Inline_elim _ -> t
 ;;
 
 let rec walk_params
@@ -461,10 +462,27 @@ let rec walk_moves
                   ctor_name
                   arity
                   (List.length vs);
+              let v_names =
+                List.map
+                  (function
+                    | Surface.PVar n -> n
+                    | Surface.PImpVar n -> n
+                    | Surface.PCon _ ->
+                      Reporter.fatalf
+                        ~loc:cloc
+                        Elab_error
+                        "`<= split`: deep constructor patterns not supported here"
+                    | Surface.PRecord _ ->
+                      Reporter.fatalf
+                        ~loc:cloc
+                        Elab_error
+                        "`<= split`: record pattern not allowed inside a constructor")
+                  vs
+              in
               List.fold_right
                 (fun v body ->
                    Surface.Lambda { name = v; bound = body; implicit = false })
-                vs
+                v_names
                 clause.body)
            ctors
        in
@@ -1233,6 +1251,20 @@ let rec dispatch (m : machine) (g : goal) : unit =
     let ty = Evaluation.eval m.ctx.env (Meta.meta_fresh m.ctx.lvl) in
     let tm = Meta.meta_fresh m.ctx.lvl in
     m.result <- Some (PTermType (tm, ty))
+  | GCheck (loc, Inline_elim d, ty) ->
+    (* Stub: build the actual nested elim call by scanning the enclosing
+       Elim_def.clauses for sub-cases sharing this clause's outer LHS.
+       For now, just emit a goal so the user knows the body wasn't
+       checked against any patterns. *)
+    emit_goal_report
+      ~loc
+      m
+      ~name:(Printf.sprintf "<= \\elim %s (deferred)" d.target)
+      ~target:ty;
+    incr m.pending_goals;
+    m.result <- Some (PTerm (Meta.fresh_goal m.ctx.lvl))
+  | GInfer (loc, Inline_elim _) ->
+    Reporter.fatalf ~loc Elab_error "cannot infer the type of a nested `<= \\elim`"
   | GCheck (loc, Goal name_opt, ty) ->
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:ty;

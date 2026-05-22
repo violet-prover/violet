@@ -67,6 +67,7 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
     | Surface.RecordUpdate (base, entries) ->
       go base || List.exists (fun (_, e) -> go e) entries
     | Surface.Proj (e, _) -> go e
+    | Surface.Inline_elim d -> String.equal d.target target
   in
   go t
 ;;
@@ -115,6 +116,7 @@ let map_free_vars
     | Surface.RecordUpdate (base, entries) ->
       Surface.RecordUpdate (go scope base, List.map (fun (f, e) -> f, go scope e) entries)
     | Surface.Proj (e, f) -> Surface.Proj (go scope e, f)
+    | Surface.Inline_elim _ as t -> t
   in
   go scope t
 ;;

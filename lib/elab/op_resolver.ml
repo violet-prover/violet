@@ -887,6 +887,7 @@ let lower_body
     | Surface.RecordUpdate (base, entries) ->
       Surface.RecordUpdate (sub base, List.map (fun (f, e) -> f, sub e) entries)
     | Surface.Proj (e, f) -> Surface.Proj (sub e, f)
+    | Surface.Inline_elim _ as t -> t
   in
   (* If the body has no hole references, treat it as a function and apply
      it positionally — bare-ident sugar like `=> ite`. *)
@@ -917,6 +918,7 @@ let lower_body
         walk base;
         List.iter (fun (_, e) -> walk e) entries
       | Surface.Proj (e, _) -> walk e
+      | Surface.Inline_elim _ -> ()
     in
     walk op.body;
     !r
@@ -1348,6 +1350,7 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
     Surface.RecordUpdate
       (lower_preterm table base, List.map (fun (f, e) -> f, lower_preterm table e) entries)
   | Surface.Proj (e, f) -> Surface.Proj (lower_preterm table e, f)
+  | Surface.Inline_elim _ as t -> t
 ;;
 
 let lower_binder (table : op_table) (b : Surface.preterm Violet_kernel.Syntax.binder)
