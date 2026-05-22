@@ -57,7 +57,11 @@ let alpha = ['a'-'z' 'A'-'Z']
 let ident = (alpha) (alpha|digit|'_'|'-')*
 let whitespace = [' ' '\t']+
 let newline = '\r' | '\n' | "\r\n"
+(* Non-ASCII bytes are part of SYMBOL so user-defined operators can use
+   Unicode (e.g. `≤`, `◁`). Reserved Unicode tokens like `⊔` still win
+   via first-rule precedence. *)
 let sym_char = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',']
+             | ['\128'-'\255']
 
 rule token =
   parse
