@@ -186,10 +186,6 @@ let%expect_test "load: git dep with lock entry uses locked rev" =
     \dep stdlib (git = "https://example/repo", rev = "main")
   |};
   write "info.lock" {| \locked stdlib (git = "https://example/repo", rev = "abc123") |};
-  (* We can't actually ensure_clone in a test (network/git). Instead, verify load_lock_opt
-     returns a populated Lockfile.t and that the rev is what we expect. This is a smaller
-     check than a full end-to-end load+clone, but it covers the spec contract that the
-     locked rev is what gets used. *)
   let lock =
     match load_lock_opt ~root:tmp with
     | Some l -> l

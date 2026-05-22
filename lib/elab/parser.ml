@@ -1216,7 +1216,7 @@ module Grammar = struct
       let+ _ = tok C.T_STACK_ARROW
       and+ _ = tok C.T_ELIM
       and+ target = ident in
-      S.Inline_elim { target }
+      S.Inline_elim { target; siblings = []; outer_subst = []; target_override = None }
     in
     { S.head; patterns; body }
   ;;

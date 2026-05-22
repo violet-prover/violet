@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- improve stacked syntax
-- lexer accepts unicode range to allow user defined operator use unicode
-- `\elim` following clause no need to claim impossible case
+- nested `<= \elim` discharges unreachable cases at every depth
+- nested pattern (e.g. `cons a (cons b c)`)
+- `\operator` templates accept Unicode characters (e.g. `\x ◁ \y`)
+- `\elim` auto-discharges unreachable constructor cases, so the user no longer has to write a clause asserting impossibility
+- pretty-printer for kernel terms, used to render diagnostic messages
 
 ## 0.2.1
 

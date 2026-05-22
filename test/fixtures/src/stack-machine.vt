@@ -1,5 +1,6 @@
 \import std/nat
 \import std/empty
+\import std/equality
 
 \universe U V
 
@@ -33,5 +34,6 @@
   exec-instr i stk <= \elim i
   | exec-instr (PUSH n) stk => Stack/cons n stk
   | exec-instr ADD stk <= \elim stk
-  | exec-instr ADD (cons n1 (cons n2 stk)) => ?
-  | exec-instr MUL stk => ?
+  | exec-instr ADD (cons n1 stk) <= \elim stk
+  | exec-instr ADD (cons n1 (cons n2 stk)) => ?add
+  | exec-instr MUL stk => ?mul

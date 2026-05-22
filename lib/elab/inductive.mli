@@ -43,3 +43,25 @@ val build_elim_body
   -> target_type_value:Violet_kernel.Syntax.Core.value
   -> start_lvl:int
   -> Surface.preterm
+
+val build_owner_map : ind_head:string -> Context.ind_info -> (string * string) list
+
+val readback_value_to_surface
+  :  loc:Asai.Range.t
+  -> user_level_names:(int * string) list
+  -> owner_map:(string * string) list
+  -> Violet_kernel.Syntax.Core.value
+  -> Surface.preterm
+
+val build_inline_elim_dispatch
+  :  loc:Asai.Range.t
+  -> target_name:string
+  -> target_type_raw:Violet_kernel.Syntax.Core.value
+  -> target_type_value:Violet_kernel.Syntax.Core.value
+  -> siblings:(Surface.clause * Surface.pattern list) list
+  -> result_type_surface:Surface.preterm
+  -> start_lvl:int
+  -> user_level_names:(int * string) list
+  -> outer_subst:(int * Violet_kernel.Syntax.Core.value) list
+  -> target_override:Surface.preterm option
+  -> Surface.preterm

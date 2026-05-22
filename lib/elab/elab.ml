@@ -1252,17 +1252,69 @@ let rec dispatch (m : machine) (g : goal) : unit =
     let tm = Meta.meta_fresh m.ctx.lvl in
     m.result <- Some (PTermType (tm, ty))
   | GCheck (loc, Inline_elim d, ty) ->
-    (* Stub: build the actual nested elim call by scanning the enclosing
-       Elim_def.clauses for sub-cases sharing this clause's outer LHS.
-       For now, just emit a goal so the user knows the body wasn't
-       checked against any patterns. *)
-    emit_goal_report
-      ~loc
-      m
-      ~name:(Printf.sprintf "<= \\elim %s (deferred)" d.target)
-      ~target:ty;
-    incr m.pending_goals;
-    m.result <- Some (PTerm (Meta.fresh_goal m.ctx.lvl))
+    (match d.siblings with
+     | [] ->
+       emit_goal_report
+         ~loc
+         m
+         ~name:(Printf.sprintf "<= \\elim %s (deferred)" d.target)
+         ~target:ty;
+       incr m.pending_goals;
+       m.result <- Some (PTerm (Meta.fresh_goal m.ctx.lvl))
+     | _ ->
+       let raw_target_ty =
+         match d.target_override with
+         | Some override -> snd (infer_term ~loc m.ctx override)
+         | None ->
+           (match resolve_local m.ctx d.target with
+            | Some ix -> local_type m.ctx ix
+            | None ->
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "nested `<= \\elim %s`: target not in local scope"
+                d.target)
+       in
+       let rec deep_resolve v =
+         let v = Evaluation.force_head v in
+         match v with
+         | Core.RigidLocal (lvl, sp) ->
+           let sp' = Bwd.map deep_resolve sp in
+           (match List.assoc_opt lvl d.outer_subst with
+            | Some bound -> deep_resolve (Evaluation.vapp_spine bound sp')
+            | None -> Core.RigidLocal (lvl, sp'))
+         | Core.Label (n, sp) -> Core.Label (n, Bwd.map deep_resolve sp)
+         | Core.IndType (n, sp) -> Core.IndType (n, Bwd.map deep_resolve sp)
+         | other -> other
+       in
+       let target_type_value = deep_resolve raw_target_ty in
+       let resolved_ty = deep_resolve ty in
+       let user_level_names = List.mapi (fun i n -> i, n) (Bwd.to_list m.ctx.names) in
+       let owner_map =
+         match Evaluation.force_head target_type_value with
+         | Core.IndType (ind_head, _) ->
+           (match Context.S.resolve [ ind_head ] with
+            | Some (_, `Inductive info) -> Inductive.build_owner_map ~ind_head info
+            | _ -> [])
+         | _ -> []
+       in
+       let result_type_surface =
+         Inductive.readback_value_to_surface ~loc ~user_level_names ~owner_map resolved_ty
+       in
+       let expanded =
+         Inductive.build_inline_elim_dispatch
+           ~loc
+           ~target_name:d.target
+           ~target_type_raw:raw_target_ty
+           ~target_type_value
+           ~siblings:d.siblings
+           ~result_type_surface
+           ~start_lvl:m.ctx.lvl
+           ~user_level_names
+           ~outer_subst:d.outer_subst
+           ~target_override:d.target_override
+       in
+       push m (GCheck (loc, expanded, ty)))
   | GInfer (loc, Inline_elim _) ->
     Reporter.fatalf ~loc Elab_error "cannot infer the type of a nested `<= \\elim`"
   | GCheck (loc, Goal name_opt, ty) ->
@@ -1415,7 +1467,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          Elab_error
          "KTopLet_HaveType: bad result %s"
          ([%show: produced] other))
-  | KTopLet_HaveBody (_loc, name, typ_tm, typ_val) ->
+  | KTopLet_HaveBody (loc, name, typ_tm, typ_val) ->
     (match take_result m with
      | PTerm term ->
        let exported = m.is_exported name in
@@ -1424,7 +1476,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
        publish_to_env ~exported [ name ] (body_val, `Defn);
        Env.register_definition name body_val;
        let qname = m.module_name ^ "." ^ name in
-       Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term;
+       (try Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term with
+        | Violet_kernel.Error.Kernel_error err ->
+          Reporter.fatalf
+            ~loc
+            Elab_error
+            "kernel rejected `%s`: %s"
+            qname
+            (Violet_kernel.Error.show_kernel_error err));
        m.result <- Some PUnit
      | other ->
        Reporter.fatalf
@@ -1677,6 +1736,36 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~name:qelim_name
          ~ty:elim_typ_tm
          ~reducer:elim_head;
+       if
+         false
+         && params = []
+         && deps = []
+         && Context.has "Id"
+         && Context.has "subst"
+         && Context.has "Empty"
+         && Context.has "Sigma"
+       then (
+         let publish_def nc_name nc_typ_tm nc_typ_val nc_body_tm nc_body_val =
+           publish_to_context ~exported [ nc_name ] (nc_typ_val, `Defn);
+           publish_to_context ~exported [ name; nc_name ] (nc_typ_val, `Defn);
+           let nc_flat = name ^ "/" ^ nc_name in
+           publish_to_env ~exported [ nc_flat ] (nc_body_val, `Defn);
+           Env.register_definition nc_flat nc_body_val;
+           let qnc_name = m.module_name ^ "." ^ name ^ "." ^ nc_name in
+           Check.accept_let m.kernel_module ~name:qnc_name ~ty:nc_typ_tm ~body:nc_body_tm
+         in
+         let nct_typ, nct_body = Eliminator_synth.no_confusion_type_def ~name ~ctors in
+         let nct_typ_tm = check_type ~loc m.ctx nct_typ in
+         let nct_typ_val = Evaluation.eval m.ctx.env nct_typ_tm in
+         let nct_body_tm = check_term_against ~loc m.ctx nct_body nct_typ_val in
+         let nct_body_val = Evaluation.eval m.ctx.env nct_body_tm in
+         publish_def "no-confusion-type" nct_typ_tm nct_typ_val nct_body_tm nct_body_val;
+         let nc_typ, nc_body = Eliminator_synth.no_confusion_def ~name ~ctors in
+         let nc_typ_tm = check_type ~loc m.ctx nc_typ in
+         let nc_typ_val = Evaluation.eval m.ctx.env nc_typ_tm in
+         let nc_body_tm = check_term_against ~loc m.ctx nc_body nc_typ_val in
+         let nc_body_val = Evaluation.eval m.ctx.env nc_body_tm in
+         publish_def "no-confusion" nc_typ_tm nc_typ_val nc_body_tm nc_body_val);
        m.result <- Some PUnit
      | other ->
        Reporter.fatalf
@@ -2176,6 +2265,39 @@ and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
 
 and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
   fst (infer_type ~loc ctx pretype)
+
+and check_term_against ~loc (ctx : local_ctx) (term : Surface.preterm) (ty : Core.value)
+  : Core.term
+  =
+  let m =
+    make_machine
+      ~module_name:"_internal"
+      ~kernel_module:(Violet_kernel.Module.create ())
+      ~goal_counter:(ref 0)
+      ~is_exported:(fun _ -> false)
+      ()
+  in
+  m.ctx <- ctx;
+  push m (GCheck (loc, term, ty));
+  match drive m with
+  | PTerm tm -> tm
+  | other ->
+    Reporter.fatalf ~loc Elab_error "check_term_against: %s" ([%show: produced] other)
+
+and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Core.value =
+  let m =
+    make_machine
+      ~module_name:"_internal"
+      ~kernel_module:(Violet_kernel.Module.create ())
+      ~goal_counter:(ref 0)
+      ~is_exported:(fun _ -> false)
+      ()
+  in
+  m.ctx <- ctx;
+  push m (GInfer (loc, term));
+  match drive m with
+  | PTermType (tm, ty) -> tm, ty
+  | other -> Reporter.fatalf ~loc Elab_error "infer_term: %s" ([%show: produced] other)
 
 and bind_constructor
       ~loc

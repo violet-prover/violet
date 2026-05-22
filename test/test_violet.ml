@@ -226,10 +226,6 @@ let compare_outcome (got : outcome) (want : want) : cmp =
   | _ -> `Mismatch_outcome
 ;;
 
-(* Current behaviour of each fixture under the existing elaborator. The four
-   files under ../example/ are user-facing demos kept alongside the project's
-   docs; everything else lives under ./fixtures/. New bad fixtures should
-   prefer `FailWith over `Fail so the error path is pinned. *)
 let expected : (string * want) list =
   [ "../example/src/index.vt", `Ok
   ; "../example/src/pterodactyl.vt", `Ok

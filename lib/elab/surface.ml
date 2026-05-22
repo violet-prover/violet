@@ -109,13 +109,16 @@ type preterm =
      unreachable cases; no surface syntax. *)
   | IdAbsurd of preterm
   [@printer fun fmt p -> fprintf fmt "(\\absurd-id %s)" (show_preterm p)]
-  (* `<= \elim x` in a clause body. The sub-clauses sit as siblings in the
-     enclosing `Elim_def.clauses` and are picked up by the elaborator's
-     first-match rule, so we don't need to embed them here. *)
   | Inline_elim of inline_elim_data
   [@printer fun fmt d -> fprintf fmt "(<= elim %s)" d.target]
 
-and inline_elim_data = { target : string }
+and inline_elim_data =
+  { target : string
+  ; siblings : (clause * pattern list) list
+  ; outer_subst : (int * Violet_kernel.Syntax.Core.value) list
+        [@printer fun fmt _ -> fprintf fmt "[..subst..]"]
+  ; target_override : preterm option
+  }
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
