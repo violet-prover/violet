@@ -2014,7 +2014,21 @@ let build_inline_elim_dispatch
                  ; outer_subst = next_outer_subst
                  ; target_override = next_target_override
                  }
-             | other -> subst_vars_surface sigma_renamings other
+             | other ->
+               let body = subst_vars_surface sigma_renamings other in
+               List.fold_left
+                 (fun acc (bind_name, coerced_expr, refined_ty) ->
+                    Surface.App
+                      ( false
+                      , Surface.TypedLambda
+                          ( { Syntax.name = bind_name
+                            ; bound = refined_ty
+                            ; implicit = false
+                            }
+                          , acc )
+                      , coerced_expr ))
+                 body
+                 coerce_wraps
            in
            close_ctor_lambdas ~check_loc:loc vs (wrap_p_binders body)
          | Index_unify.Stuck _ -> assert false (* handled above *))

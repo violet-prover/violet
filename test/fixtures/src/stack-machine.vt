@@ -35,5 +35,6 @@
   | exec-instr (PUSH n) stk => Stack/cons n stk
   | exec-instr ADD stk <= \elim stk
   | exec-instr ADD (cons n1 stk) <= \elim stk
-  | exec-instr ADD (cons n1 (cons n2 stk)) => ?add
-  | exec-instr MUL stk => ?mul
+  | exec-instr ADD (cons n1 (cons n2 stk)) => Stack/cons (add n1 n2) stk
+  | exec-instr MUL stk <= \elim stk
+  | exec-instr MUL (cons n1 stk) => ?mul
