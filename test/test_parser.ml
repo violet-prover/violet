@@ -445,6 +445,64 @@ let pattern_record_test () =
   Format.printf "pattern_record_test OK@."
 ;;
 
+let unicode_ident_test () =
+  let lex_all src =
+    let lexbuf = Lexing.from_string src in
+    let rec loop acc =
+      match Violet_elab.Lexer.token lexbuf with
+      | Violet_elab.Lexer.EOF -> List.rev acc
+      | t -> loop (t :: acc)
+    in
+    loop []
+  in
+  let open Violet_elab.Lexer in
+  let expect label src expected =
+    let got = lex_all src in
+    if got = expected
+    then Format.printf "unicode_ident_test OK  %s@." label
+    else (
+      Format.printf "unicode_ident_test FAIL %s@." label;
+      List.iter (fun t -> Format.printf "  got: %a@." pp_token t) got;
+      exit 1)
+  in
+  (* 2-byte UTF-8 letters: Greek, Cyrillic. *)
+  expect "lone α" "α" [ IDENT "α" ];
+  expect "Greek run" "αβγ" [ IDENT "αβγ" ];
+  expect "Cyrillic" "Привет" [ IDENT "Привет" ];
+  (* 2-byte letter mixed with ASCII identifier chars. *)
+  expect "α-1" "α-1" [ IDENT "α-1" ];
+  expect "x_β" "x_β" [ IDENT "x_β" ];
+  (* 3-byte symbols still lex as SYMBOL, and identifier boundaries hold
+     when a letter is adjacent to a 3-byte operator. *)
+  expect "α≤β" "α≤β" [ IDENT "α"; SYMBOL "≤"; IDENT "β" ];
+  (* Reserved 3-byte token still wins via first-rule precedence. *)
+  expect "lone ⊔" "⊔" [ JOIN ];
+  (* Letter-like Symbols block (3-byte UTF-8, 0xE2 0x84/0x85): ℕ ℝ ℤ. *)
+  expect "lone ℕ" "ℕ" [ IDENT "ℕ" ];
+  expect "ℕ+ℝ" "ℕ+ℝ" [ IDENT "ℕ"; SYMBOL "+"; IDENT "ℝ" ];
+  (* Math Alphanumeric block (4-byte UTF-8): 𝓤 standalone and adjacent
+     to a 3-byte operator must not be absorbed into the SYMBOL run. *)
+  expect "lone 𝓤" "𝓤" [ IDENT "𝓤" ];
+  expect "𝓤≤𝓥" "𝓤≤𝓥" [ IDENT "𝓤"; SYMBOL "≤"; IDENT "𝓥" ];
+  (* All four Mathematical Bold Script glyphs used as universe names. *)
+  expect "𝓣 𝓤 𝓥 𝓦" "𝓣 𝓤 𝓥 𝓦" [ IDENT "𝓣"; IDENT "𝓤"; IDENT "𝓥"; IDENT "𝓦" ];
+  (* Universe declaration with math-bold letter — mirrors example/src/operators.vt *)
+  let toks =
+    let lexbuf = Lexing.from_string "\\universe 𝓤\n" in
+    let rec loop acc =
+      match Violet_elab.Lexer.token lexbuf with
+      | Violet_elab.Lexer.EOF -> List.rev acc
+      | t -> loop (t :: acc)
+    in
+    loop []
+  in
+  match toks with
+  | [ UNIVERSE; IDENT "𝓤" ] -> Format.printf "unicode_ident_test OK  \\universe 𝓤@."
+  | _ ->
+    Format.printf "unicode_ident_test FAIL \\universe 𝓤@.";
+    exit 1
+;;
+
 let benchmark () = Format.printf "benchmark: skipped in unit-test mode@."
 
 let () =
@@ -456,5 +514,6 @@ let () =
   record_update_test ();
   projection_test ();
   pattern_record_test ();
+  unicode_ident_test ();
   benchmark ()
 ;;

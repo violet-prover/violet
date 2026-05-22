@@ -53,15 +53,38 @@ let strip_quotes s =
 }
 
 let digit = ['0'-'9']
-let alpha = ['a'-'z' 'A'-'Z']
+(* UTF-8 byte ranges treated as identifier letters.
+
+   utf8_letter_2 — U+0080–U+07FF: Latin Extended, IPA, Greek (α λ Λ),
+     Cyrillic, Hebrew, Arabic. UTF-8 lead 0xC2–0xDF.
+   utf8_letter_3 — U+2100–U+217F Letter-like Symbols (ℂ ℕ ℝ ℤ ℚ ℋ ℓ).
+     UTF-8 lead 0xE2, second byte 0x84–0x85.
+   utf8_letter_4 — U+1D400–U+1D7FF Mathematical Alphanumeric Symbols
+     (𝓤 𝒰 𝒜 𝔸 𝕊). UTF-8 lead 0xF0 0x9D, third byte 0x90–0x9F. *)
+let utf8_letter_2 = ['\194'-'\223'] ['\128'-'\191']
+let utf8_letter_3 = '\226' ['\132'-'\133'] ['\128'-'\191']
+let utf8_letter_4 = '\240' '\157' ['\144'-'\159'] ['\128'-'\191']
+let utf8_letter = utf8_letter_2 | utf8_letter_3 | utf8_letter_4
+let alpha = ['a'-'z' 'A'-'Z'] | utf8_letter
 let ident = (alpha) (alpha|digit|'_'|'-')*
 let whitespace = [' ' '\t']+
 let newline = '\r' | '\n' | "\r\n"
-(* Non-ASCII bytes are part of SYMBOL so user-defined operators can use
-   Unicode (e.g. `≤`, `◁`). Reserved Unicode tokens like `⊔` still win
-   via first-rule precedence. *)
-let sym_char = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',']
-             | ['\128'-'\255']
+(* Symbol units. Each alternative is a complete UTF-8 codepoint (or one ASCII
+   symbol byte) so that sym_unit+ partitions cleanly at codepoint boundaries
+   and doesn't absorb the letter ranges above. Reserved Unicode tokens like
+   `⊔` still win via first-rule precedence on equal-length matches. *)
+let ascii_sym = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',']
+(* 3-byte UTF-8 minus the Letter-like Symbols block (0xE2 0x84/0x85 xx). *)
+let utf8_sym_3 =
+    ['\224'-'\225'] ['\128'-'\191'] ['\128'-'\191']
+  | '\226' (['\128'-'\131'] | ['\134'-'\191']) ['\128'-'\191']
+  | ['\227'-'\239'] ['\128'-'\191'] ['\128'-'\191']
+(* 4-byte UTF-8 minus the Math Alphanumeric block (0xF0 0x9D 0x90–0x9F xx). *)
+let utf8_sym_4 =
+    '\240' (['\128'-'\156'] | ['\158'-'\191']) ['\128'-'\191'] ['\128'-'\191']
+  | '\240' '\157' (['\128'-'\143'] | ['\160'-'\191']) ['\128'-'\191']
+  | ['\241'-'\244'] ['\128'-'\191'] ['\128'-'\191'] ['\128'-'\191']
+let sym_unit = ascii_sym | utf8_sym_3 | utf8_sym_4
 
 rule token =
   parse
@@ -108,7 +131,7 @@ rule token =
   | '"' ([^ '"' '\n']* as s) '"' { return lexbuf @@ STRING s }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
   | '_' { return lexbuf @@ IDENT "_" }
-  | sym_char+ { return lexbuf @@ SYMBOL (Lexing.lexeme lexbuf) }
+  | sym_unit+ { return lexbuf @@ SYMBOL (Lexing.lexeme lexbuf) }
   | whitespace { token lexbuf }
   | newline { Lexing.new_line lexbuf; token lexbuf }
   | eof { EOF }

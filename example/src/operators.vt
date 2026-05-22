@@ -1,8 +1,10 @@
-\data Nat : U
+\universe 𝓤
+
+\data Nat : 𝓤
   | zero : Nat
   | suc : Nat -> Nat
 
-\data Bool : U
+\data Bool : 𝓤
   | true : Bool
   | false : Bool
 

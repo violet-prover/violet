@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- identifier now can use some letter unicode
+
 ## 0.3.0
 
 - nested `<= \elim` discharges unreachable cases at every depth
