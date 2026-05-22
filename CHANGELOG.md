@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 - nested `<= \elim` discharges unreachable cases at every depth
 - nested pattern (e.g. `cons a (cons b c)`)
 - `\operator` templates accept Unicode characters (e.g. `\x ◁ \y`)
