@@ -121,7 +121,10 @@ module PartialRenaming = struct
         go
           (i + 1)
           (Lambda
-             { name = Printf.sprintf "x%d" (dom - i - 1); implicit = false; bound = acc })
+             { name = Named (Printf.sprintf "x%d" (dom - i - 1))
+             ; implicit = false
+             ; bound = acc
+             })
     in
     go 0 tm
   ;;
@@ -188,10 +191,10 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     unify ~loc cv v1 v2
   | VLambda { name; bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
-    unify ~loc (Context_view.extend cv name) (b1 x) (b2 x)
+    unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)
   | VLambda { name; bound; _ }, t | t, VLambda { name; bound; _ } ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
-    unify ~loc (Context_view.extend cv name) (bound x) (vapp t x)
+    unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (bound x) (vapp t x)
   (* Record types are equal if they have the same name and equal parameters. *)
   | VRecordType r1, VRecordType r2 when String.equal r1.name r2.name ->
     List.iter2 (unify ~loc cv) r1.params r2.params
@@ -235,7 +238,7 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
       r.fields
   | VPi ({ name; _ }, b1), VPi (_, b2) ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
-    unify ~loc (Context_view.extend cv name) (b1 x) (b2 x)
+    unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)
   | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
     let x = Meta.fresh_meta_value (Context_view.lvl cv) in
     unify ~loc cv (b x) t

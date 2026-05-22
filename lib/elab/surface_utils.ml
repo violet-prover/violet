@@ -51,11 +51,11 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
     | Surface.Var [ n ] -> String.equal n target
     | Surface.Var _ -> false
     | Surface.App (_, f, x) -> go f || go x
-    | Surface.Pi (b, body) -> go b.bound || ((not (String.equal b.name target)) && go body)
+    | Surface.Pi (b, body) -> go b.bound || ((not (b.name = Named target)) && go body)
     (* Surface.Lambda has no type annotation; `b.bound` is the body. *)
-    | Surface.Lambda b -> (not (String.equal b.name target)) && go b.bound
+    | Surface.Lambda b -> (not (b.name = Named target)) && go b.bound
     | Surface.TypedLambda (b, body) ->
-      go b.bound || ((not (String.equal b.name target)) && go body)
+      go b.bound || ((not (b.name = Named target)) && go body)
     | Surface.Max (a, b) -> go a || go b
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> false
     | Surface.IdAbsurd _ -> false
@@ -90,6 +90,11 @@ let map_free_vars
       (t : Surface.preterm)
   : Surface.preterm
   =
+  let enter_bn (nm : Surface.binder_name) scope =
+    match nm with
+    | Anon -> scope
+    | Named n -> enter n scope
+  in
   let rec go scope t =
     match t with
     | Surface.Located { value; loc } -> Surface.Located { value = go scope value; loc }
@@ -97,13 +102,13 @@ let map_free_vars
     | Surface.Var _ -> t
     | Surface.App (impl, f, a) -> Surface.App (impl, go scope f, go scope a)
     | Surface.Lambda b ->
-      Surface.Lambda { b with bound = go (enter b.name scope) b.bound }
+      Surface.Lambda { b with bound = go (enter_bn b.name scope) b.bound }
     | Surface.TypedLambda (b, body) ->
       let bound' = go scope b.bound in
-      Surface.TypedLambda ({ b with bound = bound' }, go (enter b.name scope) body)
+      Surface.TypedLambda ({ b with bound = bound' }, go (enter_bn b.name scope) body)
     | Surface.Pi (b, body) ->
       let bound' = go scope b.bound in
-      Surface.Pi ({ b with bound = bound' }, go (enter b.name scope) body)
+      Surface.Pi ({ b with bound = bound' }, go (enter_bn b.name scope) body)
     | Surface.Max (a, b) -> Surface.Max (go scope a, go scope b)
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd p -> Surface.IdAbsurd (go scope p)
@@ -142,7 +147,7 @@ let%expect_test "occurs_in: under App argument" =
 let%expect_test "occurs_in: under Pi domain" =
   let t =
     Surface.Pi
-      ( { Violet_kernel.Syntax.name = "_"
+      ( { Violet_kernel.Syntax.name = Anon
         ; bound = Surface.Var [ "Bad" ]
         ; implicit = false
         }
@@ -155,7 +160,10 @@ let%expect_test "occurs_in: under Pi domain" =
 let%expect_test "occurs_in: shadowed by inner binder" =
   let t =
     Surface.Pi
-      ( { Violet_kernel.Syntax.name = "Bad"; bound = Surface.Universe; implicit = false }
+      ( { Violet_kernel.Syntax.name = Named "Bad"
+        ; bound = Surface.Universe
+        ; implicit = false
+        }
       , Surface.Var [ "Bad" ] )
   in
   print_string @@ string_of_bool (occurs_in "Bad" t);
@@ -166,7 +174,7 @@ let%expect_test "occurs_in: shadowed by inner binder" =
 let%expect_test "occurs_in: Lambda shadows" =
   let t =
     Surface.Lambda
-      { Violet_kernel.Syntax.name = "Bad"
+      { Violet_kernel.Syntax.name = Named "Bad"
       ; bound = Surface.Var [ "Bad" ]
       ; implicit = false
       }

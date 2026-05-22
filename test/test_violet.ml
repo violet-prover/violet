@@ -281,6 +281,7 @@ let expected : (string * want) list =
   ; "./fixtures/src/stress-many-ctors.vt", `Ok
   ; "./fixtures/src/stress-deep-vec.vt", `Ok
   ; "./fixtures/src/stress-deep-nat.vt", `Ok
+  ; "./fixtures/src/underscore-name.vt", `Ok
   ]
 ;;
 

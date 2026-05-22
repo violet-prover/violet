@@ -204,8 +204,8 @@ let%expect_test "eval RecordType with no params and flat fields" =
       { name = "Point"
       ; params = []
       ; fields =
-          [ { name = "x"; bound = Var "Nat"; implicit = false }
-          ; { name = "y"; bound = Var "Nat"; implicit = false }
+          [ { name = Named "x"; bound = Var "Nat"; implicit = false }
+          ; { name = Named "y"; bound = Var "Nat"; implicit = false }
           ]
       }
   in
@@ -252,8 +252,8 @@ let%expect_test "eval RecordType with dependent fields uses rigid locals" =
       { name = "Sigma"
       ; params = [ Var "A"; Var "B" ]
       ; fields =
-          [ { name = "fst"; bound = Var "A"; implicit = false }
-          ; { name = "snd"; bound = App (Var "B", LocalVar 0); implicit = false }
+          [ { name = Named "fst"; bound = Var "A"; implicit = false }
+          ; { name = Named "snd"; bound = App (Var "B", LocalVar 0); implicit = false }
           ]
       }
   in

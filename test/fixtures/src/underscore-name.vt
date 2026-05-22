@@ -1,0 +1,14 @@
+\import std/nat
+
+# `_` is allowed as a binder name; it's a regular `Named "_"` and is
+# fully referenceable from the body.
+\let const (A : U) (x : A) (_ : A) : A => x
+
+# `_` also works in lambda binder position.
+\let const2 : U -> U -> U => \A _ -> A
+
+# `_` is a wildcard pattern in `\elim` clauses.
+\let f : Nat -> Nat \where
+  f n <= \elim n
+  | f zero => zero
+  | f (suc _) => zero

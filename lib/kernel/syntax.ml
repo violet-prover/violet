@@ -1,7 +1,29 @@
 open Bwd
 
+(* Binders carry either a user-written name or `Anon` for binders generated
+   internally (e.g. the non-dependent arrow `A -> B` desugars to a Pi whose
+   binder is `Anon`, not `Named "_"`). Keeping the two distinct means a
+   user-written `_` is just an ordinary `Named "_"` that can be referenced,
+   while internal anonymous binders carry no string at all and can never
+   be shadowed or captured by surface name lookup. *)
+type binder_name =
+  | Named of string
+  | Anon
+[@@deriving show]
+
+module Name = struct
+  type t = binder_name =
+    | Named of string
+    | Anon
+
+  let to_string : t -> string = function
+    | Named s -> s
+    | Anon -> "_"
+  ;;
+end
+
 type 't binder =
-  { name : string
+  { name : binder_name
   ; bound : 't
   ; implicit : bool
   }
@@ -24,8 +46,9 @@ module Core = struct
     [@printer
       fun fmt bind ->
         if bind.implicit
-        then fprintf fmt "fun {%s} => %s" bind.name (show_term bind.bound)
-        else fprintf fmt "fun %s => %s" bind.name (show_term bind.bound)]
+        then
+          fprintf fmt "fun {%s} => %s" (Name.to_string bind.name) (show_term bind.bound)
+        else fprintf fmt "fun %s => %s" (Name.to_string bind.name) (show_term bind.bound)]
     | TypedLambda of typ binder * term
     [@printer
       fun fmt (bind, body) ->
@@ -34,22 +57,34 @@ module Core = struct
           fprintf
             fmt
             "fun {%s : %s} => %s"
-            bind.name
+            (Name.to_string bind.name)
             (show_typ bind.bound)
             (show_term body)
         else
           fprintf
             fmt
             "fun (%s : %s) => %s"
-            bind.name
+            (Name.to_string bind.name)
             (show_typ bind.bound)
             (show_term body)]
     | Pi of typ binder * typ
     [@printer
       fun fmt (bind, b) ->
         if bind.implicit
-        then fprintf fmt "∀ {%s : %s} -> %s" bind.name (show_typ bind.bound) (show_typ b)
-        else fprintf fmt "∀ (%s : %s) -> %s" bind.name (show_typ bind.bound) (show_typ b)]
+        then
+          fprintf
+            fmt
+            "∀ {%s : %s} -> %s"
+            (Name.to_string bind.name)
+            (show_typ bind.bound)
+            (show_typ b)
+        else
+          fprintf
+            fmt
+            "∀ (%s : %s) -> %s"
+            (Name.to_string bind.name)
+            (show_typ bind.bound)
+            (show_typ b)]
     (* Meta 是使用者自己明確寫下來的那些 *)
     | Meta of metavar
     (* InsertedMeta 是 elaborator 自動塞進去的部分；payload 是插入時的 level 計數，
@@ -88,7 +123,9 @@ module Core = struct
         let fs =
           String.concat
             " "
-            (List.map (fun b -> "| " ^ b.name ^ " : " ^ show_typ b.bound) afields)
+            (List.map
+               (fun b -> "| " ^ Name.to_string b.name ^ " : " ^ show_typ b.bound)
+               afields)
         in
         fprintf fmt "(record %s%s %s)" aname p fs]
     | RecordIntro of
@@ -232,9 +269,10 @@ module Core = struct
       fun fmt ({ name; bound; implicit }, closure) ->
         (* Printer 用 RigidLocal 0 當佔位；只是輸出用，跟實際 elaboration level 無關 *)
         let result = closure (RigidLocal (0, Bwd.Emp)) in
+        let ns = Name.to_string name in
         if implicit
-        then fprintf fmt "{%s : %s} -> %s" name (show_value bound) (show_value result)
-        else fprintf fmt "(%s : %s) -> %s" name (show_value bound) (show_value result)]
+        then fprintf fmt "{%s : %s} -> %s" ns (show_value bound) (show_value result)
+        else fprintf fmt "(%s : %s) -> %s" ns (show_value bound) (show_value result)]
     | Universe of Level.level
     [@printer fun fmt l -> fprintf fmt "universe %s" (Level.pretty l)]
     | VLift of
@@ -280,7 +318,9 @@ module Core = struct
         let fs =
           String.concat
             " "
-            (List.map (fun b -> "| " ^ b.name ^ " : " ^ show_value b.bound) afields)
+            (List.map
+               (fun b -> "| " ^ Name.to_string b.name ^ " : " ^ show_value b.bound)
+               afields)
         in
         fprintf fmt "(record %s%s %s)" aname p fs]
     | VRecordIntro of

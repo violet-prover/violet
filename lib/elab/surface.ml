@@ -2,12 +2,19 @@ open Asai.Range
 open Yuujinchou
 
 (* binder is shared with kernel *)
+type binder_name = Violet_kernel.Syntax.binder_name =
+  | Named of string
+  | Anon
+[@@deriving show]
+
 type 't binder = 't Violet_kernel.Syntax.binder =
-  { name : string
+  { name : binder_name
   ; bound : 't
   ; implicit : bool
   }
 [@@deriving show]
+
+module Name = Violet_kernel.Syntax.Name
 
 type preterm =
   | Located of preterm located
@@ -34,8 +41,9 @@ type preterm =
   [@printer
     fun fmt bind ->
       if bind.implicit
-      then fprintf fmt "fun {%s} => %s" bind.name (show_preterm bind.bound)
-      else fprintf fmt "fun %s => %s" bind.name (show_preterm bind.bound)]
+      then
+        fprintf fmt "fun {%s} => %s" (Name.to_string bind.name) (show_preterm bind.bound)
+      else fprintf fmt "fun %s => %s" (Name.to_string bind.name) (show_preterm bind.bound)]
   (* fun (x : T) => M *)
   (* so we record (x , T , M) *)
   | TypedLambda of pretype binder * preterm
@@ -46,14 +54,14 @@ type preterm =
         fprintf
           fmt
           "fun {%s : %s} => %s"
-          bind.name
+          (Name.to_string bind.name)
           (show_pretype bind.bound)
           (show_preterm body)
       else
         fprintf
           fmt
           "fun (%s : %s) => %s"
-          bind.name
+          (Name.to_string bind.name)
           (show_pretype bind.bound)
           (show_preterm body)]
   | Pi of pretype binder * pretype
@@ -64,14 +72,14 @@ type preterm =
         fprintf
           fmt
           "Π{%s : %s} -> %s"
-          bind.name
+          (Name.to_string bind.name)
           (show_pretype bind.bound)
           (show_pretype b)
       else
         fprintf
           fmt
           "Π(%s : %s) -> %s"
-          bind.name
+          (Name.to_string bind.name)
           (show_pretype bind.bound)
           (show_pretype b)]
   | Max of preterm * preterm
@@ -129,6 +137,7 @@ and pretype = preterm
 
 and pattern =
   | PVar of string
+  | PWildcard
   | PCon of string * pattern list
   | PImpVar of string
   | PRecord of (string * pattern) list
@@ -246,7 +255,7 @@ type t =
 let rec lambda (names : string list) (body : preterm) : preterm =
   match names with
   | [] -> body
-  | p :: ps -> Lambda { name = p; bound = lambda ps body; implicit = false }
+  | p :: ps -> Lambda { name = Named p; bound = lambda ps body; implicit = false }
 ;;
 
 let rec typed_lambda (binds : pretype binder list) (body : preterm) : preterm =
@@ -288,7 +297,8 @@ let rec apply (f : preterm) (args : preterm list) : preterm =
 let rec apply_tele (f : preterm) (tele : preterm binder list) : preterm =
   match f, tele with
   | f, [] -> f
-  | f, { name; implicit; _ } :: xs -> apply_tele (App (implicit, f, Var [ name ])) xs
+  | f, { name; implicit; _ } :: xs ->
+    apply_tele (App (implicit, f, Var [ Name.to_string name ])) xs
 ;;
 
 let%expect_test "applied spine" =

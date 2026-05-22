@@ -19,13 +19,17 @@ open Surface_utils
 type local_ctx =
   { env : Core.value bwd
   ; types : Core.value bwd
-  ; names : string bwd
+  ; names : Syntax.binder_name bwd
   ; lvl : int
   }
 
 let empty_ctx : local_ctx = { env = Emp; types = Emp; names = Emp; lvl = 0 }
 
-let extend (ctx : local_ctx) (name : string) (ty : Core.value) (value : Core.value)
+let extend
+      (ctx : local_ctx)
+      (name : Syntax.binder_name)
+      (ty : Core.value)
+      (value : Core.value)
   : local_ctx
   =
   { env = Bwd.Snoc (ctx.env, value)
@@ -36,19 +40,21 @@ let extend (ctx : local_ctx) (name : string) (ty : Core.value) (value : Core.val
 ;;
 
 let view_of_ctx (ctx : local_ctx) : Context_view.t =
-  Context_view.make ~names:ctx.names ~lvl:ctx.lvl
+  Context_view.make ~names:(Bwd.map Syntax.Name.to_string ctx.names) ~lvl:ctx.lvl
 ;;
 
-let bind (ctx : local_ctx) (name : string) (ty : Core.value) : local_ctx =
+let bind (ctx : local_ctx) (name : Syntax.binder_name) (ty : Core.value) : local_ctx =
   extend ctx name ty (Core.RigidLocal (ctx.lvl, Emp))
 ;;
 
 (* Look up a surface name in the local context.  Returns the de Bruijn INDEX
-   (innermost = 0) if found, or None if it's a global. *)
+   (innermost = 0) if found, or None if it's a global. `Anon` binders carry
+   no string name, so they never match. *)
 let resolve_local (ctx : local_ctx) (x : string) : int option =
   let rec go i = function
     | Emp -> None
-    | Snoc (rest, n) -> if String.equal n x then Some i else go (i + 1) rest
+    | Snoc (_, Syntax.Named n) when String.equal n x -> Some i
+    | Snoc (rest, _) -> go (i + 1) rest
   in
   go 0 ctx.names
 ;;
@@ -151,13 +157,13 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
     Surface.Located { loc; value = subst_vars env value }
   | Surface.App (impl, f, a) -> Surface.App (impl, subst_vars env f, subst_vars env a)
   | Surface.Lambda b ->
-    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
     Surface.Lambda { b with bound = subst_vars env' b.bound }
   | Surface.TypedLambda (b, body) ->
-    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
     Surface.TypedLambda ({ b with bound = subst_vars env b.bound }, subst_vars env' body)
   | Surface.Pi (b, cod) ->
-    let env' = List.filter (fun (x, _) -> x <> b.name) env in
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
     Surface.Pi ({ b with bound = subst_vars env b.bound }, subst_vars env' cod)
   | Surface.Proj (e, f) -> Surface.Proj (subst_vars env e, f)
   | Surface.RecordLit entries ->
@@ -246,11 +252,11 @@ let rec walk_moves
          else pick_binder_name clauses position
        in
        let cod = k (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
-       let ctx' = bind ctx name a in
+       let ctx' = bind ctx (Syntax.Named name) a in
        let inner =
          walk_moves ~loc ctx' cod signature n_params rest clauses (position + 1)
        in
-       Surface.Lambda { name; bound = inner; implicit = false }
+       Surface.Lambda { name = Syntax.Named name; bound = inner; implicit = false }
      | other ->
        Reporter.fatalf
          ~loc
@@ -285,7 +291,7 @@ let rec walk_moves
        let entries =
          match List.nth_opt clause.patterns pattern_position with
          | Some (Surface.PRecord es) -> es
-         | Some (Surface.PVar _) | Some (Surface.PImpVar _) ->
+         | Some (Surface.PVar _) | Some (Surface.PImpVar _) | Some Surface.PWildcard ->
            Reporter.fatalf
              ~loc:cloc
              Elab_error
@@ -322,7 +328,9 @@ let rec walk_moves
            entries
        in
        let field_names =
-         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
+         List.map
+           (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
+           fields
        in
        let entry_names = List.map fst entries in
        List.iter
@@ -356,7 +364,10 @@ let rec walk_moves
               let sub_pat = List.assoc fname entries in
               match sub_pat with
               | Surface.PVar v ->
-                Some (v, Surface.Proj (Surface.Var [ target_name ], fname))
+                Some
+                  ( v
+                  , Surface.Proj (Surface.Var [ Syntax.Name.to_string target_name ], fname)
+                  )
               | _ ->
                 Reporter.fatalf
                   ~loc:cloc
@@ -403,7 +414,7 @@ let rec walk_moves
                   "constructor `%s` has more than one clause"
                   cn;
               Hashtbl.add seen cn ()
-            | Some (Surface.PVar _) | Some (Surface.PImpVar _) ->
+            | Some (Surface.PVar _) | Some (Surface.PImpVar _) | Some Surface.PWildcard ->
               Reporter.fatalf
                 ~loc:cloc
                 Elab_error
@@ -467,6 +478,7 @@ let rec walk_moves
                   (function
                     | Surface.PVar n -> n
                     | Surface.PImpVar n -> n
+                    | Surface.PWildcard -> "_"
                     | Surface.PCon _ ->
                       Reporter.fatalf
                         ~loc:cloc
@@ -481,7 +493,7 @@ let rec walk_moves
               in
               List.fold_right
                 (fun v body ->
-                   Surface.Lambda { name = v; bound = body; implicit = false })
+                   Surface.Lambda { name = Named v; bound = body; implicit = false })
                 v_names
                 clause.body)
            ctors
@@ -509,7 +521,9 @@ let rec walk_moves
        List.fold_left
          (fun acc arg -> Surface.App (false, acc, arg))
          (Surface.Var [ ind_head; "elim" ])
-         (data_args @ [ Surface.Var [ target_name ]; motive ] @ case_args)
+         (data_args
+          @ [ Surface.Var [ Syntax.Name.to_string target_name ]; motive ]
+          @ case_args)
      | other ->
        Reporter.fatalf
          ~loc
@@ -532,11 +546,11 @@ type goal =
   | KCheckBy_Infer of t * Core.value_ty
   | KApp_HaveFn of t * bool * Surface.preterm
   | KApp_HaveArg of t * Core.term * (Core.value -> Core.value)
-  | KPi_HaveDom of t * string * bool * Surface.pretype
-  | KPi_HaveCod of t * string * bool * Core.term * Level.level
-  | KLam_Body of t * string * bool
-  | KTypedLam_HaveDom of t * string * bool * Surface.preterm
-  | KTypedLam_HaveBody of t * string * bool * Core.term * Core.value_ty
+  | KPi_HaveDom of t * Syntax.binder_name * bool * Surface.pretype
+  | KPi_HaveCod of t * Syntax.binder_name * bool * Core.term * Level.level
+  | KLam_Body of t * Syntax.binder_name * bool
+  | KTypedLam_HaveDom of t * Syntax.binder_name * bool * Surface.preterm
+  | KTypedLam_HaveBody of t * Syntax.binder_name * bool * Core.term * Core.value_ty
   | KMax_HaveLeft of t * Surface.preterm
   | KMax_HaveRight of t * Level.level
   | KEnsureUniverse of t
@@ -722,7 +736,7 @@ let emit_goal_report
   Buffer.add_string buf (Printf.sprintf "%s/?%s\n" m.module_name name);
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
-  let names = Bwd.to_list m.ctx.names in
+  let names = List.map Syntax.Name.to_string (Bwd.to_list m.ctx.names) in
   let types = Bwd.to_list m.ctx.types in
   List.iter2
     (fun n ty ->
@@ -827,7 +841,7 @@ let walk_record_update_fields
       m.result
       <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
     | (b : Core.typ Syntax.binder) :: rest_fields ->
-      let fname = b.name in
+      let fname = Syntax.Name.to_string b.name in
       (match List.assoc_opt fname overrides with
        | Some expr ->
          let ty = Evaluation.eval eval_env b.Syntax.bound in
@@ -1037,7 +1051,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        ->
        let entry_names = List.map fst entries in
        let field_names =
-         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) type_fields
+         List.map
+           (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
+           type_fields
        in
        validate_record_fields
          ~loc
@@ -1132,7 +1148,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
             "empty record update `{ _ | }`; use `p` directly instead"
         | _ -> ());
        let field_names =
-         List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) type_fields
+         List.map
+           (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
+           type_fields
        in
        validate_record_fields
          ~loc
@@ -1208,7 +1226,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        (match Evaluation.force_head v_ty with
         | Core.VRecordType { name = r_name; params = v_params; fields; _ } ->
           let field_names =
-            List.map (fun (b : Core.value_ty Syntax.binder) -> b.name) fields
+            List.map
+              (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
+              fields
           in
           if not (List.mem f field_names)
           then Reporter.fatalf ~loc Type_error "record `%s` has no field `%s`" r_name f;
@@ -1289,7 +1309,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        in
        let target_type_value = deep_resolve raw_target_ty in
        let resolved_ty = deep_resolve ty in
-       let user_level_names = List.mapi (fun i n -> i, n) (Bwd.to_list m.ctx.names) in
+       let user_level_names =
+         List.mapi (fun i n -> i, Syntax.Name.to_string n) (Bwd.to_list m.ctx.names)
+       in
        let owner_map =
          match Evaluation.force_head target_type_value with
          | Core.IndType (ind_head, _) ->
@@ -1618,7 +1640,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let intros = effective_intros in
        let term : Surface.preterm =
          List.fold_right
-           (fun (n, implicit) body -> Surface.Lambda { name = n; bound = body; implicit })
+           (fun (n, implicit) body ->
+              Surface.Lambda { name = Named n; bound = body; implicit })
            intros
            elim_inner
        in
@@ -1690,7 +1713,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let exported = m.is_exported name in
        publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);
        publish_to_env ~exported [ name ] (Core.IndType (name, Bwd.Emp), `Constructor);
-       let ctor_names = List.map (fun (b : Surface.pretype binder) -> b.name) ctors in
+       let ctor_names =
+         List.map (fun (b : Surface.pretype binder) -> Syntax.Name.to_string b.name) ctors
+       in
        let qname = m.module_name ^ "." ^ name in
        let qctor_names =
          List.map (fun cn -> m.module_name ^ "." ^ name ^ "." ^ cn) ctor_names
@@ -1785,7 +1810,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
              Elab_error
              "record `%s`: implicit field binders are not supported (`%s`)"
              name
-             b.name)
+             (Syntax.Name.to_string b.name))
       fields;
     let typ : Surface.pretype =
       List.fold_right
@@ -1956,7 +1981,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let mk_body : Core.term =
          (* RecordIntro: field fᵢ (0-indexed) = LocalVar (n_fields - 1 - i) *)
          let intro_fields =
-           List.mapi (fun i fname -> fname, Core.LocalVar (n_fields - 1 - i)) field_names
+           List.mapi
+             (fun i fname ->
+                Syntax.Name.to_string fname, Core.LocalVar (n_fields - 1 - i))
+             field_names
          in
          let intro = Core.RecordIntro { name; fields = intro_fields } in
          let with_field_lambdas =
@@ -2035,16 +2063,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
            | Core.Universe _ -> t
            | Core.Var _ -> t
            | Core.App (a, b) -> Core.App (go extra_depth a, go extra_depth b)
-           | Core.Lambda { name = n; bound; implicit } ->
-             Core.Lambda { name = n; bound = go (extra_depth + 1) bound; implicit }
-           | Core.TypedLambda ({ name = n; bound = dom; implicit }, body) ->
+           | Core.Lambda { name; bound; implicit } ->
+             Core.Lambda { name; bound = go (extra_depth + 1) bound; implicit }
+           | Core.TypedLambda ({ name; bound = dom; implicit }, body) ->
              Core.TypedLambda
-               ( { name = n; bound = go extra_depth dom; implicit }
-               , go (extra_depth + 1) body )
-           | Core.Pi ({ name = n; bound = dom; implicit }, cod) ->
+               ({ name; bound = go extra_depth dom; implicit }, go (extra_depth + 1) body)
+           | Core.Pi ({ name; bound = dom; implicit }, cod) ->
              Core.Pi
-               ( { name = n; bound = go extra_depth dom; implicit }
-               , go (extra_depth + 1) cod )
+               ({ name; bound = go extra_depth dom; implicit }, go (extra_depth + 1) cod)
            | Core.Meta _ | Core.InsertedMeta _ -> t
            | Core.Lift { from_lvl; to_lvl; ty } ->
              Core.Lift { from_lvl; to_lvl; ty = go extra_depth ty }
@@ -2075,13 +2101,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
        in
        List.iteri
          (fun i (b : Surface.pretype binder) ->
-            let field_name = b.name in
+            let field_name = Syntax.Name.to_string b.name in
             let proj_name = name ^ "/" ^ field_name in
             (* prev_field_names: in context, last field bound = innermost.
                field_core_tys.(i) has LocalVar 0 = field_(i-1), ..., LocalVar (i-1) = field_0.
                So prev_field_names should map depth j -> field name at (i-1-j). *)
             let prev_field_names =
               Array.to_list (Array.sub (Array.of_list field_names) 0 i)
+              |> List.map Syntax.Name.to_string
             in
             let proj_result_ty =
               subst_proj_result_ty
@@ -2095,7 +2122,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             let proj_ty : Core.term =
               let r_pi =
                 Core.Pi
-                  ( { name = "r"; bound = rec_applied_under 0; implicit = false }
+                  ( { name = Named "r"; bound = rec_applied_under 0; implicit = false }
                   , proj_result_ty )
               in
               wrap_param_pis_implicit r_pi
@@ -2105,7 +2132,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
                 Core.RecordProj { record = Core.LocalVar 0; field = field_name }
               in
               let with_r =
-                Core.Lambda { name = "r"; bound = proj_expr; implicit = false }
+                Core.Lambda { name = Named "r"; bound = proj_expr; implicit = false }
               in
               wrap_param_lambdas_implicit with_r
             in
@@ -2127,7 +2154,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           under k+1 binders R_applied is at ix 0. *)
        let motive_ty_tm : Core.term =
          Core.Pi
-           ( { name = "_"; bound = rec_applied_under 0; implicit = false }
+           ( { name = Anon; bound = rec_applied_under 0; implicit = false }
            , shift_term 1 ind_ty_tm )
        in
        (* Build the case type: Pi(f₁:T₁, ..., Pi(fₙ:Tₙ', M (R/mk f₁...fₙ)))
@@ -2197,13 +2224,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
          (* Under params + r + M + case binders: M=ix 1, r=ix 2. *)
          let m_r = Core.App (Core.LocalVar 1, Core.LocalVar 2) in
          let case_pi =
-           Core.Pi ({ name = "case"; bound = case_ty_tm; implicit = false }, m_r)
+           Core.Pi ({ name = Named "case"; bound = case_ty_tm; implicit = false }, m_r)
          in
          let m_pi =
-           Core.Pi ({ name = "M"; bound = motive_ty_tm; implicit = false }, case_pi)
+           Core.Pi ({ name = Named "M"; bound = motive_ty_tm; implicit = false }, case_pi)
          in
          let r_pi =
-           Core.Pi ({ name = "r"; bound = rec_applied_under 0; implicit = false }, m_pi)
+           Core.Pi
+             ({ name = Named "r"; bound = rec_applied_under 0; implicit = false }, m_pi)
          in
          wrap_param_pis r_pi
        in
@@ -2211,14 +2239,23 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let elim_body : Core.term =
          let r_var = Core.LocalVar 2 in
          let projections =
-           List.map (fun fn -> Core.RecordProj { record = r_var; field = fn }) field_names
+           List.map
+             (fun fn ->
+                Core.RecordProj { record = r_var; field = Syntax.Name.to_string fn })
+             field_names
          in
          let inner =
            List.fold_left (fun f arg -> Core.App (f, arg)) (Core.LocalVar 0) projections
          in
-         let with_case = Core.Lambda { name = "case"; bound = inner; implicit = false } in
-         let with_m = Core.Lambda { name = "M"; bound = with_case; implicit = false } in
-         let with_r = Core.Lambda { name = "r"; bound = with_m; implicit = false } in
+         let with_case =
+           Core.Lambda { name = Named "case"; bound = inner; implicit = false }
+         in
+         let with_m =
+           Core.Lambda { name = Named "M"; bound = with_case; implicit = false }
+         in
+         let with_r =
+           Core.Lambda { name = Named "r"; bound = with_m; implicit = false }
+         in
          wrap_param_lambdas with_r
        in
        let elim_ty_val = Evaluation.eval m.ctx.env elim_ty in
@@ -2313,6 +2350,7 @@ and bind_constructor
       ({ name; bound = typ; _ } : Surface.pretype binder)
   : unit
   =
+  let name = Syntax.Name.to_string name in
   let typ = Inductive.close_ctor_type params typ in
   let ctor_ty_tm = check_type ~loc ctx typ in
   let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
@@ -2398,7 +2436,7 @@ let%expect_test "infer Var bound locally" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
     push
       m
       (GInfer
@@ -2413,10 +2451,61 @@ let%expect_test "infer Var bound locally" =
   [%expect {| $0 : universe 𝓤₀ |}]
 ;;
 
+(* `_` written by the user is an ordinary `Named "_"` binder, fully
+   referenceable. *)
+let%expect_test "user `_` binder is a normal name and can be referenced" =
+  with_handlers (fun () ->
+    let m =
+      make_machine
+        ~module_name:"test"
+        ~kernel_module:(Violet_kernel.Module.create ())
+        ~goal_counter:(ref 0)
+        ()
+    in
+    m.ctx <- bind m.ctx (Syntax.Named "_") (Core.Universe Level.LZero);
+    push
+      m
+      (GInfer
+         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+         , Surface.Var [ "_" ] ));
+    let tm, ty =
+      match drive m with
+      | PTermType (a, b) -> a, b
+      | _ -> failwith "wrong shape"
+    in
+    Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty));
+  [%expect {| $0 : universe 𝓤₀ |}]
+;;
+
+(* `Anon` binders (e.g. fabricated by the parser for arrow types) carry no
+   string name; surface name lookup of `_` cannot capture them. *)
+let%expect_test "var lookup of `_` ignores Anon binders" =
+  (try
+     with_handlers (fun () ->
+       let m =
+         make_machine
+           ~module_name:"test"
+           ~kernel_module:(Violet_kernel.Module.create ())
+           ~goal_counter:(ref 0)
+           ()
+       in
+       m.ctx <- bind m.ctx Syntax.Anon (Core.Universe Level.LZero);
+       push
+         m
+         (GInfer
+            ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+            , Surface.Var [ "_" ] ));
+       let _ = drive m in
+       print_endline "UNEXPECTED: `_` resolved")
+   with
+   | Failure msg -> Printf.printf "rejected: %s" msg);
+  [%expect {| rejected: Reporter.Message.NoVar_error |}]
+;;
+
 let%expect_test "infer Pi" =
   let p =
     Surface.Pi
-      ({ name = "x"; bound = Surface.Universe; implicit = false }, Surface.Universe)
+      ({ name = Named "x"; bound = Surface.Universe; implicit = false }, Surface.Universe)
   in
   let tm, ty = infer_for_test p in
   Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty);
@@ -2424,10 +2513,12 @@ let%expect_test "infer Pi" =
 ;;
 
 let%expect_test "check Lambda against Pi" =
-  let p = Surface.Lambda { name = "x"; bound = Surface.Var [ "x" ]; implicit = false } in
+  let p =
+    Surface.Lambda { name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
+  in
   let expected_ty =
     Core.VPi
-      ( { name = "x"; bound = Core.Universe Level.LZero; implicit = false }
+      ( { name = Named "x"; bound = Core.Universe Level.LZero; implicit = false }
       , fun _ -> Core.Universe Level.LZero )
   in
   with_handlers (fun () ->
@@ -2463,13 +2554,13 @@ let%expect_test "infer App" =
         ()
     in
     let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-    m.ctx <- bind m.ctx "x" (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
     let f_ty =
       Core.VPi
-        ( { name = "a"; bound = Core.Universe Level.LZero; implicit = false }
+        ( { name = Named "a"; bound = Core.Universe Level.LZero; implicit = false }
         , fun _ -> Core.Universe Level.LZero )
     in
-    m.ctx <- bind m.ctx "f" f_ty;
+    m.ctx <- bind m.ctx (Syntax.Named "f") f_ty;
     push m (GInfer (loc, Surface.App (false, Surface.Var [ "f" ], Surface.Var [ "x" ])));
     match drive m with
     | PTermType (tm, ty) ->
@@ -2491,8 +2582,8 @@ let%expect_test "report named goal in check mode" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx "A" (Core.Universe Level.LZero);
-    m.ctx <- bind m.ctx "x" (Core.RigidLocal (0, Bwd.Emp));
+    m.ctx <- bind m.ctx (Syntax.Named "A") (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.RigidLocal (0, Bwd.Emp));
     push
       m
       (GCheck
@@ -2698,11 +2789,11 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -2737,10 +2828,10 @@ let%expect_test "module: \\export-less let stays private from importers" =
       ( "foo"
       , []
       , Surface.Pi
-          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
           , Surface.Universe )
       , Surface.Lambda
-          { Syntax.name = "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+          { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false } )
   in
   (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
   let uses_foo_def =
@@ -2748,7 +2839,7 @@ let%expect_test "module: \\export-less let stays private from importers" =
       ( "uses_foo"
       , []
       , Surface.Pi
-          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
           , Surface.Universe )
       , Surface.Var [ "foo" ] )
   in
@@ -2790,10 +2881,10 @@ let%expect_test "module: \\export-listed let is visible to importers" =
       ( "foo"
       , []
       , Surface.Pi
-          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
           , Surface.Universe )
       , Surface.Lambda
-          { Syntax.name = "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+          { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false } )
   in
   (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
   let uses_foo_def =
@@ -2801,7 +2892,7 @@ let%expect_test "module: \\export-listed let is visible to importers" =
       ( "uses_foo"
       , []
       , Surface.Pi
-          ( { Syntax.name = "x"; bound = Surface.Universe; implicit = false }
+          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
           , Surface.Universe )
       , Surface.Var [ "foo" ] )
   in
@@ -2851,11 +2942,11 @@ let%expect_test
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -2902,11 +2993,11 @@ let%expect_test
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -2919,8 +3010,8 @@ let%expect_test
       ; params = []
       ; ind_ty = Surface.Universe
       ; fields =
-          [ { name = "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          [ { name = Named "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ]
       }
   in
@@ -2946,7 +3037,7 @@ let%expect_test
                ( "uses_proj"
                , []
                , Surface.Pi
-                   ( { name = "_"; bound = Surface.Var [ "Point" ]; implicit = false }
+                   ( { name = Anon; bound = Surface.Var [ "Point" ]; implicit = false }
                    , Surface.Var [ "Nat" ] )
                , Surface.Var [ "Point/x" ] ))
         ]
@@ -2975,11 +3066,11 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -2992,8 +3083,8 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       ; params = []
       ; ind_ty = Surface.Universe
       ; fields =
-          [ { name = "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          [ { name = Named "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ]
       }
   in
@@ -3051,11 +3142,11 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -3066,13 +3157,13 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
     Surface.Record
       { name = "Pair"
       ; params =
-          [ { name = "A"; bound = Surface.Universe; implicit = false }
-          ; { name = "B"; bound = Surface.Universe; implicit = false }
+          [ { name = Named "A"; bound = Surface.Universe; implicit = false }
+          ; { name = Named "B"; bound = Surface.Universe; implicit = false }
           ]
       ; ind_ty = Surface.Universe
       ; fields =
-          [ { name = "fst"; bound = Surface.Var [ "A" ]; implicit = false }
-          ; { name = "snd"; bound = Surface.Var [ "B" ]; implicit = false }
+          [ { name = Named "fst"; bound = Surface.Var [ "A" ]; implicit = false }
+          ; { name = Named "snd"; bound = Surface.Var [ "B" ]; implicit = false }
           ]
       }
   in
@@ -3132,11 +3223,11 @@ let%expect_test "check-mode record literal with missing field gives error" =
       ; deps = []
       ; ind_ty = Surface.Universe
       ; ctors =
-          [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = "suc"
+          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ; { name = Named "suc"
             ; bound =
                 Surface.Pi
-                  ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
                   , Surface.Var [ "Nat" ] )
             ; implicit = false
             }
@@ -3147,13 +3238,13 @@ let%expect_test "check-mode record literal with missing field gives error" =
     Surface.Record
       { name = "Pair"
       ; params =
-          [ { name = "A"; bound = Surface.Universe; implicit = false }
-          ; { name = "B"; bound = Surface.Universe; implicit = false }
+          [ { name = Named "A"; bound = Surface.Universe; implicit = false }
+          ; { name = Named "B"; bound = Surface.Universe; implicit = false }
           ]
       ; ind_ty = Surface.Universe
       ; fields =
-          [ { name = "fst"; bound = Surface.Var [ "A" ]; implicit = false }
-          ; { name = "snd"; bound = Surface.Var [ "B" ]; implicit = false }
+          [ { name = Named "fst"; bound = Surface.Var [ "A" ]; implicit = false }
+          ; { name = Named "snd"; bound = Surface.Var [ "B" ]; implicit = false }
           ]
       }
   in

@@ -107,6 +107,7 @@ rule token =
   | '.' { return lexbuf @@ DOT }
   | '"' ([^ '"' '\n']* as s) '"' { return lexbuf @@ STRING s }
   | ident { return lexbuf @@ ident (Lexing.lexeme lexbuf) }
+  | '_' { return lexbuf @@ IDENT "_" }
   | sym_char+ { return lexbuf @@ SYMBOL (Lexing.lexeme lexbuf) }
   | whitespace { token lexbuf }
   | newline { Lexing.new_line lexbuf; token lexbuf }

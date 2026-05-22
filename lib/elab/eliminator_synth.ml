@@ -7,14 +7,16 @@ open Bwd
 open Bwd.Infix
 open Surface_utils
 
-(* Give anonymous (`_`) binders unique names so they can be referenced later
+(* Give anonymous binders unique names so they can be referenced later
    (e.g. as constructor arguments in the eliminator's spine). Leave named
    binders alone — renaming them would invalidate downstream references to
    the original name (the references aren't rewritten). *)
 let rename_tele tele : Surface.pretype binder list =
   List.mapi
     (fun i bind ->
-       if bind.name = "_" then { bind with name = "_" ^ string_of_int i } else bind)
+       match bind.name with
+       | Anon -> { bind with name = Named (Printf.sprintf "_%d" i) }
+       | Named _ -> bind)
     tele
 ;;
 
@@ -27,7 +29,7 @@ let eliminator_params ~name ~params ~deps ~ind_ty =
 
 let eliminator_target_binding ~name ~params ~deps ~ind_ty =
   let params = eliminator_params ~name ~params ~deps ~ind_ty in
-  { name = "target"
+  { name = Named "target"
   ; bound = Surface.apply_tele (Surface.Var [ name ]) params
   ; implicit = false
   }
@@ -36,7 +38,7 @@ let eliminator_target_binding ~name ~params ~deps ~ind_ty =
 let eliminator_motive_type ~name ~params ~deps ~ind_ty =
   let good_deps = rename_tele deps in
   let final_ty = Surface.apply_tele (Surface.Var [ name ]) (params @ good_deps) in
-  let final_bind = { name = "_"; bound = final_ty; implicit = false } in
+  let final_bind = { name = Anon; bound = final_ty; implicit = false } in
   Surface.pi (good_deps @ [ final_bind ]) ind_ty
 ;;
 
@@ -65,11 +67,11 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
            let rec_spine = Surface.applied_spine bind.bound in
            let dep_args = List.drop (List.length params) rec_spine in
            [ bind
-           ; { name = "ih-" ^ bind.name
+           ; { name = Named ("ih-" ^ Name.to_string bind.name)
              ; bound =
                  Surface.apply
                    (Surface.Var [ "motive" ])
-                   (dep_args @ [ Surface.Var [ bind.name ] ])
+                   (dep_args @ [ Surface.Var [ Name.to_string bind.name ] ])
              ; implicit = false
              }
            ])
@@ -90,9 +92,11 @@ let eliminator_case ~name ~params ~deps ~ind_ty (ctor : Surface.pretype binder)
      resolve to the eliminator's outer params (which are in scope here). *)
   let param_args = List.map (fun p -> { p with implicit = true }) params in
   let final =
-    Surface.apply_tele (Surface.Var [ name; ctor.name ]) (param_args @ renamed_delta)
+    Surface.apply_tele
+      (Surface.Var [ name; Name.to_string ctor.name ])
+      (param_args @ renamed_delta)
   in
-  { name = "case-" ^ ctor.name
+  { name = Named ("case-" ^ Name.to_string ctor.name)
   ; bound =
       Surface.pi
         (patch_delta renamed_delta)
@@ -111,7 +115,7 @@ let eliminator_type ~name ~params ~deps ~ind_ty ctors =
   let result_ty = eliminator_result_type ~name ~params ~deps ~ind_ty in
   Surface.pi
     (elim_params
-     @ [ target_bind; { name = "motive"; bound = motive_type; implicit = false } ]
+     @ [ target_bind; { name = Named "motive"; bound = motive_type; implicit = false } ]
      @ case_binds)
     result_ty
 ;;
@@ -120,32 +124,33 @@ let%expect_test "`data List (A : U) : U`, the generated eliminator will rely on 
   let result =
     eliminator_params
       ~name:"List"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
       ~deps:[]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype binder list] result;
-  [%expect {| [{ Syntax.name = "A"; bound = 𝓤; implicit = false }] |}]
+  [%expect {| [{ Syntax.name = (Syntax.Named "A"); bound = 𝓤; implicit = false }] |}]
 ;;
 
 let%expect_test "List target has type `List A`" =
   let result =
     eliminator_target_binding
       ~name:"List"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
       ~deps:[]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype binder] result;
-  [%expect {| { Syntax.name = "target"; bound = (List A); implicit = false } |}]
+  [%expect
+    {| { Syntax.name = (Syntax.Named "target"); bound = (List A); implicit = false } |}]
 ;;
 
 let%expect_test "Vec motive" =
   let result =
     eliminator_motive_type
       ~name:"Vec"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
+      ~deps:[ { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype] result;
@@ -156,10 +161,10 @@ let%expect_test "Vec case nil" =
   let result =
     eliminator_case
       ~name:"Vec"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
+      ~deps:[ { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
-      { name = "nil"
+      { name = Named "nil"
       ; bound =
           Surface.apply
             (Surface.Var [ "Vec" ])
@@ -170,8 +175,8 @@ let%expect_test "Vec case nil" =
   print_string @@ [%show: Surface.pretype binder] result;
   [%expect
     {|
-    { Syntax.name = "case-nil"; bound = ((motive zero) (Vec/nil {A}));
-      implicit = false }
+    { Syntax.name = (Syntax.Named "case-nil");
+      bound = ((motive zero) (Vec/nil {A})); implicit = false }
     |}]
 ;;
 
@@ -179,15 +184,15 @@ let%expect_test "Vec case cons" =
   let result =
     eliminator_case
       ~name:"Vec"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
+      ~deps:[ { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
-      { name = "cons"
+      { name = Named "cons"
       ; bound =
           Surface.pi
-            [ { name = "k"; bound = Surface.Var [ "Nat" ]; implicit = true }
-            ; { name = "x"; bound = Surface.Var [ "A" ]; implicit = false }
-            ; { name = "xs"
+            [ { name = Named "k"; bound = Surface.Var [ "Nat" ]; implicit = true }
+            ; { name = Named "x"; bound = Surface.Var [ "A" ]; implicit = false }
+            ; { name = Named "xs"
               ; bound =
                   Surface.apply
                     (Surface.Var [ "Vec" ])
@@ -206,7 +211,7 @@ let%expect_test "Vec case cons" =
   print_string @@ [%show: Surface.pretype binder] result;
   [%expect
     {|
-    { Syntax.name = "case-cons";
+    { Syntax.name = (Syntax.Named "case-cons");
       bound =
       Π{k : Nat} -> Π(x : A) -> Π(xs : ((Vec A) k)) -> Π(ih-xs : ((motive k) xs)) -> ((motive (suc k)) ((((Vec/cons {A}) {k}) x) xs));
       implicit = false }
@@ -217,8 +222,8 @@ let%expect_test "Vec result type" =
   let result =
     eliminator_result_type
       ~name:"Vec"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
+      ~deps:[ { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       ~ind_ty:Surface.Universe
   in
   print_string @@ [%show: Surface.pretype] result;
@@ -242,11 +247,11 @@ let case_arg_lambda_binders
   let fields = ref [] in
   List.iter
     (fun (b : Surface.pretype binder) ->
-       let n = prefix ^ b.name in
+       let n = prefix ^ Name.to_string b.name in
        fields := n :: !fields;
        lambdas := n :: !lambdas;
        if head_of_surface b.bound = Surface.Var [ ind_name ]
-       then lambdas := (prefix ^ "ih-" ^ b.name) :: !lambdas)
+       then lambdas := (prefix ^ "ih-" ^ Name.to_string b.name) :: !lambdas)
     delta;
   List.rev !lambdas, List.rev !fields
 ;;
@@ -267,7 +272,7 @@ let diagonal_type ~(xs : string list) ~(ys : string list) : Surface.preterm =
       Surface.apply
         (Surface.Var [ "Sigma" ])
         [ id_app x y
-        ; Surface.Lambda { name = "_"; bound = build xs' ys'; implicit = false }
+        ; Surface.Lambda { name = Anon; bound = build xs' ys'; implicit = false }
         ]
     | _ -> assert false
   in
@@ -290,13 +295,13 @@ let no_confusion_type_def ~(name : string) ~(ctors : Surface.pretype binder list
   =
   let typ : Surface.pretype =
     Surface.pi
-      [ { name = "__x"; bound = Surface.Var [ name ]; implicit = false }
-      ; { name = "__y"; bound = Surface.Var [ name ]; implicit = false }
+      [ { name = Named "__x"; bound = Surface.Var [ name ]; implicit = false }
+      ; { name = Named "__y"; bound = Surface.Var [ name ]; implicit = false }
       ]
       Surface.Universe
   in
   let const_universe_motive =
-    Surface.Lambda { name = "_"; bound = Surface.Universe; implicit = false }
+    Surface.Lambda { name = Anon; bound = Surface.Universe; implicit = false }
   in
   let make_outer_case (c : Surface.pretype binder) : Surface.preterm =
     let outer_lams, outer_fields =
@@ -307,7 +312,7 @@ let no_confusion_type_def ~(name : string) ~(ctors : Surface.pretype binder list
         case_arg_lambda_binders ~prefix:"y_" ~ind_name:name cj
       in
       let body =
-        if String.equal cj.name c.name
+        if cj.name = c.name
         then diagonal_type ~xs:outer_fields ~ys:inner_fields
         else Surface.Var [ "Empty" ]
       in
@@ -342,15 +347,15 @@ let no_confusion_def ~(name : string) ~(ctors : Surface.pretype binder list)
   in
   let typ : Surface.pretype =
     Surface.pi
-      [ { name = "__x"; bound = Surface.Var [ name ]; implicit = false }
-      ; { name = "__y"; bound = Surface.Var [ name ]; implicit = false }
-      ; { name = "__p"; bound = id_xy; implicit = false }
+      [ { name = Named "__x"; bound = Surface.Var [ name ]; implicit = false }
+      ; { name = Named "__y"; bound = Surface.Var [ name ]; implicit = false }
+      ; { name = Named "__p"; bound = id_xy; implicit = false }
       ]
       nct_xy
   in
   let diag_motive =
     Surface.Lambda
-      { name = "x_"
+      { name = Named "x_"
       ; bound =
           Surface.apply
             (Surface.Var [ name; "no-confusion-type" ])
@@ -369,7 +374,7 @@ let no_confusion_def ~(name : string) ~(ctors : Surface.pretype binder list)
   in
   let subst_motive =
     Surface.Lambda
-      { name = "__y'"
+      { name = Named "__y'"
       ; bound =
           Surface.apply
             (Surface.Var [ name; "no-confusion-type" ])
@@ -417,8 +422,8 @@ let analyze_ctor ~ind_name ~params (ctor : Surface.pretype binder) : Context.cto
          else Context.Regular)
       delta
   in
-  { ctor_name = ctor.name
-  ; binder_names = List.map (fun b -> b.name) delta
+  { ctor_name = Name.to_string ctor.name
+  ; binder_names = List.map (fun b -> Name.to_string b.name) delta
   ; binder_kinds = kinds
   }
 ;;
@@ -519,11 +524,11 @@ let build_elim_reducer
 ;;
 
 let nat_ctors : Surface.pretype binder list =
-  [ { name = "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-  ; { name = "suc"
+  [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
+  ; { name = Named "suc"
     ; bound =
         Surface.Pi
-          ( { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
           , Surface.Var [ "Nat" ] )
     ; implicit = false
     }
@@ -558,19 +563,19 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
 ;;
 
 let vec_ctors : Surface.pretype binder list =
-  [ { name = "nil"
+  [ { name = Named "nil"
     ; bound =
         Surface.apply
           (Surface.Var [ "Vec" ])
           [ Surface.Var [ "A" ]; Surface.Var [ "zero" ] ]
     ; implicit = false
     }
-  ; { name = "cons"
+  ; { name = Named "cons"
     ; bound =
         Surface.pi
-          [ { name = "n"; bound = Surface.Var [ "Nat" ]; implicit = true }
-          ; { name = "_"; bound = Surface.Var [ "A" ]; implicit = false }
-          ; { name = "_"
+          [ { name = Named "n"; bound = Surface.Var [ "Nat" ]; implicit = true }
+          ; { name = Anon; bound = Surface.Var [ "A" ]; implicit = false }
+          ; { name = Anon
             ; bound =
                 Surface.apply
                   (Surface.Var [ "Vec" ])
@@ -593,8 +598,8 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
     build_elim_reducer
       ~ind_name:"Vec"
       ~elim_name:"Vec/elim"
-      ~params:[ { name = "A"; bound = Surface.Universe; implicit = false } ]
-      ~deps:[ { name = "_"; bound = Surface.Var [ "Nat" ]; implicit = false } ]
+      ~params:[ { name = Named "A"; bound = Surface.Universe; implicit = false } ]
+      ~deps:[ { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false } ]
       vec_ctors
   in
   let aV = Core.Var ("A", Emp) in

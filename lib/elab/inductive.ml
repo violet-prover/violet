@@ -189,7 +189,7 @@ let compute_effective_intros
     | b :: rest, ((uname, u_impl) :: urest as user) ->
       (match b.implicit, u_impl with
        | true, true -> (uname, true) :: walk_sig rest urest
-       | true, false -> (b.name, true) :: walk_sig rest user
+       | true, false -> (Name.to_string b.name, true) :: walk_sig rest user
        | false, false -> (uname, false) :: walk_sig rest urest
        | false, true ->
          Reporter.fatalf
@@ -197,10 +197,12 @@ let compute_effective_intros
            Elab_error
            "intro `{%s}` at explicit Pi-binder `%s`"
            uname
-           b.name)
+           (Name.to_string b.name))
   in
   let param_binders =
-    List.map (fun (b : Surface.pretype binder) -> b.name, b.implicit) bindings
+    List.map
+      (fun (b : Surface.pretype binder) -> Name.to_string b.name, b.implicit)
+      bindings
   in
   walk_pi param_binders (pi_domain signature) intros
 ;;
@@ -223,6 +225,8 @@ let align_clause_patterns
       Surface.PVar n :: go rest_slots rest_pats
     | (slot_name, true) :: rest_slots, _ -> Surface.PVar slot_name :: go rest_slots pats
     | (_, false) :: rest_slots, (Surface.PVar _ as p) :: rest_pats ->
+      p :: go rest_slots rest_pats
+    | (_, false) :: rest_slots, (Surface.PWildcard as p) :: rest_pats ->
       p :: go rest_slots rest_pats
     | (_, false) :: rest_slots, (Surface.PCon _ as p) :: rest_pats ->
       p :: go rest_slots rest_pats
@@ -329,7 +333,7 @@ let pick_head_and_deeper
   : (Surface.clause * Surface.clause list) option
   =
   let is_pvar = function
-    | Surface.PVar _ | Surface.PImpVar _ -> true
+    | Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard -> true
     | Surface.PCon _ | Surface.PRecord _ -> false
   in
   let is_head (c : Surface.clause) =
@@ -512,6 +516,7 @@ let process_clause
     List.map
       (function
         | Surface.PVar n -> n
+        | Surface.PWildcard -> "_"
         | Surface.PCon _ ->
           Reporter.fatalf
             ~loc:clause_loc
@@ -546,6 +551,7 @@ let process_clause
     List.filteri (fun i _ -> i > target_pos) aligned_patterns
     |> List.map (function
       | Surface.PVar n -> n
+      | Surface.PWildcard -> "_"
       | Surface.PCon _ ->
         Reporter.fatalf
           ~loc:clause_loc
@@ -597,7 +603,9 @@ let qualify_ctor_namespaces
   : Surface.preterm
   =
   let ih_names = List.map snd rec_arg_to_ih in
-  let param_names = List.map (fun (b : Surface.pretype binder) -> b.name) params in
+  let param_names =
+    List.map (fun (b : Surface.pretype binder) -> Name.to_string b.name) params
+  in
   let intro_names = List.map fst intros in
   let shadowed = vs @ ih_names @ trailing_pattern_names @ intro_names @ param_names in
   let opened_namespaces =
@@ -785,9 +793,7 @@ let ctor_spine_and_flex
    so all Pi-binders here are per-call. *)
 let ctor_binder_implicits (info : Context.ind_info) (ctor_name : string) : bool list =
   let ctor_surface =
-    List.find
-      (fun (b : Surface.pretype binder) -> String.equal b.name ctor_name)
-      info.ctors
+    List.find (fun (b : Surface.pretype binder) -> b.name = Named ctor_name) info.ctors
   in
   List.map (fun (b : Surface.pretype binder) -> b.implicit) (pi_domain ctor_surface.bound)
 ;;
@@ -824,19 +830,21 @@ let build_unify_motive
           in
           wrap_ids
             (i - 1)
-            (Surface.Pi ({ name = p_name i; bound = id_ty; implicit = false }, acc)))
+            (Surface.Pi ({ name = Named (p_name i); bound = id_ty; implicit = false }, acc)))
       in
       wrap_ids (m_indices - 1) result_after_target)
     else result_after_target
   in
-  let inner = Surface.Lambda { name = target; bound = with_ids; implicit = false } in
+  let inner =
+    Surface.Lambda { name = Named target; bound = with_ids; implicit = false }
+  in
   let rec wrap_idx_lambdas i acc =
     if i < 0
     then acc
     else
       wrap_idx_lambdas
         (i - 1)
-        (Surface.Lambda { name = idx_name i; bound = acc; implicit = false })
+        (Surface.Lambda { name = Named (idx_name i); bound = acc; implicit = false })
   in
   wrap_idx_lambdas (m_indices - 1) inner
 ;;
@@ -856,7 +864,10 @@ let wrap_p_binders
     let rec go i acc =
       if i < 0
       then acc
-      else go (i - 1) (Surface.Lambda { name = p_name i; bound = acc; implicit = false })
+      else
+        go
+          (i - 1)
+          (Surface.Lambda { name = Named (p_name i); bound = acc; implicit = false })
     in
     go (m_indices - 1) body)
 ;;
@@ -1000,10 +1011,11 @@ let build_elim_body_unify
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda { name = "ih-" ^ v; bound = body; implicit = false }
+                    Surface.Lambda
+                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = v; bound = inner; implicit })
+                Surface.Lambda { name = Named v; bound = inner; implicit })
              binders
              body
          in
@@ -1138,7 +1150,8 @@ let build_elim_body_unify
            in
            let with_trailing =
              List.fold_right
-               (fun n body -> Surface.Lambda { name = n; bound = body; implicit = false })
+               (fun n body ->
+                  Surface.Lambda { name = Named n; bound = body; implicit = false })
                pc.trailing_pattern_names
                qualified_body
            in
@@ -1305,10 +1318,12 @@ let build_elim_body
     let motive : Surface.preterm =
       let body0 = peel_pi_surface ~loc (target_pos - np + 1) signature in
       let body = rename_vars_surface dep_renaming body0 in
-      let inner = Surface.Lambda { name = target; bound = body; implicit = false } in
+      let inner =
+        Surface.Lambda { name = Named target; bound = body; implicit = false }
+      in
       List.fold_right
         (fun (_, fresh) acc ->
-           Surface.Lambda { name = fresh; bound = acc; implicit = false })
+           Surface.Lambda { name = Named fresh; bound = acc; implicit = false })
         dep_renaming
         inner
     in
@@ -1394,7 +1409,8 @@ let build_elim_body
            in
            let with_trailing =
              List.fold_right
-               (fun n body -> Surface.Lambda { name = n; bound = body; implicit = false })
+               (fun n body ->
+                  Surface.Lambda { name = Named n; bound = body; implicit = false })
                pc.trailing_pattern_names
                qualified_body
            in
@@ -1403,10 +1419,11 @@ let build_elim_body
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda { name = "ih-" ^ v; bound = body; implicit = false }
+                    Surface.Lambda
+                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = v; bound = inner; implicit })
+                Surface.Lambda { name = Named v; bound = inner; implicit })
              (List.combine (List.combine pc.vs ctor_info_.binder_kinds) implicits)
              with_trailing)
         ctors
@@ -1484,9 +1501,7 @@ let build_cong_extractor
                      ~ind_name:index_ind_name
                      c
                  in
-                 if
-                   String.equal c.name matched_ctor_name
-                   && sub_arg_idx < List.length fields
+                 if c.name = Named matched_ctor_name && sub_arg_idx < List.length fields
                  then Surface.lambda lambdas (Surface.Var [ List.nth fields sub_arg_idx ])
                  else (
                    let default_ctor =
@@ -1499,11 +1514,11 @@ let build_cong_extractor
           in
           let motive =
             Surface.Lambda
-              { name = "_"; bound = Surface.Var [ index_ind_name ]; implicit = false }
+              { name = Anon; bound = Surface.Var [ index_ind_name ]; implicit = false }
           in
           Some
             (Surface.Lambda
-               { name = "__sh"
+               { name = Named "__sh"
                ; bound =
                    Surface.apply
                      (Surface.Var [ index_ind_name; "elim" ])
@@ -1651,13 +1666,14 @@ let build_inline_elim_dispatch
             in
             wrap_ids
               (i - 1)
-              (Surface.Pi ({ name = p_name i; bound = id_ty; implicit = false }, acc)))
+              (Surface.Pi
+                 ({ name = Named (p_name i); bound = id_ty; implicit = false }, acc)))
         in
         wrap_ids (m_indices - 1) result_type_surface)
       else result_type_surface
     in
     let inner =
-      Surface.Lambda { name = target_name; bound = with_ids; implicit = false }
+      Surface.Lambda { name = Named target_name; bound = with_ids; implicit = false }
     in
     let rec wrap_idx_lambdas i acc =
       if i < 0
@@ -1665,7 +1681,7 @@ let build_inline_elim_dispatch
       else
         wrap_idx_lambdas
           (i - 1)
-          (Surface.Lambda { name = idx_name i; bound = acc; implicit = false })
+          (Surface.Lambda { name = Named (idx_name i); bound = acc; implicit = false })
     in
     wrap_idx_lambdas (m_indices - 1) inner
   in
@@ -1698,10 +1714,11 @@ let build_inline_elim_dispatch
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda { name = "ih-" ^ v; bound = body; implicit = false }
+                    Surface.Lambda
+                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = v; bound = inner; implicit })
+                Surface.Lambda { name = Named v; bound = inner; implicit })
              binders
              body
          in
@@ -1746,7 +1763,7 @@ let build_inline_elim_dispatch
                  ctor_name
              | _ ->
                let is_pvar = function
-                 | Surface.PVar _ | Surface.PImpVar _ -> true
+                 | Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard -> true
                  | Surface.PCon _ | Surface.PRecord _ -> false
                in
                let head_opt =
@@ -1779,6 +1796,7 @@ let build_inline_elim_dispatch
                (function
                  | Surface.PVar n -> n
                  | Surface.PImpVar n -> n
+                 | Surface.PWildcard -> "_"
                  | Surface.PCon _ ->
                    Reporter.fatalf
                      ~loc
@@ -1885,7 +1903,7 @@ let build_inline_elim_dispatch
                in
                let outer_ctor =
                  List.find
-                   (fun (c : Surface.pretype binder) -> String.equal c.name ctor_name)
+                   (fun (c : Surface.pretype binder) -> c.name = Named ctor_name)
                    info.ctors
                in
                let cod_spine =
@@ -1967,7 +1985,7 @@ let build_inline_elim_dispatch
                                   in
                                   let subst_motive =
                                     Surface.Lambda
-                                      { name = "__v"
+                                      { name = Named "__v"
                                       ; bound =
                                           Surface.apply
                                             (Surface.Var [ ind_head ])
@@ -2021,7 +2039,7 @@ let build_inline_elim_dispatch
                     Surface.App
                       ( false
                       , Surface.TypedLambda
-                          ( { Syntax.name = bind_name
+                          ( { Syntax.name = Syntax.Named bind_name
                             ; bound = refined_ty
                             ; implicit = false
                             }
@@ -2121,7 +2139,7 @@ let%expect_test "compute_effective_intros: bracketed intro at explicit param err
           compute_effective_intros
             ~loc:dummy_loc
             ~bindings:
-              [ ({ name = "A"; bound = Surface.Universe; implicit = false }
+              [ ({ name = Named "A"; bound = Surface.Universe; implicit = false }
                  : Surface.pretype binder)
               ]
             ~signature:Surface.Universe

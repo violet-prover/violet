@@ -571,7 +571,7 @@ module Grammar = struct
         first :: rest
       in
       let mk_binding implicit names bound : S.preterm Syntax.binder list =
-        List.map (fun name -> { Syntax.name; bound; implicit }) names
+        List.map (fun name -> { Syntax.name = Syntax.Named name; bound; implicit }) names
       in
       let p_binding_parens : S.preterm Syntax.binder list t =
         let+ _ = tok C.T_LPAREN
@@ -1029,7 +1029,7 @@ module Grammar = struct
       and+ rhs = opt_arrow in
       match rhs with
       | None -> lhs
-      | Some r -> S.Pi ({ name = "_"; bound = lhs; implicit = false }, r))
+      | Some r -> S.Pi ({ name = Syntax.Anon; bound = lhs; implicit = false }, r))
   ;;
 
   let p_idents : string list t =
@@ -1044,7 +1044,9 @@ module Grammar = struct
     and+ _ = tok C.T_COLON
     and+ ty = p_term
     and+ _ = tok C.T_RPAREN in
-    List.map (fun name -> { Syntax.name; bound = ty; implicit = false }) names
+    List.map
+      (fun name -> { Syntax.name = Syntax.Named name; bound = ty; implicit = false })
+      names
   ;;
 
   let p_binding_brackets : S.preterm Syntax.binder list t =
@@ -1053,7 +1055,9 @@ module Grammar = struct
     and+ _ = tok C.T_COLON
     and+ ty = p_term
     and+ _ = tok C.T_RBRACKET in
-    List.map (fun name -> { Syntax.name; bound = ty; implicit = true }) names
+    List.map
+      (fun name -> { Syntax.name = Syntax.Named name; bound = ty; implicit = true })
+      names
   ;;
 
   let p_binding = p_binding_parens || p_binding_brackets
@@ -1068,7 +1072,7 @@ module Grammar = struct
     and+ name = ident
     and+ _ = tok C.T_COLON
     and+ ty = p_term in
-    { Syntax.name; bound = ty; implicit = false }
+    { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
   ;;
 
   let p_stack_move : S.stack_move t =
@@ -1117,10 +1121,11 @@ module Grammar = struct
         }
     in
     let self : S.pattern t = { tp = self_tp; parse = (fun buf i -> !self_ref buf i) } in
-    (* PVar: an IDENT *)
+    (* PVar / PWildcard: an IDENT. A literal `_` is a wildcard pattern that
+       binds nothing referenceable; any other identifier binds a variable. *)
     let p_var =
       let+ name = ident in
-      S.PVar name
+      if String.equal name "_" then S.PWildcard else S.PVar name
     in
     (* PCon: `( ctor arg… )` where each arg is itself a pattern (so
        `(cons n1 (cons n2 stk))` works). *)
@@ -1340,7 +1345,7 @@ module Grammar = struct
     and+ name = ident
     and+ _ = tok C.T_COLON
     and+ ty = p_term in
-    { Syntax.name; bound = ty; implicit = false }
+    { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
   ;;
 
   let p_record_top : S.top Asai.Range.located t =
@@ -1620,6 +1625,16 @@ let%expect_test "lex symbol: comma is a SYMBOL char" =
 let%expect_test "lex symbols mixed with idents" =
   print_string @@ [%show: Lexer.token list] (lex_to_list "x + y");
   [%expect {| [<identifier:x>; <symbol:+>; <identifier:y>] |}]
+;;
+
+let%expect_test "lex bare underscore as identifier" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "_");
+  [%expect {| [<identifier:_>] |}]
+;;
+
+let%expect_test "lex underscore in lambda position" =
+  print_string @@ [%show: Lexer.token list] (lex_to_list "\\_ => x");
+  [%expect {| [\; <identifier:_>; =>; <identifier:x>] |}]
 ;;
 
 let%expect_test "lex string: simple" =

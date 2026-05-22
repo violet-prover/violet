@@ -40,15 +40,17 @@ let rec pp_value (cv : Context_view.t) (v : Core.value) : string =
   | Core.Elim ({ elim_name; _ }, spine) -> pp_neutral cv elim_name spine
   | Core.VPi ({ name; bound; implicit }, closure) ->
     let body = closure (Core.RigidLocal (Context_view.lvl cv, Emp)) in
-    let cv' = Context_view.extend cv name in
+    let ns = Name.to_string name in
+    let cv' = Context_view.extend cv ns in
     let l, r = if implicit then "{", "}" else "(", ")" in
-    Printf.sprintf "%s%s : %s%s -> %s" l name (pp_value cv bound) r (pp_value cv' body)
+    Printf.sprintf "%s%s : %s%s -> %s" l ns (pp_value cv bound) r (pp_value cv' body)
   | Core.VLambda { name; bound = closure; implicit } ->
     let body = closure (Core.RigidLocal (Context_view.lvl cv, Emp)) in
-    let cv' = Context_view.extend cv name in
+    let ns = Name.to_string name in
+    let cv' = Context_view.extend cv ns in
     if implicit
-    then Printf.sprintf "(fun {%s} => %s)" name (pp_value cv' body)
-    else Printf.sprintf "(fun %s => %s)" name (pp_value cv' body)
+    then Printf.sprintf "(fun {%s} => %s)" ns (pp_value cv' body)
+    else Printf.sprintf "(fun %s => %s)" ns (pp_value cv' body)
   | Core.VLift { from_lvl; to_lvl; ty } ->
     Printf.sprintf "lift[%s→%s] %s" (pp_level from_lvl) (pp_level to_lvl) (pp_value cv ty)
   | Core.VLiftTerm { from_lvl; to_lvl; ty; tm } ->
@@ -71,8 +73,9 @@ let rec pp_value (cv : Context_view.t) (v : Core.value) : string =
       | [] -> []
       | (b : Core.value_ty Syntax.binder) :: rest ->
         let t_str = pp_value cv b.bound in
-        let cv' = Context_view.extend cv b.name in
-        (b.name ^ " : " ^ t_str) :: walk cv' rest
+        let bs = Name.to_string b.name in
+        let cv' = Context_view.extend cv bs in
+        (bs ^ " : " ^ t_str) :: walk cv' rest
     in
     let field_strs = walk cv fields in
     let p =
@@ -119,24 +122,21 @@ let rec pp_term (cv : Context_view.t) (t : Core.term) : string =
   | Core.Var n -> n
   | Core.App (a, b) -> pp_term cv a ^ " " ^ pp_term_arg cv b
   | Core.Lambda { name; bound; implicit } ->
-    let cv' = Context_view.extend cv name in
+    let ns = Name.to_string name in
+    let cv' = Context_view.extend cv ns in
     if implicit
-    then Printf.sprintf "(fun {%s} => %s)" name (pp_term cv' bound)
-    else Printf.sprintf "(fun %s => %s)" name (pp_term cv' bound)
+    then Printf.sprintf "(fun {%s} => %s)" ns (pp_term cv' bound)
+    else Printf.sprintf "(fun %s => %s)" ns (pp_term cv' bound)
   | Core.TypedLambda ({ name; bound; implicit }, body) ->
-    let cv' = Context_view.extend cv name in
+    let ns = Name.to_string name in
+    let cv' = Context_view.extend cv ns in
     let l, r = if implicit then "{", "}" else "(", ")" in
-    Printf.sprintf
-      "(fun %s%s : %s%s => %s)"
-      l
-      name
-      (pp_term cv bound)
-      r
-      (pp_term cv' body)
+    Printf.sprintf "(fun %s%s : %s%s => %s)" l ns (pp_term cv bound) r (pp_term cv' body)
   | Core.Pi ({ name; bound; implicit }, body) ->
-    let cv' = Context_view.extend cv name in
+    let ns = Name.to_string name in
+    let cv' = Context_view.extend cv ns in
     let l, r = if implicit then "{", "}" else "(", ")" in
-    Printf.sprintf "%s%s : %s%s -> %s" l name (pp_term cv bound) r (pp_term cv' body)
+    Printf.sprintf "%s%s : %s%s -> %s" l ns (pp_term cv bound) r (pp_term cv' body)
   | Core.Meta m -> pp_metavar m
   | Core.InsertedMeta (m, n) -> Printf.sprintf "%s[..%d]" (pp_metavar m) n
   | Core.Lift { from_lvl; to_lvl; ty } ->
@@ -161,8 +161,9 @@ let rec pp_term (cv : Context_view.t) (t : Core.term) : string =
       | [] -> []
       | (b : Core.typ Syntax.binder) :: rest ->
         let t_str = pp_term cv b.bound in
-        let cv' = Context_view.extend cv b.name in
-        (b.name ^ " : " ^ t_str) :: walk cv' rest
+        let bs = Name.to_string b.name in
+        let cv' = Context_view.extend cv bs in
+        (bs ^ " : " ^ t_str) :: walk cv' rest
     in
     let field_strs = walk cv fields in
     let p =
@@ -203,7 +204,8 @@ let%expect_test "pp_value on a Pi prints binder by name" =
   let body_closure _ = Core.Universe Level.LZero in
   let ty =
     Core.VPi
-      ({ name = "n"; bound = Core.IndType ("Nat", Emp); implicit = false }, body_closure)
+      ( { name = Named "n"; bound = Core.IndType ("Nat", Emp); implicit = false }
+      , body_closure )
   in
   print_string (pp_value cv ty);
   [%expect {| (n : Nat) -> universe 𝓤₀ |}]
@@ -219,7 +221,8 @@ let%expect_test "pp_term renders Pi with binder name" =
   let cv = Context_view.empty in
   let ty =
     Core.Pi
-      ({ name = "n"; bound = Core.Var "Nat"; implicit = false }, Core.Universe Level.LZero)
+      ( { name = Named "n"; bound = Core.Var "Nat"; implicit = false }
+      , Core.Universe Level.LZero )
   in
   print_string (pp_term cv ty);
   [%expect {| (n : Nat) -> universe 𝓤₀ |}]
