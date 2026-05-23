@@ -1999,49 +1999,18 @@ let rec dispatch (m : machine) (g : goal) : unit =
        in
        let mk_ty_val = Evaluation.eval m.ctx.env mk_ty in
        publish_to_context ~exported [ mk_name ] (mk_ty_val, `Defn);
-       (* Also register under two-segment path [name; "mk"] so that surface
-          syntax `R/mk` (parsed as Var [R; "mk"]) can resolve the companion. *)
        publish_to_context ~exported [ name; "mk" ] (mk_ty_val, `Defn);
        let mk_body_val = Evaluation.eval m.ctx.env mk_body in
        publish_to_env ~exported [ mk_name ] (mk_body_val, `Defn);
        Env.register_definition mk_name mk_body_val;
        let q_mk_name = m.module_name ^ "." ^ mk_name in
        Check.accept_let m.kernel_module ~name:q_mk_name ~ty:mk_ty ~body:mk_body;
-       (* --- R/fᵢ companions ---
-          For each field fᵢ (0-indexed):
-          ty  = Pi(P₁:Q₁,...,Pi(Pₖ:Qₖ, Pi(r:R_applied, Tᵢ_projected)))
-          body = Lambda(P₁,...,Lambda(Pₖ, Lambda(r, RecordProj { record=LocalVar 0; field=fᵢ })))
-
-          Tᵢ_projected: substitute in Tᵢ_tm (depth k+i context):
-            - LocalVar j for j in [0..i-1] (prev fields) ->
-                RecordProj { record = LocalVar(depth_extra + k - j); field = prev_field }
-                where in the projection type under 1 extra binder (r), depth_extra=0 outside + 0 Pi walk,
-                but actually we're at depth k+1 total with r=ix 0, Pₖ=ix 1, ..., P₁=ix k.
-                So in Tᵢ_projected (depth k+1 binders): r=ix 0.
-                field fⱼ (0-indexed, j < i) was at LocalVar (i-1-j) in Tᵢ_tm.
-                Replace with RecordProj { record=LocalVar 0; field=field_names[j] }
-                ... but LocalVar 0 refers to r, which is CORRECT only at depth 0 in Tᵢ_projected.
-                We need a shifting substitution as we go deeper.
-            - LocalVar j for j in [i..i+k-1] (params) -> LocalVar(j - i + 1)
-              (was param at offset i+j', now at offset 1+j' in the proj type)
-       *)
        let subst_proj_result_ty
              ~(n_before : int)
-             ~(n_params_here : int)
              ~(prev_field_names : string list)
              (tm : Core.term)
          : Core.term
          =
-         (* Perform a substitution with depth tracking.
-            At extra_depth (additional binders descended into during walk),
-            the occurrences of LocalVar shift:
-            - LocalVar (j + extra_depth) for j in [0..n_before-1] (shifted field refs)
-              -> RecordProj { record=LocalVar(extra_depth); field=prev_field_names[n_before-1-j] }
-              (r is at LocalVar extra_depth when extra_depth more binders surround us)
-            - LocalVar (j + extra_depth) for j in [n_before..n_before+n_params_here-1] (param refs)
-              -> LocalVar(j - n_before + 1 + extra_depth)
-            - LocalVar (j + extra_depth) for j < 0: impossible (extra_depth accounts for new binders)
-         *)
          let rec go extra_depth t =
            match t with
            | Core.LocalVar ix ->
@@ -2053,10 +2022,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
                  { record = Core.LocalVar extra_depth
                  ; field = List.nth prev_field_names (n_before - 1 - j)
                  }
-             else if j >= n_before && j < n_before + n_params_here
-             then
-               (* param reference: shift down by n_before - 1 *)
-               Core.LocalVar (ix - n_before + 1)
              else
                (* deeper local or something else: shift down to account for lost field binders,
                   but add 1 for the new r binder *)
@@ -2112,11 +2077,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
               |> List.map Syntax.Name.to_string
             in
             let proj_result_ty =
-              subst_proj_result_ty
-                ~n_before:i
-                ~n_params_here:n_params
-                ~prev_field_names
-                field_core_tys.(i)
+              subst_proj_result_ty ~n_before:i ~prev_field_names field_core_tys.(i)
             in
             (* ty = Pi({params...}, Pi(r:R_applied, proj_result_ty))
                Params are implicit on projectors: they are recovered from r's type. *)
@@ -2744,36 +2705,6 @@ let check_module ?module_path (file : Surface.t) : unit =
       "the following names are listed in \\export but never defined: %s"
       (String.concat ", " names)
 ;;
-
-(* REPL helpers. These run a single GInfer against an existing handler state
-   (Context.S / Env.S already populated by prior `check_module` calls).
-   The caller is responsible for entering the right `Context.S.section` /
-   `Env.S.section` and re-applying any visible-namespace imports so that the
-   expression sees the names it expects. *)
-
-let infer_expression ~(module_name : string) (p : Surface.preterm)
-  : Core.term * Core.value
-  =
-  let loc =
-    match loc_of p with
-    | Some l -> l
-    | None -> Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-  in
-  let m =
-    make_machine
-      ~module_name
-      ~kernel_module:(Violet_kernel.Module.create ())
-      ~goal_counter:(ref 0)
-      ()
-  in
-  push m (GInfer (loc, p));
-  match drive m with
-  | PTermType (tm, ty) -> tm, ty
-  | other ->
-    Reporter.fatalf ~loc Elab_error "infer_expression: got %s" ([%show: produced] other)
-;;
-
-let normalize_term (tm : Core.term) : Core.value = Evaluation.eval Bwd.Emp tm
 
 (* User-facing pretty-printer for REPL output. The empty local context is fine
    because expressions typed at the REPL don't introduce free locals — every

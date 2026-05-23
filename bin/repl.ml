@@ -3,6 +3,7 @@ module Surface = Violet_elab.Surface
 module Parser = Violet_elab.Parser
 module Op_resolver = Violet_elab.Op_resolver
 module Elab = Violet_elab.Elab
+module ElabREPL = Violet_elab.Repl
 module Reporter = Violet_elab.Reporter
 module Context = Violet_elab.Context
 module Env = Violet_elab.Env
@@ -135,15 +136,15 @@ let with_repl_reporter (k : unit -> unit) : unit =
 let handle_eval ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
-  let tm, ty = Elab.infer_expression ~module_name p in
-  let v = Elab.normalize_term tm in
+  let tm, ty = ElabREPL.infer_expression ~module_name p in
+  let v = ElabREPL.normalize_term tm in
   Printf.printf "%s : %s\n%!" (Elab.pretty_repl_value v) (Elab.pretty_repl_value ty)
 ;;
 
 let handle_type ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
-  let _, ty = Elab.infer_expression ~module_name p in
+  let _, ty = ElabREPL.infer_expression ~module_name p in
   Printf.printf "%s\n%!" (Elab.pretty_repl_value ty)
 ;;
 
