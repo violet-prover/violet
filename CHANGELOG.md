@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1
+
 - identifier now can use some letter unicode
 
 ## 0.3.0
