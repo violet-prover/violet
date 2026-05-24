@@ -205,7 +205,7 @@ let rec walk_params
          ~loc
          Elab_error
          "stack-def: fewer Pi-layers than params, got `%s`"
-         (Pretty.pp_value (view_of_ctx ctx) other))
+         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
 ;;
 
 (* `signature` and `n_params` are unchanged across recursion; they're used at
