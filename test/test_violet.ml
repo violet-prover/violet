@@ -273,6 +273,7 @@ let expected : (string * want) list =
     , `FailWith [ "unknown field"; "record literal" ] )
   ; ( "./fixtures/bad/bad-record-update-duplicate.vt"
     , `FailWith [ "duplicate field"; "record update" ] )
+  ; "./fixtures/bad/bad-axiom-k.vt", `FailWith [ "cannot unify" ]
   ; "./fixtures/src/positivity-self-shadow.vt", `Ok
   ; "./fixtures/src/record-update-dep-chain.vt", `Ok
   ; "./fixtures/src/stress-pi-chain.vt", `Ok

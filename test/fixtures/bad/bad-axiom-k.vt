@@ -1,0 +1,11 @@
+# Axiom K must not be provable - Violet is HoTT-compatible (no K/UIP).
+# The eliminator rejects matching on `refl : Id a a` because the two
+# indices cannot be independently generalized.
+
+\import std/equality
+
+\universe U
+
+\let K {A : U} (a : A) : (p : Id a a) -> Id p refl \where
+  K a p <= \elim p
+  | K a refl => refl
