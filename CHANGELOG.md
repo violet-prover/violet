@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.4.0
+
+- universe polymorphic properly
+- remove builtin `U` as universe
+- fix parser: imports/exports/universe decls are interleaving now
+
 ## 0.3.1
 
 - identifier now can use some letter unicode
