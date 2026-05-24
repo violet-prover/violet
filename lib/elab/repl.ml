@@ -39,4 +39,6 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
 
 (* User-facing pretty-printer for REPL output. The empty local context is fine
    because expressions in the REPL don't introduce free locals *)
-let pretty_repl_value (v : Core.value) : string = Pretty.pp_value Context_view.empty v
+let pretty_repl_value (v : Core.value) : string =
+  Pretty.pp_term Context_view.empty (Evaluation.quote 0 v)
+;;

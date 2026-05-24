@@ -309,7 +309,7 @@ let rec peel_vpi (v : Core.value) (n : int) (start_lvl : int)
         Elab_error
         "elim: VPi peel ran out of binders (expected %d more), got `%s`"
         n
-        (Pretty.pp_value Context_view.empty v))
+        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 v)))
 ;;
 
 (* Promote bare [PVar n] to [PCon (n, [])] when [n] is itself a constructor.
@@ -685,9 +685,78 @@ let build_owner_map ~(ind_head : string) (info : Context.ind_info)
   from_deps @ from_ind_head
 ;;
 
-(* Readback a Core value into a Surface preterm so it can be re-elaborated.
-   Rigid locals are recovered through [user_level_names]; ctor labels are
-   qualified through [owner_map]. *)
+let cv_of_user_level_names (user_level_names : (int * string) list) : Context_view.t =
+  let max_lvl = List.fold_left (fun acc (l, _) -> max acc (l + 1)) 0 user_level_names in
+  let names =
+    List.init max_lvl (fun l ->
+      match List.assoc_opt l user_level_names with
+      | Some n -> n
+      | None -> "_")
+  in
+  List.fold_left Context_view.extend Context_view.empty names
+;;
+
+let rec core_term_to_surface
+          ~(loc : Asai.Range.t)
+          ~(cv : Context_view.t)
+          ~(owner_map : (string * string) list)
+          (t : Core.term)
+  : Surface.preterm
+  =
+  let rb t = core_term_to_surface ~loc ~cv ~owner_map t in
+  match t with
+  | Core.Universe _ -> Surface.Universe
+  | Core.LocalVar ix ->
+    let lvl = Context_view.lvl cv - 1 - ix in
+    (match Context_view.nth_name_from_lvl cv lvl with
+     | Some name -> Surface.Var [ name ]
+     | None ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "elim: index readback hit unknown local index %d"
+         ix)
+  | Core.Var n ->
+    (match List.assoc_opt n owner_map with
+     | Some owner -> Surface.Var [ owner; n ]
+     | None -> Surface.Var [ n ])
+  | Core.App (f, a) -> Surface.App (false, rb f, rb a)
+  | Core.Lambda { name; bound; implicit } ->
+    let ns = Syntax.Name.to_string name in
+    let cv' = Context_view.extend cv ns in
+    Surface.Lambda
+      { name; bound = core_term_to_surface ~loc ~cv:cv' ~owner_map bound; implicit }
+  | Core.TypedLambda ({ name; bound; implicit }, body) ->
+    let ns = Syntax.Name.to_string name in
+    let cv' = Context_view.extend cv ns in
+    Surface.TypedLambda
+      ( { name; bound = rb bound; implicit }
+      , core_term_to_surface ~loc ~cv:cv' ~owner_map body )
+  | Core.Pi ({ name; bound; implicit }, body) ->
+    let ns = Syntax.Name.to_string name in
+    let cv' = Context_view.extend cv ns in
+    Surface.Pi
+      ( { name; bound = rb bound; implicit }
+      , core_term_to_surface ~loc ~cv:cv' ~owner_map body )
+  | Core.Meta _ | Core.InsertedMeta _ -> Surface.Hole
+  | Core.Lift _ | Core.LiftTerm _ | Core.UnliftTerm _ ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "elim: readback can't lower core term `%s` to surface"
+      (Pretty.pp_term cv t)
+  | Core.RecordType { name = _; params = _; fields = _ } ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "elim: readback can't lower core term `%s` to surface"
+      (Pretty.pp_term cv t)
+  | Core.RecordIntro { name = _; fields } ->
+    Surface.RecordLit (List.map (fun (f, e) -> f, rb e) fields)
+  | Core.RecordProj { record; field } -> Surface.Proj (rb record, field)
+  | Core.IdAbsurd t -> Surface.IdAbsurd (rb t)
+;;
+
 let readback_value_to_surface
       ~(loc : Asai.Range.t)
       ~(user_level_names : (int * string) list)
@@ -695,37 +764,10 @@ let readback_value_to_surface
       (v : Core.value)
   : Surface.preterm
   =
-  let rec rb v =
-    match Evaluation.force_head v with
-    | Core.RigidLocal (lvl, sp) ->
-      (match List.assoc_opt lvl user_level_names with
-       | None ->
-         Reporter.fatalf
-           ~loc
-           Elab_error
-           "elim: index readback hit unknown local level %d"
-           lvl
-       | Some name -> rb_spine (Surface.Var [ name ]) (Bwd.to_list sp))
-    | Core.Label (n, sp) ->
-      let head =
-        match List.assoc_opt n owner_map with
-        | Some owner -> Surface.Var [ owner; n ]
-        | None -> Surface.Var [ n ]
-      in
-      rb_spine head (Bwd.to_list sp)
-    | Core.IndType (n, sp) -> rb_spine (Surface.Var [ n ]) (Bwd.to_list sp)
-    | Core.Var (n, sp) -> rb_spine (Surface.Var [ n ]) (Bwd.to_list sp)
-    | Core.Universe _ -> Surface.Universe
-    | other ->
-      Reporter.fatalf
-        ~loc
-        Elab_error
-        "elim: readback can't lower core value `%s` to surface"
-        (Pretty.pp_value Context_view.empty other)
-  and rb_spine acc args =
-    List.fold_left (fun acc a -> Surface.App (false, acc, rb a)) acc args
-  in
-  rb v
+  let cv = cv_of_user_level_names user_level_names in
+  let lvl = Context_view.lvl cv in
+  let tm = Evaluation.quote lvl v in
+  core_term_to_surface ~loc ~cv ~owner_map tm
 ;;
 
 let split_target_params_indices
@@ -743,7 +785,7 @@ let split_target_params_indices
       ~loc
       Elab_error
       "elim: target type is not an inductive value, got `%s`"
-      (Pretty.pp_value Context_view.empty other)
+      (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
 ;;
 
 (* For a constructor, peel its core type past the data params and its own
@@ -810,7 +852,7 @@ let ctor_spine_and_flex
         Elab_error
         "elim: ctor `%s`'s peeled codomain is not an inductive: `%s`"
         ctor_name
-        (Pretty.pp_value Context_view.empty other)
+        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
   in
   indices, flex_levels, flex_name_map
 ;;
@@ -974,8 +1016,8 @@ let build_elim_body_unify
             `%s` ≟ `%s`"
            s.position
            ctor_name
-           (Pretty.pp_value Context_view.empty s.lhs)
-           (Pretty.pp_value Context_view.empty s.rhs)
+           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
+           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
        | _ -> ())
     ctor_outcomes;
   let normalize_pattern = make_normalize ctors in
@@ -1084,8 +1126,12 @@ let build_elim_body_unify
                 ind_head
                 ctor_name
                 k
-                (Pretty.pp_value Context_view.empty lhs)
-                (Pretty.pp_value Context_view.empty rhs)
+                (Pretty.pp_term
+                   Context_view.empty
+                   (Evaluation.quote (Context_view.lvl Context_view.empty) lhs))
+                (Pretty.pp_term
+                   Context_view.empty
+                   (Evaluation.quote (Context_view.lvl Context_view.empty) rhs))
             | None -> ());
            (* Auto-remove: the case's `p_k : Id T_k idx_k actual_k` has
               orthogonal ctor heads on both sides, so `\absurd-id` derives
@@ -1624,7 +1670,7 @@ let build_inline_elim_dispatch
         Elab_error
         "nested `<= \\elim %s`: target's type is not an inductive, got `%s`"
         target_name
-        (Pretty.pp_value Context_view.empty other)
+        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
   in
   let info : Context.ind_info =
     match Context.S.resolve [ ind_head ] with
@@ -1682,8 +1728,8 @@ let build_inline_elim_dispatch
            target_name
            s.position
            ctor_name
-           (Pretty.pp_value Context_view.empty s.lhs)
-           (Pretty.pp_value Context_view.empty s.rhs)
+           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
+           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
        | _ -> ())
     ctor_outcomes;
   let m_indices = List.length target_indices in

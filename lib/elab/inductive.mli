@@ -46,6 +46,13 @@ val build_elim_body
 
 val build_owner_map : ind_head:string -> Context.ind_info -> (string * string) list
 
+val core_term_to_surface
+  :  loc:Asai.Range.t
+  -> cv:Violet_kernel.Context_view.t
+  -> owner_map:(string * string) list
+  -> Violet_kernel.Syntax.Core.term
+  -> Surface.preterm
+
 val readback_value_to_surface
   :  loc:Asai.Range.t
   -> user_level_names:(int * string) list

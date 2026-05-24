@@ -2,6 +2,7 @@ module Syntax = Violet_kernel.Syntax
 module Level = Violet_kernel.Level
 module Context_view = Violet_kernel.Context_view
 module Pretty = Violet_kernel.Pretty
+module Evaluation = Wiring.Eval
 open Syntax
 open Bwd
 open Bwd.Infix
@@ -443,7 +444,7 @@ let vapp (t : Core.value) (u : Core.value) : Core.value =
     Reporter.fatalf
       Elab_error
       "ι-reduction: cannot apply %s"
-      (Pretty.pp_value Context_view.empty v)
+      (Pretty.pp_term Context_view.empty (Evaluation.quote 0 v))
 ;;
 
 let vapp_list t args = List.fold_left vapp t args
