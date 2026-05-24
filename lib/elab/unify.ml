@@ -36,7 +36,7 @@ module PartialRenaming = struct
            Reporter.fatalf
              Elab_error
              "non-variable in spine: %s"
-             (Pretty.pp_value cv other))
+             (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) other)))
       sp_list;
     { dom = List.length sp_list; cod = Context_view.lvl cv; ren }
   ;;
@@ -146,7 +146,10 @@ let solve
   : unit
   =
   let spine_str =
-    String.concat " <: " @@ List.map (Pretty.pp_value cv) (Bwd.to_list sp)
+    String.concat " <: "
+    @@ List.map
+         (fun v -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v))
+         (Bwd.to_list sp)
   in
   Reporter.tracef "spine: %s" spine_str
   @@ fun () ->
@@ -155,7 +158,11 @@ let solve
 ;;
 
 let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
-  Reporter.tracef ~loc "unify `%s` and `%s`" (Pretty.pp_value cv a) (Pretty.pp_value cv b)
+  Reporter.tracef
+    ~loc
+    "unify `%s` and `%s`"
+    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
   @@ fun () ->
   (* force_head unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
@@ -249,10 +256,10 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
       ~loc
       Type_error
       "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
-      (Pretty.pp_value cv expected)
-      (Pretty.pp_value cv actual)
-      (Pretty.pp_value cv a)
-      (Pretty.pp_value cv b)
+      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) expected))
+      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) actual))
+      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
 
 and unify_spine ~loc (cv : Context_view.t) (xs : Core.value bwd) (ys : Core.value bwd)
   : unit
@@ -263,8 +270,20 @@ and unify_spine ~loc (cv : Context_view.t) (xs : Core.value bwd) (ys : Core.valu
     unify_spine ~loc cv xs ys;
     unify ~loc cv x y
   | _, _ ->
-    let left = String.concat " <: " @@ Bwd.to_list @@ Bwd.map (Pretty.pp_value cv) xs in
-    let right = String.concat " <: " @@ Bwd.to_list @@ Bwd.map (Pretty.pp_value cv) ys in
+    let left =
+      String.concat " <: "
+      @@ Bwd.to_list
+      @@ Bwd.map
+           (fun x -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) x))
+           xs
+    in
+    let right =
+      String.concat " <: "
+      @@ Bwd.to_list
+      @@ Bwd.map
+           (fun y -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) y))
+           ys
+    in
     Reporter.fatalf
       ~loc
       Elab_error
@@ -297,10 +316,15 @@ let%expect_test "record eta: VRecordIntro vs neutral unifies" =
   [%expect {| ok |}]
 ;;
 
-let%expect_test "Pretty.pp_value renders a local by binder name in a unify context" =
-  let cv = Context_view.extend (Context_view.extend Context_view.empty "n") "x" in
+let%expect_test "quote renders a local by binder name in a unify context" =
+  let cv = Context_view.empty in
+  let cv = Context_view.extend cv "n" in
+  let cv = Context_view.extend cv "x" in
   let v0 : Core.value = Core.RigidLocal (0, Emp) in
   let v1 : Core.value = Core.RigidLocal (1, Emp) in
-  Printf.printf "%s, %s" (Pretty.pp_value cv v0) (Pretty.pp_value cv v1);
+  Printf.printf
+    "%s, %s"
+    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v0))
+    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v1));
   [%expect {| n, x |}]
 ;;
