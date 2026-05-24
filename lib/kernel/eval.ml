@@ -154,6 +154,44 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
       apply 0 v
     end
   ;;
+
+  let rec quote (lvl : int) (v : value) : term =
+    match force v with
+    | Universe l -> Universe l
+    | RigidLocal (l, sp) -> quote_spine lvl (LocalVar (lvl_to_ix ~env_size:lvl l)) sp
+    | Var (x, sp) -> quote_spine lvl (Var x) sp
+    | IndType (x, sp) -> quote_spine lvl (Var x) sp
+    | Label (x, sp) -> quote_spine lvl (Var x) sp
+    | Elim ({ elim_name; _ }, sp) -> quote_spine lvl (Var elim_name) sp
+    | Flex (m, sp) -> quote_spine lvl (Meta m) sp
+    | VLambda { name; implicit; bound } ->
+      let body = bound (rigid_local lvl) in
+      Lambda { name; implicit; bound = quote (lvl + 1) body }
+    | VPi ({ name; bound; implicit }, closure) ->
+      let bound_tm = quote lvl bound in
+      let body = closure (rigid_local lvl) in
+      Pi ({ name; bound = bound_tm; implicit }, quote (lvl + 1) body)
+    | VLift { from_lvl; to_lvl; ty } -> Lift { from_lvl; to_lvl; ty = quote lvl ty }
+    | VLiftTerm { from_lvl; to_lvl; ty; tm } ->
+      LiftTerm { from_lvl; to_lvl; ty = quote lvl ty; tm = quote lvl tm }
+    | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
+      UnliftTerm { from_lvl; to_lvl; ty = quote lvl ty; tm = quote lvl tm }
+    | VRecordType { name; params; fields; _ } ->
+      let q_params = List.map (quote lvl) params in
+      let rec walk cur_lvl = function
+        | [] -> []
+        | (b : value_ty Syntax.binder) :: rest ->
+          { b with bound = quote cur_lvl b.bound } :: walk (cur_lvl + 1) rest
+      in
+      RecordType { name; params = q_params; fields = walk lvl fields }
+    | VRecordIntro { name; fields } ->
+      RecordIntro { name; fields = List.map (fun (f, v) -> f, quote lvl v) fields }
+    | VRecordProj (v, f) -> RecordProj { record = quote lvl v; field = f }
+    | VIdAbsurd v -> IdAbsurd (quote lvl v)
+
+  and quote_spine (lvl : int) (head : term) (sp : value bwd) : term =
+    List.fold_left (fun acc v -> App (acc, quote lvl v)) head (Bwd.to_list sp)
+  ;;
 end
 
 (* Trivial no-op views used only for the expect-tests below.

@@ -4,6 +4,7 @@ module Parser = Violet_elab.Parser
 module Op_resolver = Violet_elab.Op_resolver
 module Elab = Violet_elab.Elab
 module ElabREPL = Violet_elab.Repl
+module Evaluation = Violet_elab.Wiring.Eval
 module Reporter = Violet_elab.Reporter
 module Context = Violet_elab.Context
 module Env = Violet_elab.Env
@@ -45,7 +46,7 @@ let print_browse () =
     visible;
   let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) !entries in
   List.iter
-    (fun (name, ty) -> Printf.printf "  %s : %s\n" name (Elab.pretty_repl_value ty))
+    (fun (name, ty) -> Printf.printf "  %s : %s\n" name (ElabREPL.pretty_repl_value ty))
     sorted;
   Printf.printf "%!"
 ;;
@@ -137,15 +138,18 @@ let handle_eval ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
   let tm, ty = ElabREPL.infer_expression ~module_name p in
-  let v = ElabREPL.normalize_term tm in
-  Printf.printf "%s : %s\n%!" (Elab.pretty_repl_value v) (Elab.pretty_repl_value ty)
+  let v = Evaluation.eval Bwd.Emp tm in
+  Printf.printf
+    "%s : %s\n%!"
+    (ElabREPL.pretty_repl_value v)
+    (ElabREPL.pretty_repl_value ty)
 ;;
 
 let handle_type ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
   let _, ty = ElabREPL.infer_expression ~module_name p in
-  Printf.printf "%s\n%!" (Elab.pretty_repl_value ty)
+  Printf.printf "%s\n%!" (ElabREPL.pretty_repl_value ty)
 ;;
 
 let handle_open (path : string list) : unit =

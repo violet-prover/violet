@@ -37,4 +37,6 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
     Reporter.fatalf ~loc Elab_error "infer_expression: got %s" ([%show: produced] other)
 ;;
 
-let normalize_term (tm : Core.term) : Core.value = Evaluation.eval Bwd.Emp tm
+(* User-facing pretty-printer for REPL output. The empty local context is fine
+   because expressions in the REPL don't introduce free locals *)
+let pretty_repl_value (v : Core.value) : string = Pretty.pp_value Context_view.empty v

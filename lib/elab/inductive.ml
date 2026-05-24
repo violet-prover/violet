@@ -337,7 +337,7 @@ let find_matched_clauses_for_ctor
       ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
-      ~(normalize : Surface.pattern -> Surface.pattern)
+      ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       ~(ctor_name : string)
       (clauses : Surface.clause list)
   : Surface.clause list
@@ -345,7 +345,7 @@ let find_matched_clauses_for_ctor
   List.filter
     (fun (c : Surface.clause) ->
        let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
-       match Option.map normalize (List.nth_opt aligned target_pos) with
+       match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
        | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
        | _ -> false)
     clauses
@@ -355,7 +355,7 @@ let pick_head_and_deeper
       ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
-      ~(normalize : Surface.pattern -> Surface.pattern)
+      ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       (matched : Surface.clause list)
   : (Surface.clause * Surface.clause list) option
   =
@@ -366,7 +366,7 @@ let pick_head_and_deeper
   let is_head (c : Surface.clause) =
     let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
     let target_sub_all_pvar =
-      match Option.map normalize (List.nth_opt aligned target_pos) with
+      match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
       | Some (Surface.PCon (_, sps)) -> List.for_all is_pvar sps
       | _ -> false
     in
@@ -435,7 +435,7 @@ let make_siblings_with_views
       ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
-      ~(normalize : Surface.pattern -> Surface.pattern)
+      ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       ~(ctor_name : string)
       ~(implicits : bool list)
       ~(binder_names : string list)
@@ -446,7 +446,7 @@ let make_siblings_with_views
     (fun (c : Surface.clause) ->
        let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
        let sub_pats =
-         match Option.map normalize (List.nth_opt aligned target_pos) with
+         match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
          | Some (Surface.PCon (_, sps)) -> sps
          | _ -> []
        in
@@ -519,7 +519,7 @@ let process_clause
       ~(target_pos : int)
       ~(n_intros : int)
       ~(n_trailing : int)
-      ~(normalize : Surface.pattern -> Surface.pattern)
+      ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       (clause : Surface.clause)
   : processed_clause
   =
@@ -535,7 +535,7 @@ let process_clause
       clause.head
       func_name;
   let raw_vs =
-    match Option.map normalize (List.nth_opt aligned_patterns target_pos) with
+    match Option.map normalize_pattern (List.nth_opt aligned_patterns target_pos) with
     | Some (Surface.PCon (_, vs)) -> vs
     | _ -> []
   in
@@ -978,7 +978,7 @@ let build_elim_body_unify
            (Pretty.pp_value Context_view.empty s.rhs)
        | _ -> ())
     ctor_outcomes;
-  let normalize = make_normalize ctors in
+  let normalize_pattern = make_normalize ctors in
   let m_indices = List.length target_indices in
   let elim_freshener = make_freshener intro_names in
   let idx_names_arr = Array.init m_indices (fun _ -> elim_freshener.freshen "i") in
@@ -1054,13 +1054,18 @@ let build_elim_body_unify
              ~loc
              ~intros
              ~target_pos
-             ~normalize
+             ~normalize_pattern
              ~ctor_name
              clauses
          in
          let opt_clause =
            match
-             pick_head_and_deeper ~loc ~intros ~target_pos ~normalize matched_clauses
+             pick_head_and_deeper
+               ~loc
+               ~intros
+               ~target_pos
+               ~normalize_pattern
+               matched_clauses
            with
            | Some (h, _) -> Some h
            | None -> List.nth_opt matched_clauses 0
@@ -1119,7 +1124,7 @@ let build_elim_body_unify
                ~target_pos
                ~n_intros
                ~n_trailing:(List.length trailing_intros)
-               ~normalize
+               ~normalize_pattern
                clause
            in
            (* Apply σ as a substitution: ctor field-binder name → surface
@@ -1155,7 +1160,7 @@ let build_elim_body_unify
                    ~loc
                    ~intros
                    ~target_pos
-                   ~normalize
+                   ~normalize_pattern
                    ~ctor_name
                    ~implicits
                    ~binder_names:ctor_info_.binder_names
@@ -1279,7 +1284,7 @@ let build_elim_body
   in
   let ctors = Eliminator_synth.arities_of info in
   let ctor_infos = info.infos in
-  let normalize = make_normalize ctors in
+  let normalize_pattern = make_normalize ctors in
   (* Index args of the target's type: the spine entries past the explicit
      params correspond to the inductive's dep telescope. The motive must
      abstract over those, then over the target itself. For each index given
@@ -1373,13 +1378,18 @@ let build_elim_body
                ~loc
                ~intros
                ~target_pos
-               ~normalize
+               ~normalize_pattern
                ~ctor_name
                clauses
            in
            let clause =
              match
-               pick_head_and_deeper ~loc ~intros ~target_pos ~normalize matched_clauses
+               pick_head_and_deeper
+                 ~loc
+                 ~intros
+                 ~target_pos
+                 ~normalize_pattern
+                 matched_clauses
              with
              | Some (h, _) -> h
              | None ->
@@ -1406,7 +1416,7 @@ let build_elim_body
                ~target_pos
                ~n_intros
                ~n_trailing:(List.length trailing_intros)
-               ~normalize
+               ~normalize_pattern
                clause
            in
            let body_with_siblings =
@@ -1417,7 +1427,7 @@ let build_elim_body
                    ~loc
                    ~intros
                    ~target_pos
-                   ~normalize
+                   ~normalize_pattern
                    ~ctor_name
                    ~implicits
                    ~binder_names:ctor_info_.binder_names
@@ -1635,7 +1645,7 @@ let build_inline_elim_dispatch
   in
   let owner_map = build_owner_map ~ind_head info in
   let readback_v = readback_value_to_surface ~loc ~user_level_names ~owner_map in
-  let normalize = make_normalize ctors in
+  let normalize_pattern = make_normalize ctors in
   let ctor_outcomes
     : (string * int * bool list * Index_unify.outcome * (int * string) list) list
     =
@@ -1764,7 +1774,7 @@ let build_inline_elim_dispatch
          let matched_sub =
            List.filter
              (fun (_, view) ->
-                match Option.map normalize (List.nth_opt view target_pos) with
+                match Option.map normalize_pattern (List.nth_opt view target_pos) with
                 | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
                 | _ -> false)
              siblings
@@ -1808,7 +1818,9 @@ let build_inline_elim_dispatch
                let head_opt =
                  List.find_opt
                    (fun (_, view) ->
-                      match Option.map normalize (List.nth_opt view target_pos) with
+                      match
+                        Option.map normalize_pattern (List.nth_opt view target_pos)
+                      with
                       | Some (Surface.PCon (_, sps)) -> List.for_all is_pvar sps
                       | _ -> false)
                    matched_sub
@@ -1826,7 +1838,9 @@ let build_inline_elim_dispatch
            in
            let sub_head, sub_head_view = sub_head_view in
            let head_sub_pats =
-             match Option.map normalize (List.nth_opt sub_head_view target_pos) with
+             match
+               Option.map normalize_pattern (List.nth_opt sub_head_view target_pos)
+             with
              | Some (Surface.PCon (_, sps)) -> sps
              | _ -> []
            in
@@ -1913,7 +1927,7 @@ let build_inline_elim_dispatch
              List.map
                (fun (c, view) ->
                   let sps =
-                    match Option.map normalize (List.nth_opt view target_pos) with
+                    match Option.map normalize_pattern (List.nth_opt view target_pos) with
                     | Some (Surface.PCon (_, sps)) -> sps
                     | _ -> []
                   in

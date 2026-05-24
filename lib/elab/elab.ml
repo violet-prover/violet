@@ -262,7 +262,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= intro` needs a function type, got `%s`"
-         (Pretty.pp_value (view_of_ctx ctx) other))
+         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
   | Surface.Split :: rest ->
     if rest <> []
     then
@@ -388,7 +388,7 @@ let rec walk_moves
        (* A bare IDENT in a pattern position parses as PVar, but the user may
           have written the name of a nullary constructor. Normalize on-the-fly. *)
        let is_ctor name = List.exists (fun (n, _) -> String.equal n name) ctors in
-       let normalize = function
+       let normalize_pattern = function
          | Surface.PVar name when is_ctor name -> Surface.PCon (name, [])
          | p -> p
        in
@@ -396,7 +396,9 @@ let rec walk_moves
        List.iter
          (fun (c : Surface.clause) ->
             let cloc = clause_loc c in
-            match Option.map normalize (List.nth_opt c.patterns pattern_position) with
+            match
+              Option.map normalize_pattern (List.nth_opt c.patterns pattern_position)
+            with
             | Some (Surface.PCon (cn, _)) ->
               if not (is_ctor cn)
               then
@@ -441,7 +443,9 @@ let rec walk_moves
                   List.find_opt
                     (fun (c : Surface.clause) ->
                        match
-                         Option.map normalize (List.nth_opt c.patterns pattern_position)
+                         Option.map
+                           normalize_pattern
+                           (List.nth_opt c.patterns pattern_position)
                        with
                        | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
                        | _ -> false)
@@ -459,7 +463,9 @@ let rec walk_moves
               let cloc = clause_loc clause in
               let vs =
                 match
-                  Option.map normalize (List.nth_opt clause.patterns pattern_position)
+                  Option.map
+                    normalize_pattern
+                    (List.nth_opt clause.patterns pattern_position)
                 with
                 | Some (Surface.PCon (_, vs)) -> vs
                 | _ -> []
@@ -529,7 +535,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= split`: target type must be an inductive or record type, got `%s`"
-         (Pretty.pp_value (view_of_ctx ctx) other))
+         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
 ;;
 
 type produced =
@@ -740,16 +746,13 @@ let emit_goal_report
   let types = Bwd.to_list m.ctx.types in
   List.iter2
     (fun n ty ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "  %s : %s\n" n (Pretty.pp_value (view_of_ctx m.ctx) ty)))
+       let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n ty))
     names
     types;
   Buffer.add_string buf "  --- target ---\n";
-  let target = Evaluation.force_head target in
-  Buffer.add_string
-    buf
-    (Printf.sprintf "  %s" (Pretty.pp_value (view_of_ctx m.ctx) target));
+  let target = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target) in
+  Buffer.add_string buf (Printf.sprintf "  %s" target);
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
 ;;
 
@@ -906,7 +909,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             Type_error
             "expected a type, but got `%s : %s`"
             (Pretty.pp_term (view_of_ctx m.ctx) tm)
-            (Pretty.pp_value (view_of_ctx m.ctx) other))
+            (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf
          Elab_error
@@ -949,11 +952,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
          push m (GCheck (loc, body, body_ty))
        end
      | _ ->
-       Reporter.fatalf
-         ~loc
-         Elab_error
-         "Lambda checked against non-Pi: %s"
-         (Pretty.pp_value (view_of_ctx m.ctx) ty))
+       let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       Reporter.fatalf ~loc Elab_error "Lambda checked against non-Pi: %s" ty)
   | KLam_Body (_loc, name, implicit) ->
     (match take_result m with
      | PTerm body_tm ->
@@ -1021,12 +1021,13 @@ let rec dispatch (m : machine) (g : goal) : unit =
               "Bad apply at %s"
               (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
         | ty ->
+          let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
           Reporter.fatalf
             ~loc
             Type_error
             "cannot apply to `(%s) : %s`"
             (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
-            (Pretty.pp_value (view_of_ctx m.ctx) ty))
+            ty)
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" ([%show: produced] other))
   | KApp_HaveArg (_loc, f_tm, b) ->
@@ -1093,7 +1094,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Elab_error
          "expected a record type for record literal, got %s"
-         (Pretty.pp_value (view_of_ctx m.ctx) other))
+         (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
   | KRecordLit_Field
       ( loc
       , r_name
@@ -1172,7 +1173,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Elab_error
          "expected a record type for record update, got %s"
-         (Pretty.pp_value (view_of_ctx m.ctx) other))
+         (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
   | KRecordUpdate_HaveBase (loc, r_name, overrides, term_fields, field_env) ->
     (match take_result m with
      | PTerm base_core ->
@@ -1244,7 +1245,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
               Reporter.fatalf
                 Elab_error
                 "KProj_HaveRec: companion type is not a Pi when applying params, got %s"
-                (Pretty.pp_value (view_of_ctx m.ctx) other)
+                (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
           in
           let ty_after_params = List.fold_left apply_vpi companion_ty v_params in
           let v_record = Evaluation.eval m.ctx.env e_core in
@@ -1263,7 +1264,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             Type_error
             "expected a record type for projection `.%s`, got %s"
             f
-            (Pretty.pp_value (view_of_ctx m.ctx) other))
+            (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" ([%show: produced] other))
   | GInfer (loc, Lambda _) -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
@@ -1415,14 +1416,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
                ~loc
                Elab_error
                "\\absurd-id: expected Id of distinct-ctor-headed values, got `Id _ %s %s`"
-               (Pretty.pp_value (view_of_ctx m.ctx) l)
-               (Pretty.pp_value (view_of_ctx m.ctx) r))
+               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl l))
+               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl r)))
         | other ->
           Reporter.fatalf
             ~loc
             Elab_error
             "\\absurd-id: argument is not Id-typed, got `%s`"
-            (Pretty.pp_value (view_of_ctx m.ctx) other))
+            (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf
          Elab_error
@@ -1677,7 +1678,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
              Elab_error
              "data type `%s`'s spine should end in a Universe, got `%s`"
              name
-             (Pretty.pp_value (view_of_ctx m.ctx) other)
+             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
        in
        let user_sort = final_sort_of_val m.ctx.lvl typ_val in
        if not (Level.le inferred_sort (Level.lsuc user_sort))
@@ -2705,11 +2706,6 @@ let check_module ?module_path (file : Surface.t) : unit =
       "the following names are listed in \\export but never defined: %s"
       (String.concat ", " names)
 ;;
-
-(* User-facing pretty-printer for REPL output. The empty local context is fine
-   because expressions typed at the REPL don't introduce free locals — every
-   surface name resolves against the global scope. *)
-let pretty_repl_value (v : Core.value) : string = Pretty.pp_value Context_view.empty v
 
 let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
   let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
