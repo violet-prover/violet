@@ -8,6 +8,8 @@
 \import std/nat
 \import std/vec
 
+\universe U
+
 \let f : Nat -> Nat \where
   f x <= \elim x
   | f zero => zero

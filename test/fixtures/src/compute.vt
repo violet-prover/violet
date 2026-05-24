@@ -2,6 +2,8 @@
 \import std/list
 \import std/equality
 
+\universe U
+
 \export length
 
 \let one : Nat => Nat/suc zero

@@ -1468,7 +1468,7 @@ module Grammar = struct
   ;;
 
   let p_top : S.top Asai.Range.located t =
-    p_let_top || p_data_top || p_record_top || p_universe_top || p_operator_top
+    p_let_top || p_data_top || p_record_top || p_operator_top
   ;;
 
   let p_tops_loop : S.top Asai.Range.located list t =
@@ -1481,20 +1481,21 @@ module Grammar = struct
   ;;
 
   let p_module_named (name : string) : S.t t =
-    let after_imports =
-      fix (fun self ->
-        (let+ ns = p_export
-         and+ rest = self in
-         { rest with S.exports = ns @ rest.S.exports })
-        ||
-        let+ tops = p_tops_loop in
-        { S.name; imports = []; exports = []; tops })
+    let body =
+      let+ tops = p_tops_loop in
+      { S.name; imports = []; exports = []; tops }
     in
     fix (fun self ->
       (let+ i = p_import
        and+ rest = self in
        { rest with S.imports = i :: rest.S.imports })
-      || after_imports)
+      || (let+ ns = p_export
+          and+ rest = self in
+          { rest with S.exports = ns @ rest.S.exports })
+      || (let+ u = p_universe_top
+          and+ rest = self in
+          { rest with S.tops = u :: rest.S.tops })
+      || body)
   ;;
 end
 

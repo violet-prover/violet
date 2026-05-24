@@ -21,7 +21,28 @@ type level =
   | LVar of string
   | LSuc of level
   | LMax of level * level
+  | LMeta of int
 [@@deriving show]
+
+let level_meta_store : (int, level) Hashtbl.t = Hashtbl.create ~random:true 16
+let level_meta_count = ref 0
+
+let fresh_level_meta () : level =
+  let i = !level_meta_count in
+  incr level_meta_count;
+  LMeta i
+;;
+
+let solve_level_meta (i : int) (l : level) : unit = Hashtbl.replace level_meta_store i l
+
+let rec force_level (l : level) : level =
+  match l with
+  | LMeta i ->
+    (match Hashtbl.find_opt level_meta_store i with
+     | Some l' -> force_level l'
+     | None -> l)
+  | _ -> l
+;;
 
 let lzero : level = LZero
 let lvar (s : string) : level = LVar s
@@ -33,6 +54,10 @@ let rec pretty : level -> string = function
   | LVar v -> v
   | LSuc l -> "(" ^ pretty l ^ "+1)"
   | LMax (a, b) -> pretty a ^ " ⊔ " ^ pretty b
+  | LMeta i ->
+    (match Hashtbl.find_opt level_meta_store i with
+     | Some l -> pretty l
+     | None -> Printf.sprintf "?lvl%d" i)
 ;;
 
 let normalize (l : level) : nf =
@@ -53,12 +78,29 @@ let normalize (l : level) : nf =
     | LMax (a, b) ->
       let c1, ats1 = go offset acc_const acc_atoms a in
       go offset c1 ats1 b
+    | LMeta i ->
+      (match Hashtbl.find_opt level_meta_store i with
+       | Some l' -> go offset acc_const acc_atoms l'
+       | None ->
+         let tag = Printf.sprintf "?lvl%d" i in
+         ( acc_const
+         , let entry = { var = tag; offset } in
+           let rec insert = function
+             | [] -> [ entry ]
+             | (a : atom) :: rest when a.var = tag ->
+               { var = tag; offset = max a.offset offset } :: rest
+             | (a : atom) :: rest when a.var > tag -> entry :: a :: rest
+             | a :: rest -> a :: insert rest
+           in
+           insert acc_atoms ))
   in
   let c, atoms = go 0 0 [] l in
   { const = c; atoms }
 ;;
 
 let equal (a : level) (b : level) : bool =
+  let a = force_level a in
+  let b = force_level b in
   let na = normalize a in
   let nb = normalize b in
   na.const = nb.const
@@ -78,6 +120,8 @@ let not_equal (a : level) (b : level) : bool = not (equal a b)
    on the right.  However, the LHS constant c can be discharged by any RHS
    atom (w, j) with c ≤ j, since w ≥ 0 implies (w + j) ≥ j ≥ c. *)
 let le (a : level) (b : level) : bool =
+  let a = force_level a in
+  let b = force_level b in
   let na = normalize a in
   let nb = normalize b in
   let const_ok =
@@ -90,6 +134,39 @@ let le (a : level) (b : level) : bool =
       na.atoms
   in
   const_ok && atom_ok
+;;
+
+exception Level_unify_error of string
+
+let rec unify_level (a : level) (b : level) : unit =
+  let a = force_level a in
+  let b = force_level b in
+  match a, b with
+  | LMeta i, l | l, LMeta i -> solve_level_meta i l
+  | LZero, LZero -> ()
+  | LVar v1, LVar v2 when v1 = v2 -> ()
+  | LSuc l1, LSuc l2 -> unify_level l1 l2
+  | LMax (a1, b1), LMax (a2, b2) ->
+    unify_level a1 a2;
+    unify_level b1 b2
+  | l1, l2 ->
+    raise
+      (Level_unify_error
+         (Printf.sprintf "cannot unify level `%s` with `%s`" (pretty l1) (pretty l2)))
+;;
+
+let subst_level_var (from_var : string) (to_level : level) (l : level) : level =
+  let rec go = function
+    | LZero -> LZero
+    | LVar v -> if v = from_var then to_level else LVar v
+    | LSuc l -> LSuc (go l)
+    | LMax (a, b) -> LMax (go a, go b)
+    | LMeta i ->
+      (match Hashtbl.find_opt level_meta_store i with
+       | Some l' -> go l'
+       | None -> LMeta i)
+  in
+  go l
 ;;
 
 let%expect_test "normalize zero" =

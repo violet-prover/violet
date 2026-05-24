@@ -1,3 +1,5 @@
+\universe U
+
 # `Bad` appears in the domain of the outermost arrow (the ctor argument
 # type `Bad -> Bad` mentions `Bad` on its left), making it a negative
 # occurrence. The strict positivity check must reject this.

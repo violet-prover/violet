@@ -1,3 +1,5 @@
+\universe U
+
 \let ex (A : U) : A -> A \where
   <= \intro
   | ex A x => ?here

@@ -7,6 +7,8 @@
 \import std/sigma-multi
 \import pterodactyl
 
+\universe U
+
 # whatever
 \let id {A : U} (x : A) : A => x
 \let id2 {B : U} (x : B) : B => id x

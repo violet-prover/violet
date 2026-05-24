@@ -1,6 +1,8 @@
 \import std/bool
 \import std/sigma
 
+\universe U
+
 \export swap
 
 # Identity in stack style — one `<= \intro`, one clause.

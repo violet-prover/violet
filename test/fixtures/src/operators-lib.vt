@@ -1,3 +1,5 @@
+\universe U
+
 \export Nat add mul
 
 \data Nat : U

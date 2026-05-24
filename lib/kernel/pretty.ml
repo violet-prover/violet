@@ -8,15 +8,17 @@ let pp_local_name (cv : Context_view.t) (lvl : int) : string =
 ;;
 
 let rec pp_level_atom (l : Level.level) : string =
-  match l with
+  match Level.force_level l with
   | Level.LZero -> "0"
   | Level.LVar v -> v
+  | Level.LMeta i -> Printf.sprintf "?lvl%d" i
   | Level.LSuc _ | Level.LMax _ -> "(" ^ pp_level l ^ ")"
 
 and pp_level (l : Level.level) : string =
-  match l with
+  match Level.force_level l with
   | Level.LZero -> "0"
   | Level.LVar v -> v
+  | Level.LMeta i -> Printf.sprintf "?lvl%d" i
   | Level.LSuc l' -> "S " ^ pp_level_atom l'
   | Level.LMax (a, b) -> pp_level_atom a ^ " ⊔ " ^ pp_level_atom b
 ;;

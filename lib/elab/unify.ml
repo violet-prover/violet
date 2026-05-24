@@ -157,6 +157,27 @@ let solve
   Meta.insert_meta m solution
 ;;
 
+let unify_level ~loc (l1 : Level.level) (l2 : Level.level) : unit =
+  if Level.equal l1 l2
+  then ()
+  else (
+    let has_foreign =
+      let check_atom (a : Level.atom) = not (Context.is_level_var a.var) in
+      let n1 = Level.normalize l1 in
+      let n2 = Level.normalize l2 in
+      List.exists check_atom n1.atoms || List.exists check_atom n2.atoms
+    in
+    if has_foreign
+    then ()
+    else
+      Reporter.fatalf
+        ~loc
+        Type_error
+        "cannot unify `universe %s ?= universe %s`"
+        (Level.pretty l1)
+        (Level.pretty l2))
+;;
+
 let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
   Reporter.tracef
     ~loc
@@ -167,23 +188,19 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
   (* force_head unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
   match force_head a, force_head b with
-  | Universe l1, Universe l2 when Level.equal l1 l2 -> ()
+  | Universe l1, Universe l2 -> unify_level ~loc l1 l2
   | VLift a, VLift b ->
-    if Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl
-    then unify ~loc cv a.ty b.ty
-    else
-      Reporter.fatalf
-        ~loc
-        Type_error
-        "cannot unify Lift at different levels: %s vs %s"
-        (Pretty.pp_level a.to_lvl)
-        (Pretty.pp_level b.to_lvl)
-  | VLiftTerm a, VLiftTerm b
-    when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
+    unify_level ~loc a.from_lvl b.from_lvl;
+    unify_level ~loc a.to_lvl b.to_lvl;
+    unify ~loc cv a.ty b.ty
+  | VLiftTerm a, VLiftTerm b ->
+    unify_level ~loc a.from_lvl b.from_lvl;
+    unify_level ~loc a.to_lvl b.to_lvl;
     unify ~loc cv a.ty b.ty;
     unify ~loc cv a.tm b.tm
-  | VUnliftTerm a, VUnliftTerm b
-    when Level.equal a.from_lvl b.from_lvl && Level.equal a.to_lvl b.to_lvl ->
+  | VUnliftTerm a, VUnliftTerm b ->
+    unify_level ~loc a.from_lvl b.from_lvl;
+    unify_level ~loc a.to_lvl b.to_lvl;
     unify ~loc cv a.ty b.ty;
     unify ~loc cv a.tm b.tm
   | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 -> unify_spine ~loc cv sp1 sp2

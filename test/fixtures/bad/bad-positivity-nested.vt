@@ -1,3 +1,5 @@
+\universe U
+
 # `Box`'s parameter is inferred as Unrestricted because `A` appears under
 # an arrow in `mk : (A -> A) -> Box A`. Placing `Rose A` in that
 # Unrestricted slot therefore violates strict positivity.

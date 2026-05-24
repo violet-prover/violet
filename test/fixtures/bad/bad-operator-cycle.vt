@@ -1,3 +1,5 @@
+\universe U
+
 # Precedence cycle between two operators is rejected.
 \data X : U
   | x : X

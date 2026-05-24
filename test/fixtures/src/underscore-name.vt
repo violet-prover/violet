@@ -1,5 +1,7 @@
 \import std/nat
 
+\universe U
+
 # `_` is allowed as a binder name; it's a regular `Named "_"` and is
 # fully referenceable from the body.
 \let const (A : U) (x : A) (_ : A) : A => x

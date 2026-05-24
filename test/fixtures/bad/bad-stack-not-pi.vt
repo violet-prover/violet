@@ -1,3 +1,5 @@
+\universe U
+
 \data Bool : U
   | true : Bool
   | false : Bool

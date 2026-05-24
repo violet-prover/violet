@@ -11,6 +11,8 @@
 \import std/equality
 \import std/empty
 
+\universe U
+
 \let head {A : U} : (n : Nat) -> Vec A (Nat/suc n) -> A \where
   head n v <= \elim v
   | head n (cons m x xs) => x

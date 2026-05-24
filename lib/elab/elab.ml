@@ -1681,6 +1681,21 @@ let rec dispatch (m : machine) (g : goal) : unit =
              (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
        in
        let user_sort = final_sort_of_val m.ctx.lvl typ_val in
+       let inferred_sort =
+         let local_vars = Context.declared_level_vars () in
+         let rec subst_foreign l =
+           match l with
+           | Level.LVar v -> if List.mem v local_vars then l else user_sort
+           | Level.LSuc l' -> Level.LSuc (subst_foreign l')
+           | Level.LMax (a, b) -> Level.LMax (subst_foreign a, subst_foreign b)
+           | Level.LMeta _ ->
+             (match Level.force_level l with
+              | Level.LMeta _ -> l
+              | l' -> subst_foreign l')
+           | Level.LZero -> l
+         in
+         subst_foreign inferred_sort
+       in
        if not (Level.le inferred_sort (Level.lsuc user_sort))
        then
          Reporter.fatalf
@@ -2659,15 +2674,6 @@ let check_module ?module_path (file : Surface.t) : unit =
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
   Context.clear_level_vars ();
-  let has_explicit_universe_decl =
-    List.exists
-      (fun (top : Surface.top Asai.Range.located) ->
-         match top.value with
-         | Surface.Universe_decl _ -> true
-         | _ -> false)
-      file.tops
-  in
-  if not has_explicit_universe_decl then Context.declare_level_var "U";
   let exports_set =
     let h = Hashtbl.create 16 in
     List.iter (fun n -> Hashtbl.replace h n ()) file.exports;

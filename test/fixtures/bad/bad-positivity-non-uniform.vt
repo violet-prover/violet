@@ -1,3 +1,5 @@
+\universe U
+
 # The recursive use of `Tree` passes `A -> A` to its parameter slot
 # instead of the declared param `A`, violating the uniform-recursion
 # rule. (`leaf` is included only to give `Tree` a base case; `node`

@@ -1,3 +1,5 @@
+\universe U
+
 # Comprehensive demo of inductive namespacing & type-directed resolution.
 
 \data Nat : U
