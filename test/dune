@@ -20,3 +20,7 @@
 (test
  (name test_parser)
  (libraries violet_elab violet_kernel asai))
+
+(test
+ (name test_interactive)
+ (libraries violet_interactive violet_elab violet_kernel asai))

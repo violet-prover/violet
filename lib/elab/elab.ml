@@ -744,15 +744,23 @@ let emit_goal_report
   (* Bwd.to_list returns outermost-first. *)
   let names = List.map Syntax.Name.to_string (Bwd.to_list m.ctx.names) in
   let types = Bwd.to_list m.ctx.types in
-  List.iter2
-    (fun n ty ->
-       let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
-       Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n ty))
-    names
-    types;
+  let pp_ctx =
+    List.map2
+      (fun n ty ->
+         let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+         n, pp_ty)
+      names
+      types
+  in
+  List.iter
+    (fun (n, pp_ty) -> Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n pp_ty))
+    pp_ctx;
+  let pp_target =
+    Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target)
+  in
+  Observer.emit (Goal { path = [ name ]; loc; ty = target; ctx = pp_ctx; pp_target });
   Buffer.add_string buf "  --- target ---\n";
-  let target = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target) in
-  Buffer.add_string buf (Printf.sprintf "  %s" target);
+  Buffer.add_string buf (Printf.sprintf "  %s" pp_target);
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
 ;;
 
@@ -877,18 +885,29 @@ let rec dispatch (m : machine) (g : goal) : unit =
     m.result
     <- Some
          (PTermType (Core.Universe Level.LZero, Core.Universe (Level.LSuc Level.LZero)))
-  | GInfer (_, Var [ x ]) ->
+  | GInfer (loc, Var [ x ]) ->
     (match resolve_local m.ctx x with
-     | Some i -> m.result <- Some (PTermType (Core.LocalVar i, local_type m.ctx i))
+     | Some i ->
+       let ty = local_type m.ctx i in
+       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
+       m.result <- Some (PTermType (Core.LocalVar i, ty))
      | None ->
        (match resolve_universe_var x with
         | Some l ->
           m.result <- Some (PTermType (Core.Universe l, Core.Universe (Level.lsuc l)))
-        | None -> m.result <- Some (PTermType (Core.Var x, Context.lookup x))))
+        | None ->
+          let ty = Context.lookup x in
+          let pp_ty =
+            Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
+          in
+          Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
+          m.result <- Some (PTermType (Core.Var x, ty))))
   | GInfer (loc, Var path) ->
-    let _ = loc in
     let ty = Context.lookup_path path in
     let joined = String.concat "/" path in
+    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+    Observer.emit (Use { path; loc; def_loc = None; ty; pp_ty });
     m.result <- Some (PTermType (Core.Var joined, ty))
   | GInferType (loc, Goal name_opt) ->
     let name = resolve_goal_name m name_opt in
@@ -1494,6 +1513,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | KTopLet_HaveBody (loc, name, typ_tm, typ_val) ->
     (match take_result m with
      | PTerm term ->
+       let pp_ty =
+         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+       in
+       Observer.emit (Def { path = [ name ]; loc; ty = typ_val; pp_ty });
        let exported = m.is_exported name in
        publish_to_context ~exported [ name ] (typ_val, `Defn);
        let body_val = Evaluation.eval m.ctx.env term in
@@ -2351,6 +2374,8 @@ let with_handlers (k : unit -> 'a) : 'a =
     ~emit:(fun _ -> ())
     ~fatal:(fun d -> failwith ([%show: Reporter.Message.t] d.message))
   @@ fun () ->
+  Observer.run_silent
+  @@ fun () ->
   Context.S.run
     ~shadow:Context.Handler.shadow
     ~not_found:Context.Handler.not_found
@@ -2370,6 +2395,8 @@ let with_handlers_emitting (k : unit -> 'a) : 'a =
     ~emit:(fun (d : Reporter.Message.t Asai.Diagnostic.t) ->
       Format.printf "[%s] %t@." (Reporter.Message.show d.message) d.explanation.value)
     ~fatal:(fun d -> failwith ([%show: Reporter.Message.t] d.message))
+  @@ fun () ->
+  Observer.run_silent
   @@ fun () ->
   Context.S.run
     ~shadow:Context.Handler.shadow
@@ -2659,17 +2686,20 @@ let check_top
       !(m.pending_goals)
 ;;
 
-let check_module ?module_path (file : Surface.t) : unit =
+let check_module
+      ?(on_event = fun (_ : Observer.event) -> ())
+      ?module_path
+      (file : Surface.t)
+  : unit
+  =
+  Observer.run ~on_event
+  @@ fun () ->
   let module_path =
     match module_path with
     | Some p -> p
     | None -> [ Filename.chop_extension @@ Filename.basename file.name ]
   in
   let module_name = String.concat "/" module_path in
-  (* Run the operator-resolution pass first. It walks every preterm and
-     rewrites Op_soup nodes into normal App / Var spines using the in-scope
-     operator table. With no `operator` declarations, this is a structural
-     no-op that just collapses each soup to a left-associative App. *)
   let file = Op_resolver.resolve_module ~module_name file in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
