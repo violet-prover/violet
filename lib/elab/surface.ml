@@ -285,6 +285,7 @@ let rec pi (tele : pretype binder list) (result : pretype) : pretype =
 let rec applied_spine (t : preterm) : preterm list =
   match t with
   | App (_, f, arg) -> applied_spine f @ [ arg ]
+  | Located { value; _ } -> applied_spine value
   | _ -> []
 ;;
 

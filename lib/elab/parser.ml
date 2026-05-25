@@ -309,6 +309,20 @@ module P = struct
     { tp = Tp.tok tag; parse }
   ;;
 
+  let span_of buf i last =
+    if i < Array.length buf && last >= i && last < Array.length buf
+    then
+      begin match buf.(i).Asai.Range.loc, buf.(last).Asai.Range.loc with
+      | Some lstart, Some lend ->
+        (match Asai.Range.view lstart, Asai.Range.view lend with
+         | `Range (bpos, _), `Range (_, epos) -> Some (Asai.Range.make (bpos, epos))
+         | _ -> Some lstart)
+      | (Some _ as l), None | None, (Some _ as l) -> l
+      | None, None -> None
+      end
+    else None
+  ;;
+
   (* Wrap a parser so its result is paired with a range spanning every token
      it consumed (start of the first, end of the last). Used for top-level
      constructs so that error reports underline the entire definition rather
@@ -317,20 +331,7 @@ module P = struct
   let with_full_range p =
     let parse buf i =
       let i', x = p.parse buf i in
-      let last = i' - 1 in
-      let loc =
-        if i < Array.length buf && last >= i && last < Array.length buf
-        then
-          begin match buf.(i).Asai.Range.loc, buf.(last).Asai.Range.loc with
-          | Some lstart, Some lend ->
-            (match Asai.Range.view lstart, Asai.Range.view lend with
-             | `Range (bpos, _), `Range (_, epos) -> Some (Asai.Range.make (bpos, epos))
-             | _ -> Some lstart)
-          | (Some _ as l), None | None, (Some _ as l) -> l
-          | None, None -> None
-          end
-        else None
-      in
+      let loc = span_of buf i (i' - 1) in
       i', (loc, x)
     in
     { tp = p.tp; parse }
@@ -452,6 +453,15 @@ module Grammar = struct
     match loc with
     | Some l -> S.Located (Asai.Range.locate l v)
     | None -> v
+  ;;
+
+  let with_loc p =
+    let parse buf i =
+      let i', x = p.parse buf i in
+      let loc = span_of buf i (i' - 1) in
+      i', wrap_loc loc x
+    in
+    { tp = p.tp; parse }
   ;;
 
   let p_qname : string list t =
@@ -607,10 +617,11 @@ module Grammar = struct
       in
       (* LPAREN atom: disambiguate binder vs paren-term via 2-token peek *)
       let parens_binder_atom : S.preterm t =
-        let+ binders = p_binding_parens
-        and+ _ = tok C.T_ARROW
-        and+ rhs = term in
-        S.pi binders rhs
+        with_loc
+          (let+ binders = p_binding_parens
+           and+ _ = tok C.T_ARROW
+           and+ rhs = term in
+           S.pi binders rhs)
       in
       let parens_term_atom : S.preterm t =
         let+ loc, _ = tok_loc C.T_LPAREN
@@ -629,25 +640,28 @@ module Grammar = struct
       in
       (* LBRACKET atom: always implicit binder `{x:T}+ -> body` *)
       let p_atom_lbracket : S.preterm t =
-        let+ binders = p_binding_brackets
-        and+ _ = tok C.T_ARROW
-        and+ rhs = term in
-        S.pi binders rhs
+        with_loc
+          (let+ binders = p_binding_brackets
+           and+ _ = tok C.T_ARROW
+           and+ rhs = term in
+           S.pi binders rhs)
       in
       (* LAMBDA atom: untyped (`\ x y -> body`) or typed (`\ (x:T) -> body`) *)
       let lambda_untyped : S.preterm t =
-        let+ _ = tok C.T_LAMBDA
-        and+ names = p_idents
-        and+ _ = tok C.T_ARROW
-        and+ body = term in
-        S.lambda names body
+        with_loc
+          (let+ _ = tok C.T_LAMBDA
+           and+ names = p_idents
+           and+ _ = tok C.T_ARROW
+           and+ body = term in
+           S.lambda names body)
       in
       let lambda_typed : S.preterm t =
-        let+ _ = tok C.T_LAMBDA
-        and+ binders = p_bindings_flat
-        and+ _ = tok C.T_ARROW
-        and+ body = term in
-        S.typed_lambda binders body
+        with_loc
+          (let+ _ = tok C.T_LAMBDA
+           and+ binders = p_bindings_flat
+           and+ _ = tok C.T_ARROW
+           and+ body = term in
+           S.typed_lambda binders body)
       in
       let p_atom_lambda : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LAMBDA; follow = C.empty } in
@@ -817,11 +831,14 @@ module Grammar = struct
       let p_record_lit : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
         let parse buf i =
+          let start = i in
           let i = i + 1 in
           (* consume `{` *)
           let n = Array.length buf in
           if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
-          then i + 1, S.RecordLit [] (* `{}` *)
+          then (
+            let end_i = i in
+            end_i + 1, wrap_loc (span_of buf start end_i) (S.RecordLit []))
           else begin
             let i, first = p_record_entry.parse buf i in
             let entries = ref [ first ] in
@@ -840,7 +857,7 @@ module Grammar = struct
               pos := i'
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            i', S.RecordLit (List.rev !entries)
+            i', wrap_loc (span_of buf start (i' - 1)) (S.RecordLit (List.rev !entries))
           end
         in
         { tp; parse }
@@ -854,6 +871,7 @@ module Grammar = struct
       let p_record_update : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
         let parse buf i =
+          let start = i in
           let i = i + 1 in
           (* consume `{` *)
           let n = Array.length buf in
@@ -864,9 +882,7 @@ module Grammar = struct
           let i, _ = (tok C.T_VERT).parse buf i in
           (* Parse comma-separated entries *)
           if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
-          then
-            (* `{ base | }` — zero update fields; unusual but valid *)
-            i + 1, S.RecordUpdate (base, [])
+          then i + 1, wrap_loc (span_of buf start i) (S.RecordUpdate (base, []))
           else begin
             let i, first = p_record_entry.parse buf i in
             let entries = ref [ first ] in
@@ -885,7 +901,10 @@ module Grammar = struct
               pos := i'
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            i', S.RecordUpdate (base, List.rev !entries)
+            ( i'
+            , wrap_loc
+                (span_of buf start (i' - 1))
+                (S.RecordUpdate (base, List.rev !entries)) )
           end
         in
         { tp; parse }
@@ -964,9 +983,16 @@ module Grammar = struct
       in
       (* A single op-soup: one head followed by zero-or-more tail items. *)
       let op_soup : S.preterm t =
-        let+ head = soup_head_item
-        and+ rest = star soup_tail_item in
-        S.Op_soup (head :: rest)
+        let tp = soup_head_item.tp in
+        let parse buf i =
+          let start = i in
+          let i, head = soup_head_item.parse buf i in
+          let i, rest = (star soup_tail_item).parse buf i in
+          let result = S.Op_soup (head :: rest) in
+          let loc = span_of buf start (i - 1) in
+          i, wrap_loc loc result
+        in
+        { tp; parse }
       in
       (* Postfix `.field` projection loop.  After parsing an op-soup we
          greedily consume `T_DOT IDENT` sequences and wrap the accumulator
@@ -978,6 +1004,7 @@ module Grammar = struct
       let proj_soup : S.preterm t =
         let tp = op_soup.tp in
         let parse buf i =
+          let start = i in
           let i, base = op_soup.parse buf i in
           let n = Array.length buf in
           let acc = ref base in
@@ -996,7 +1023,8 @@ module Grammar = struct
                 | Lexer.IDENT s -> s
                 | _ -> assert false
               in
-              acc := S.Proj (!acc, field);
+              let proj_loc = span_of buf start dot_i in
+              acc := wrap_loc proj_loc (S.Proj (!acc, field));
               pos := dot_i + 1
             end
             else continue_ := false
@@ -1025,11 +1053,19 @@ module Grammar = struct
         and+ rhs = term in
         Some rhs
       in
-      let+ lhs = max_level
-      and+ rhs = opt_arrow in
-      match rhs with
-      | None -> lhs
-      | Some r -> S.Pi ({ name = Syntax.Anon; bound = lhs; implicit = false }, r))
+      let tp = Tp.seq max_level.tp opt_arrow.tp in
+      let parse buf i =
+        let i', lhs = max_level.parse buf i in
+        let i'', rhs = opt_arrow.parse buf i' in
+        match rhs with
+        | None -> i'', lhs
+        | Some r ->
+          let loc = span_of buf i (i'' - 1) in
+          ( i''
+          , wrap_loc loc (S.Pi ({ name = Syntax.Anon; bound = lhs; implicit = false }, r))
+          )
+      in
+      { tp; parse })
   ;;
 
   let p_idents : string list t =

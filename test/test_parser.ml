@@ -158,14 +158,24 @@ let record_lit_test () =
     let m = Violet_elab.Parser.parse_buf ~name:"<record_lit_test>" toks in
     m.Violet_elab.Surface.tops
   in
+  let rec peel = function
+    | Violet_elab.Surface.Located { value; _ } -> peel value
+    | t -> t
+  in
+  let peel_item = function
+    | Violet_elab.Surface.SI_Atom a -> Violet_elab.Surface.SI_Atom (peel a)
+    | other -> other
+  in
   (* Helper: extract RecordLit from the Op_soup wrapper that the parser emits
      before operator resolution.  A bare `{ … }` at head position becomes
      Op_soup [ SI_Atom (RecordLit […]) ]. *)
   let unwrap_record_lit body =
-    match body with
-    | Violet_elab.Surface.Op_soup
-        [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit entries) ] ->
-      Some entries
+    match peel body with
+    | Violet_elab.Surface.Op_soup items ->
+      (match List.map peel_item items with
+       | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit entries) ] ->
+         Some entries
+       | _ -> None)
     | _ -> None
   in
   (* Empty record literal *)
@@ -201,10 +211,14 @@ let record_lit_test () =
   (match tops2 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
      (match unwrap_record_lit body with
-      | Some
-          [ ("x", Violet_elab.Surface.Var [ "x" ])
-          ; ("y", Violet_elab.Surface.Var [ "y" ])
-          ] -> Format.printf "record_lit_test OK  pun-lit@."
+      | Some [ ("x", xv); ("y", yv) ]
+        when (match peel xv with
+              | Violet_elab.Surface.Var [ "x" ] -> true
+              | _ -> false)
+             &&
+             match peel yv with
+             | Violet_elab.Surface.Var [ "y" ] -> true
+             | _ -> false -> Format.printf "record_lit_test OK  pun-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL pun-lit: body=%s@."
@@ -218,11 +232,14 @@ let record_lit_test () =
   (match tops3 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
      (match unwrap_record_lit body with
-      | Some
-          [ ("x", Violet_elab.Surface.Var [ "x" ])
-          ; ("y", _)
-          ; ("z", Violet_elab.Surface.Var [ "z" ])
-          ] -> Format.printf "record_lit_test OK  mixed-lit@."
+      | Some [ ("x", xv); ("y", _); ("z", zv) ]
+        when (match peel xv with
+              | Violet_elab.Surface.Var [ "x" ] -> true
+              | _ -> false)
+             &&
+             match peel zv with
+             | Violet_elab.Surface.Var [ "z" ] -> true
+             | _ -> false -> Format.printf "record_lit_test OK  mixed-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL mixed-lit: body=%s@."
@@ -238,17 +255,23 @@ let record_lit_test () =
   let tops4 = parse_tops "\\let r : U => f {x}" in
   (match tops4 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
-     (match body with
-      | Violet_elab.Surface.Op_soup
-          [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg inner ] ->
-        (* inner may be Located-wrapped; check its show is "x" *)
-        let inner_str = Violet_elab.Surface.show_preterm inner in
-        if String.equal inner_str "x"
-        then Format.printf "record_lit_test OK  implicit-app@."
-        else begin
-          Format.printf "record_lit_test FAIL implicit-app: inner=%s@." inner_str;
-          exit 1
-        end
+     (match peel body with
+      | Violet_elab.Surface.Op_soup items ->
+        let items = List.map peel_item items in
+        (match items with
+         | [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg inner ] ->
+           let inner_str = Violet_elab.Surface.show_preterm (peel inner) in
+           if String.equal inner_str "x"
+           then Format.printf "record_lit_test OK  implicit-app@."
+           else begin
+             Format.printf "record_lit_test FAIL implicit-app: inner=%s@." inner_str;
+             exit 1
+           end
+         | _ ->
+           Format.printf
+             "record_lit_test FAIL implicit-app: body=%s@."
+             (Violet_elab.Surface.show_preterm body);
+           exit 1)
       | _ ->
         Format.printf
           "record_lit_test FAIL implicit-app: body=%s@."
@@ -269,12 +292,22 @@ let record_update_test () =
     let m = Violet_elab.Parser.parse_buf ~name:"<record_update_test>" toks in
     m.Violet_elab.Surface.tops
   in
+  let rec peel = function
+    | Violet_elab.Surface.Located { value; _ } -> peel value
+    | t -> t
+  in
+  let peel_item = function
+    | Violet_elab.Surface.SI_Atom a -> Violet_elab.Surface.SI_Atom (peel a)
+    | other -> other
+  in
   (* Helper: unwrap RecordUpdate from Op_soup wrapper *)
   let unwrap_record_update body =
-    match body with
-    | Violet_elab.Surface.Op_soup
-        [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordUpdate (base, entries)) ]
-      -> Some (base, entries)
+    match peel body with
+    | Violet_elab.Surface.Op_soup items ->
+      (match List.map peel_item items with
+       | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordUpdate (base, entries))
+         ] -> Some (base, entries)
+       | _ -> None)
     | _ -> None
   in
   (* Simple single-field update: { p | x = z } *)
@@ -310,8 +343,10 @@ let record_update_test () =
   (match tops3 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
      (match unwrap_record_update body with
-      | Some (_, [ ("x", Violet_elab.Surface.Var [ "x" ]) ]) ->
-        Format.printf "record_update_test OK  pun@."
+      | Some (_, [ ("x", xv) ])
+        when match peel xv with
+             | Violet_elab.Surface.Var [ "x" ] -> true
+             | _ -> false -> Format.printf "record_update_test OK  pun@."
       | _ ->
         Format.printf
           "record_update_test FAIL pun: body=%s@."
@@ -324,10 +359,16 @@ let record_update_test () =
   let tops4 = parse_tops "\\let p : Point => { x = a }" in
   (match tops4 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
-     (match body with
-      | Violet_elab.Surface.Op_soup
-          [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit _) ] ->
-        Format.printf "record_update_test OK  regression-literal@."
+     (match peel body with
+      | Violet_elab.Surface.Op_soup items ->
+        (match List.map peel_item items with
+         | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit _) ] ->
+           Format.printf "record_update_test OK  regression-literal@."
+         | _ ->
+           Format.printf
+             "record_update_test FAIL regression-literal: body=%s@."
+             (Violet_elab.Surface.show_preterm body);
+           exit 1)
       | _ ->
         Format.printf
           "record_update_test FAIL regression-literal: body=%s@."
@@ -340,10 +381,17 @@ let record_update_test () =
   let tops5 = parse_tops "\\let r : U => f {x}" in
   (match tops5 with
    | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
-     (match body with
-      | Violet_elab.Surface.Op_soup
-          [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg _ ] ->
-        Format.printf "record_update_test OK  regression-implicit-app@."
+     (match peel body with
+      | Violet_elab.Surface.Op_soup items ->
+        let items = List.map peel_item items in
+        (match items with
+         | [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg _ ] ->
+           Format.printf "record_update_test OK  regression-implicit-app@."
+         | _ ->
+           Format.printf
+             "record_update_test FAIL regression-implicit-app: body=%s@."
+             (Violet_elab.Surface.show_preterm body);
+           exit 1)
       | _ ->
         Format.printf
           "record_update_test FAIL regression-implicit-app: body=%s@."
