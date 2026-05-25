@@ -1,0 +1,4 @@
+(library
+ (name violet_interactive)
+ (public_name violet_interactive)
+ (libraries violet_elab violet_kernel asai))

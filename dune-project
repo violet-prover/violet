@@ -47,4 +47,9 @@
  (synopsis "Violet elaborator")
  (depends (ocaml (>= 5.3)) dune ppx_deriving ppx_expect asai algaeff yuujinchou bwd eio))
 
+(package
+ (name violet_interactive)
+ (synopsis "Violet interactive query layer")
+ (depends (ocaml (>= 5.3)) dune violet_elab violet_kernel asai))
+
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project
