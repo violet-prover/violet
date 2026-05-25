@@ -181,7 +181,7 @@ let record_lit_test () =
   (* Empty record literal *)
   let tops0 = parse_tops "\\let p : Point => {}" in
   (match tops0 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [] -> Format.printf "record_lit_test OK  empty@."
       | _ ->
@@ -195,7 +195,7 @@ let record_lit_test () =
   (* Plain literal: { x = a, y = b } *)
   let tops1 = parse_tops "\\let p : Point => { x = a, y = b }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", _); ("y", _) ] -> Format.printf "record_lit_test OK  plain-lit@."
       | _ ->
@@ -209,7 +209,7 @@ let record_lit_test () =
   (* Pun literal: { x, y } desugars to { x = x, y = y } *)
   let tops2 = parse_tops "\\let p : Point => { x, y }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", xv); ("y", yv) ]
         when (match peel xv with
@@ -230,7 +230,7 @@ let record_lit_test () =
   (* Mixed: { x, y = e, z } desugars to { x = x, y = e, z = z } *)
   let tops3 = parse_tops "\\let p : Point => { x, y = e, z }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", xv); ("y", _); ("z", zv) ]
         when (match peel xv with
@@ -249,17 +249,18 @@ let record_lit_test () =
      Format.printf "record_lit_test FAIL mixed-lit: wrong shape@.";
      exit 1);
   (* Implicit-application f {x} must still parse (regression check).
-     `f {x}` = Op_soup with head SI_Name "f" and tail SI_Imp_arg.
+     `f {x}` = Op_soup with head SI_Name ("f", _) and tail SI_Imp_arg.
      The inner atom may be wrapped in Located, so we check structurally
      using the show_preterm output. *)
   let tops4 = parse_tops "\\let r : U => f {x}" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_elab.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg inner ] ->
+         | [ Violet_elab.Surface.SI_Name ("f", _); Violet_elab.Surface.SI_Imp_arg inner ]
+           ->
            let inner_str = Violet_elab.Surface.show_preterm (peel inner) in
            if String.equal inner_str "x"
            then Format.printf "record_lit_test OK  implicit-app@."
@@ -313,7 +314,7 @@ let record_update_test () =
   (* Simple single-field update: { p | x = z } *)
   let tops1 = parse_tops "\\let q : Point => { p | x = z }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", _) ]) -> Format.printf "record_update_test OK  simple@."
       | _ ->
@@ -327,7 +328,7 @@ let record_update_test () =
   (* Multi-field update: { p | x = z, y = w } *)
   let tops2 = parse_tops "\\let q : Point => { p | x = z, y = w }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", _); ("y", _) ]) -> Format.printf "record_update_test OK  multi@."
       | _ ->
@@ -341,7 +342,7 @@ let record_update_test () =
   (* Pun-style override: { p | x } desugars to { p | x = x } *)
   let tops3 = parse_tops "\\let q : Point => { p | x }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", xv) ])
         when match peel xv with
@@ -358,7 +359,7 @@ let record_update_test () =
   (* Regression: plain literal { x = a } must still be RecordLit, not RecordUpdate *)
   let tops4 = parse_tops "\\let p : Point => { x = a }" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_elab.Surface.Op_soup items ->
         (match List.map peel_item items with
@@ -380,12 +381,12 @@ let record_update_test () =
   (* Regression: implicit application f {x} must still work *)
   let tops5 = parse_tops "\\let r : U => f {x}" in
   (match tops5 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_elab.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_elab.Surface.SI_Name "f"; Violet_elab.Surface.SI_Imp_arg _ ] ->
+         | [ Violet_elab.Surface.SI_Name ("f", _); Violet_elab.Surface.SI_Imp_arg _ ] ->
            Format.printf "record_update_test OK  regression-implicit-app@."
          | _ ->
            Format.printf
@@ -416,28 +417,28 @@ let projection_test () =
   let src1 = "\\let n : Nat => p.x" in
   let tops1 = parse_tops src1 in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "simple: %s\n" (Violet_elab.Surface.show_preterm body)
    | _ -> Printf.printf "simple: unexpected\n");
   (* Chained projection -- left-associative *)
   let src2 = "\\let n : Nat => r.x.y" in
   let tops2 = parse_tops src2 in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "chained: %s\n" (Violet_elab.Surface.show_preterm body)
    | _ -> Printf.printf "chained: unexpected\n");
   (* Projection on application -- (f x).y *)
   let src3 = "\\let n : Nat => (f x).y" in
   let tops3 = parse_tops src3 in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "appl: %s\n" (Violet_elab.Surface.show_preterm body)
    | _ -> Printf.printf "appl: unexpected\n");
   (* Regression: Nat/zero must parse as Var ["Nat"; "zero"], not affected by dot *)
   let src4 = "\\let n : Nat => Nat/zero" in
   let tops4 = parse_tops src4 in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let (_, _, _, body); _ } ] ->
+   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "qname: %s\n" (Violet_elab.Surface.show_preterm body)
    | _ -> Printf.printf "qname: unexpected\n");
   print_endline "projection_test OK"

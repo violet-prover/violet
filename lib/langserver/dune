@@ -1,0 +1,19 @@
+(include_subdirs unqualified)
+
+(library
+ (name violet_langserver)
+ (public_name violet_langserver)
+ (inline_tests)
+ (preprocess
+  (pps ppx_deriving.show ppx_expect))
+ (libraries
+  violet_kernel
+  violet_elab
+  violet_interactive
+  violet_project
+  asai
+  eio
+  linol
+  linol.lsp
+  linol-eio
+  tsort))

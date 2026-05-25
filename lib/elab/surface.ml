@@ -130,7 +130,8 @@ and inline_elim_data =
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
-  | SI_Name of string [@printer fun fmt s -> fprintf fmt "N(%s)" s]
+  | SI_Name of string * (Asai.Range.t[@opaque]) option
+  [@printer fun fmt (s, _) -> fprintf fmt "N(%s)" s]
   | SI_Imp_arg of preterm [@printer fun fmt p -> fprintf fmt "I{%s}" (show_preterm p)]
 
 and pretype = preterm
@@ -179,17 +180,26 @@ type op_option =
 [@@deriving show]
 
 type top =
-  | Let of string * pretype binder list * pretype * preterm
+  | Let of
+      { name : string
+      ; name_loc : (Asai.Range.t[@opaque]) option
+      ; bindings : pretype binder list
+      ; result_ty : pretype
+      ; body : preterm
+      }
   (* `\data <name> <params> : <deps> -> <ind_ty> | <ctors>` *)
   | Data of
       { name : string
-      ; params : pretype binder list (* opaque parameters *)
-      ; deps : pretype binder list (* concrete dependencies *)
-      ; ind_ty : pretype (* should always be U *)
+      ; name_loc : (Asai.Range.t[@opaque]) option
+      ; params : pretype binder list
+      ; deps : pretype binder list
+      ; ind_ty : pretype
+      ; ind_ty_loc : (Asai.Range.t[@opaque]) option
       ; ctors : pretype binder list
+      ; ctor_name_locs : (Asai.Range.t[@opaque]) option list
       }
   (* `\universe U V W` declares per-module level variables. *)
-  | Universe_decl of string list
+  | Universe_decl of (string * (Asai.Range.t[@opaque]) option) list
   (*
      let <name> <params> : <signature> where
        <moves>
@@ -198,6 +208,7 @@ type top =
   *)
   | Stack_def of
       { name : string
+      ; name_loc : (Asai.Range.t[@opaque]) option
       ; params : pretype binder list
       ; signature : pretype
       ; moves : stack_move list
@@ -217,6 +228,7 @@ type top =
   *)
   | Elim_def of
       { name : string
+      ; name_loc : (Asai.Range.t[@opaque]) option
       ; params : pretype binder list
       ; signature : pretype
       ; opens : string list
@@ -239,6 +251,7 @@ type top =
       }
   | Record of
       { name : string
+      ; name_loc : (Asai.Range.t[@opaque]) option
       ; params : pretype binder list
       ; ind_ty : pretype
       ; fields : pretype binder list
@@ -248,7 +261,7 @@ type top =
 type t =
   { name : string
   ; imports : Trie.path list (* import libraries *)
-  ; exports : string list (* names listed in \export; module-public *)
+  ; exports : (string * (Asai.Range.t[@opaque]) option) list
   ; tops : top Asai.Range.located list
   }
 
@@ -274,6 +287,15 @@ let rec codomain : pretype -> pretype = function
   | Located { value = p; _ } -> codomain p
   | Pi (_, body) -> codomain body
   | t -> t
+;;
+
+let codomain_loc (t : pretype) : Asai.Range.t option =
+  let rec go last_loc = function
+    | Located { value = p; loc } -> go loc p
+    | Pi (_, body) -> go None body
+    | _ -> last_loc
+  in
+  go None t
 ;;
 
 let rec pi (tele : pretype binder list) (result : pretype) : pretype =

@@ -386,6 +386,14 @@ module P = struct
     | _ -> assert false
   ;;
 
+  let symbol_loc =
+    let+ lv = tok_loc C.T_SYMBOL in
+    let loc, v = lv in
+    match v with
+    | Lexer.SYMBOL s -> loc, s
+    | _ -> assert false
+  ;;
+
   let eps = { tp = Tp.eps; parse = (fun _ i -> i, ()) }
   let fail = { tp = Tp.bot; parse = fail_at }
 
@@ -481,11 +489,11 @@ module Grammar = struct
     path
   ;;
 
-  let p_export : string list t =
+  let p_export : (string * Asai.Range.t option) list t =
     let+ _ = tok C.T_EXPORT
-    and+ first = ident
-    and+ rest = star ident in
-    first :: rest
+    and+ first = ident_loc
+    and+ rest = star ident_loc in
+    List.map (fun (loc, name) -> name, loc) (first :: rest)
   ;;
 
   (* Peek helpers used by the two hand-coded disambiguators. *)
@@ -935,7 +943,7 @@ module Grammar = struct
         goal_atom || p_atom_lparen || p_atom_lambda
       in
       (* SYMBOL token as a name. *)
-      let p_symbol_name : string t = symbol in
+      let p_symbol_name_loc : (Asai.Range.t option * string) t = symbol_loc in
       (* IDENT, optionally followed by `/`-separated continuation segments.
          A bare ident becomes SI_Name (so it can match operator literals);
          a qualified name like `Nat/suc` becomes SI_Atom (Var [...]) since
@@ -949,7 +957,7 @@ module Grammar = struct
              x)
         in
         match rest with
-        | [] -> S.SI_Name first
+        | [] -> S.SI_Name (first, loc)
         | _ -> S.SI_Atom (wrap_loc loc (S.Var (first :: rest)))
       in
       (* Soup-head item. First sets: T_IDENT, T_SYMBOL, T_QMARK, T_LPAREN,
@@ -958,8 +966,8 @@ module Grammar = struct
          OR implicit-binder pi). *)
       let soup_head_item : S.soup_item t =
         p_ident_soup_item
-        || (let+ n = p_symbol_name in
-            S.SI_Name n)
+        || (let+ loc, n = p_symbol_name_loc in
+            S.SI_Name (n, loc))
         || (let+ a = structural_atom_no_lbracket in
             S.SI_Atom a)
         ||
@@ -971,8 +979,8 @@ module Grammar = struct
          disjoint with each other. *)
       let soup_tail_item : S.soup_item t =
         p_ident_soup_item
-        || (let+ n = p_symbol_name in
-            S.SI_Name n)
+        || (let+ loc, n = p_symbol_name_loc in
+            S.SI_Name (n, loc))
         || (let+ a = structural_atom_no_lbracket in
             S.SI_Atom a)
         ||
@@ -1109,6 +1117,14 @@ module Grammar = struct
     and+ _ = tok C.T_COLON
     and+ ty = p_term in
     { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
+  ;;
+
+  let p_ctor_loc : (Asai.Range.t option * S.pretype Syntax.binder) t =
+    let+ _ = tok C.T_VERT
+    and+ name_loc, name = ident_loc
+    and+ _ = tok C.T_COLON
+    and+ ty = p_term in
+    name_loc, { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
   ;;
 
   let p_stack_move : S.stack_move t =
@@ -1328,21 +1344,26 @@ module Grammar = struct
   ;;
 
   let p_let_top : S.top Asai.Range.located t =
-    let+ loc, (name, bindings, ty, body) =
+    let+ loc, (name_loc, name, bindings, ty, body) =
       with_full_range
         (let+ _ = tok C.T_LET
-         and+ name = ident
+         and+ name_loc, name = ident_loc
          and+ bindings = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ty = p_term
          and+ body = p_let_body in
-         name, bindings, ty, body)
+         name_loc, name, bindings, ty, body)
     in
     match body with
-    | LB_Assign tm -> { Asai.Range.loc; value = S.Let (name, bindings, ty, tm) }
+    | LB_Assign tm ->
+      { Asai.Range.loc
+      ; value = S.Let { name; name_loc; bindings; result_ty = ty; body = tm }
+      }
     | LB_Where (moves, clauses) ->
       { Asai.Range.loc
-      ; value = S.Stack_def { name; params = bindings; signature = ty; moves; clauses }
+      ; value =
+          S.Stack_def
+            { name; name_loc; params = bindings; signature = ty; moves; clauses }
       }
     | LB_Elim (opens, { head; intros; target }, clauses) ->
       if not (String.equal head name)
@@ -1355,23 +1376,42 @@ module Grammar = struct
       { Asai.Range.loc
       ; value =
           S.Elim_def
-            { name; params = bindings; signature = ty; opens; intros; target; clauses }
+            { name
+            ; name_loc
+            ; params = bindings
+            ; signature = ty
+            ; opens
+            ; intros
+            ; target
+            ; clauses
+            }
       }
   ;;
 
   let p_data_top : S.top Asai.Range.located t =
-    let+ loc, (name, params, ret, ctors) =
+    let+ loc, (name_loc, name, params, ret, ctors) =
       with_full_range
         (let+ _ = tok C.T_DATA
-         and+ name = ident
+         and+ name_loc, name = ident_loc
          and+ params = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ret = p_term
-         and+ ctors = star p_ctor in
-         name, params, ret, ctors)
+         and+ ctors = star p_ctor_loc in
+         name_loc, name, params, ret, ctors)
     in
+    let ctor_binders = List.map snd ctors in
+    let ctor_name_locs = List.map fst ctors in
     let value =
-      S.Data { name; params; deps = S.telescope ret; ind_ty = S.codomain ret; ctors }
+      S.Data
+        { name
+        ; name_loc
+        ; params
+        ; deps = S.telescope ret
+        ; ind_ty = S.codomain ret
+        ; ind_ty_loc = S.codomain_loc ret
+        ; ctors = ctor_binders
+        ; ctor_name_locs
+        }
     in
     { Asai.Range.loc; value }
   ;;
@@ -1385,17 +1425,17 @@ module Grammar = struct
   ;;
 
   let p_record_top : S.top Asai.Range.located t =
-    let+ loc, (name, params, ret, fields) =
+    let+ loc, (name_loc, name, params, ret, fields) =
       with_full_range
         (let+ _ = tok C.T_RECORD
-         and+ name = ident
+         and+ name_loc, name = ident_loc
          and+ params = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ret = p_term
          and+ fields = star p_record_field in
-         name, params, ret, fields)
+         name_loc, name, params, ret, fields)
     in
-    let value = S.Record { name; params; ind_ty = ret; fields } in
+    let value = S.Record { name; name_loc; params; ind_ty = ret; fields } in
     { Asai.Range.loc; value }
   ;;
 
@@ -1403,9 +1443,9 @@ module Grammar = struct
     let+ loc, names =
       with_full_range
         (let+ _ = tok C.T_UNIVERSE
-         and+ first = ident
-         and+ rest = star ident in
-         first :: rest)
+         and+ first = ident_loc
+         and+ rest = star ident_loc in
+         List.map (fun (loc, name) -> name, loc) (first :: rest))
     in
     { Asai.Range.loc; value = S.Universe_decl names }
   ;;
@@ -1548,7 +1588,7 @@ let parse_buf ~name buf =
   | _, m ->
     let seen = Hashtbl.create 16 in
     List.iter
-      (fun nm ->
+      (fun (nm, _) ->
          if Hashtbl.mem seen nm
          then Reporter.fatalf Export_error "duplicate name in \\export: `%s`" nm
          else Hashtbl.add seen nm ())
@@ -1584,6 +1624,16 @@ let parse_channel filename ch =
 let parse_file filename =
   let ch = open_in filename in
   Fun.protect ~finally:(fun _ -> close_in ch) @@ fun _ -> parse_channel filename ch
+;;
+
+let parse_buffer ~filename (text : string) =
+  Reporter.tracef "when parsing buffer `%s`" filename
+  @@ fun () ->
+  let lexbuf = Lexing.from_string text in
+  lexbuf.Lexing.lex_curr_p
+  <- { lexbuf.Lexing.lex_curr_p with Lexing.pos_fname = filename };
+  let toks = Array.of_list (tokens filename lexbuf) in
+  parse_buf ~name:filename toks
 ;;
 
 let parse_expression_string ~source (src : string) : Surface.preterm =
@@ -1723,7 +1773,7 @@ let%expect_test "parse: single \\export line, no decls" =
   let m = parse_module_for_test "\\export foo bar\n" in
   Printf.printf
     "exports=[%s] tops=%d"
-    (String.concat ";" m.Surface.exports)
+    (String.concat ";" (List.map fst m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| exports=[foo;bar] tops=0 |}]
 ;;
@@ -1786,8 +1836,8 @@ let%expect_test "parse: operator decl alongside let" =
     {|
     [Surface.Operator_decl {template = "\\x + \\y"; body = <soup:[N(add)]>;
        options = []};
-      (Surface.Let ("two", [], <soup:[N(Nat)]>, <soup:[N(add); N(zero); N(zero)]>
-         ))
+      Surface.Let {name = "two"; name_loc = (Some <opaque>); bindings = [];
+        result_ty = <soup:[N(Nat)]>; body = <soup:[N(add); N(zero); N(zero)]>}
       ]
     |}]
 ;;
@@ -1825,7 +1875,7 @@ let%expect_test "lex dot in field projection context" =
 
 let%expect_test "parse: multiple \\export lines concatenated in source order" =
   let m = parse_module_for_test "\\export foo\n\\export bar baz\n" in
-  Printf.printf "exports=[%s]" (String.concat ";" m.Surface.exports);
+  Printf.printf "exports=[%s]" (String.concat ";" (List.map fst m.Surface.exports));
   [%expect {| exports=[foo;bar;baz] |}]
 ;;
 
@@ -1834,7 +1884,7 @@ let%expect_test "parse: imports then exports then tops" =
   Printf.printf
     "imports=%d exports=[%s] tops=%d"
     (List.length m.Surface.imports)
-    (String.concat ";" m.Surface.exports)
+    (String.concat ";" (List.map fst m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| imports=1 exports=[id] tops=1 |}]
 ;;

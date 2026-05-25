@@ -1,106 +1,6 @@
 open Cmdliner
 module Tty = Asai.Tty.Make (Violet_elab.Reporter.Message)
 
-let module_name filename = Filename.chop_extension @@ Filename.basename filename
-
-type mode =
-  | Project of Violet_project.Resolve.project
-  | Single_file of string (* root directory used as fallback search base *)
-
-let mode_for_entry ?explicit_root (filename : string) : mode =
-  let mk_project root =
-    try Project (Violet_project.Resolve.load root) with
-    | Violet_project.Resolve.Project_error msg ->
-      Violet_elab.Reporter.fatalf Parse_error "%s" msg
-  in
-  match explicit_root with
-  | Some root -> mk_project root
-  | None ->
-    let start =
-      let full =
-        if Filename.is_relative filename
-        then Filename.concat (Sys.getcwd ()) filename
-        else filename
-      in
-      Filename.dirname full
-    in
-    (match Violet_project.Root.find_root start with
-     | Some root -> mk_project root
-     | None -> Single_file (Filename.dirname filename))
-;;
-
-let rec walk_vt_files (dir : string) : string list =
-  if not (Sys.file_exists dir)
-  then []
-  else
-    Sys.readdir dir
-    |> Array.to_list
-    |> List.concat_map (fun entry ->
-      (* skip dotfiles and _build *)
-      if String.length entry > 0 && entry.[0] = '.'
-      then []
-      else if entry = "_build"
-      then []
-      else (
-        let full = Filename.concat dir entry in
-        if Sys.is_directory full
-        then walk_vt_files full
-        else if Filename.check_suffix entry ".vt"
-        then [ full ]
-        else []))
-;;
-
-type dependencies = (string, string list) Hashtbl.t
-type modules = (string, Violet_elab.Surface.t) Hashtbl.t
-
-(* `prefix_segs` are the canonical module-path segments above the file being
-   prepared. Each child's canonical key is `prefix_segs @ user_import`; the
-   prefix grows by the crossed dep_key whenever an import crosses into a dep,
-   so the same physical file gets a single canonical key regardless of which
-   consumer's spelling reached it. The Surface.t stored in mods has its
-   `imports` rewritten to canonical paths so the elaborator's `renaming` finds
-   each imported module's section. *)
-let rec prepare_dependencies
-          (mode : mode)
-          (prefix_segs : string list)
-          (mods : modules)
-          (deps : dependencies)
-          (key : string)
-          (m : Violet_elab.Surface.t)
-  =
-  if Hashtbl.mem deps key
-  then ()
-  else begin
-    let canonical_libraries = List.map (fun lib -> prefix_segs @ lib) m.imports in
-    Hashtbl.add mods key { m with imports = canonical_libraries };
-    Hashtbl.add deps key (List.map (String.concat "/") canonical_libraries);
-    List.iter2
-      (fun user_library canonical_library ->
-         let canonical_key = String.concat "/" canonical_library in
-         let next_mode, next_segs, filepath =
-           match mode with
-           | Project proj ->
-             let p, crossed, fp =
-               Violet_project.Resolve.resolve_import_in proj user_library
-             in
-             let ns =
-               match crossed with
-               | Some k -> prefix_segs @ [ k ]
-               | None -> prefix_segs
-             in
-             Project p, ns, fp
-           | Single_file root ->
-             ( mode
-             , prefix_segs
-             , Filename.concat root (String.concat "/" user_library ^ ".vt") )
-         in
-         let m = Violet_elab.Parser.parse_file filepath in
-         prepare_dependencies next_mode next_segs mods deps canonical_key m)
-      m.imports
-      canonical_libraries
-  end
-;;
-
 let version = "0.4.0"
 
 let load_cmd ~env =
@@ -123,9 +23,9 @@ let load_cmd ~env =
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
         let m = Violet_elab.Parser.parse_file filename in
-        let mode = mode_for_entry ?explicit_root filename in
-        let entry_key = module_name m.name in
-        prepare_dependencies mode [] mods deps entry_key m;
+        let mode = Violet_project.Loader.mode_for_entry ?explicit_root filename in
+        let entry_key = Violet_project.Loader.module_name m.name in
+        Violet_project.Loader.prepare_dependencies mode [] mods deps entry_key m;
         (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
            List.iter
@@ -166,8 +66,14 @@ let check_cmd ~env =
         match file_opt with
         | Some filename ->
           let m = Violet_elab.Parser.parse_file filename in
-          let mode = mode_for_entry ?explicit_root filename in
-          prepare_dependencies mode [] mods deps (module_name m.name) m;
+          let mode = Violet_project.Loader.mode_for_entry ?explicit_root filename in
+          Violet_project.Loader.prepare_dependencies
+            mode
+            []
+            mods
+            deps
+            (Violet_project.Loader.module_name m.name)
+            m;
           (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
            | Sorted r ->
              List.iter
@@ -195,13 +101,19 @@ let check_cmd ~env =
             | Violet_project.Resolve.Project_error msg ->
               Violet_elab.Reporter.fatalf Parse_error "%s" msg
           in
-          let mode = Project proj in
+          let mode = Violet_project.Loader.Project proj in
           let src_dir = Filename.concat root "src" in
-          let files = walk_vt_files src_dir in
+          let files = Violet_project.Loader.walk_vt_files src_dir in
           List.iter
             (fun filename ->
                let m = Violet_elab.Parser.parse_file filename in
-               prepare_dependencies mode [] mods deps (module_name m.name) m)
+               Violet_project.Loader.prepare_dependencies
+                 mode
+                 []
+                 mods
+                 deps
+                 (Violet_project.Loader.module_name m.name)
+                 m)
             files;
           (match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
            | Sorted r ->
@@ -353,13 +265,29 @@ let update_cmd ~env =
       $ arg_root)
 ;;
 
+let lsp_cmd ~env =
+  let doc = "Start language server (LSP over stdio)" in
+  let info = Cmd.info "lsp" ~version ~doc in
+  let arg_stdio =
+    Arg.value @@ Arg.flag @@ Arg.info [ "stdio" ] ~doc:"Use stdio transport (default)"
+  in
+  let run _stdio = Violet_langserver.Server.run ~env () in
+  Cmd.v info Term.(const run $ arg_stdio)
+;;
+
 let cmd ~env =
   let doc = "violet" in
   let man = [ `S Manpage.s_bugs; `S Manpage.s_authors; `P "Lîm Tsú-thuàn" ] in
   let info = Cmd.info "violet" ~version ~doc ~man in
   Cmd.group
     info
-    [ load_cmd ~env; check_cmd ~env; update_cmd ~env; new_cmd ~env; add_cmd ~env ]
+    [ load_cmd ~env
+    ; check_cmd ~env
+    ; update_cmd ~env
+    ; new_cmd ~env
+    ; add_cmd ~env
+    ; lsp_cmd ~env
+    ]
 ;;
 
 let () =
