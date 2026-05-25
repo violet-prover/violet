@@ -6,6 +6,6 @@
 
 \universe U
 
-\let K {A : U} (a : A) : (p : Id a a) -> Id p refl \where
-  K a p <= \elim p
-  | K a refl => refl
+\let K {A : U} (a : A) (P : a = a -> U) : (p : P refl) -> (e : a = a) -> P e \where
+  K a P p e <= \elim e
+  | K a P p refl => refl
