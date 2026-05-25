@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- update name of recursive call in context, now one will see `f m'` instead of `ih-m` for definition `f`
 - interaction module
 
 ## 0.4.0

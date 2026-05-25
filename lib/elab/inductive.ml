@@ -570,7 +570,7 @@ let process_clause
     List.filter_map
       (fun (v, kind) ->
          match (kind : Context.binder_kind) with
-         | Context.Recursive _ -> Some (v, "ih-" ^ v)
+         | Context.Recursive _ -> Some (v, func_name ^ " " ^ v)
          | Context.Regular -> None)
       (List.combine vs ctor_info_.binder_kinds)
   in
@@ -1084,7 +1084,10 @@ let build_elim_body_unify
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
                     Surface.Lambda
-                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
+                      { name = Named (func_name ^ " " ^ v)
+                      ; bound = body
+                      ; implicit = false
+                      }
                   | Context.Regular -> body
                 in
                 Surface.Lambda { name = Named v; bound = inner; implicit })
@@ -1508,7 +1511,10 @@ let build_elim_body
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
                     Surface.Lambda
-                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
+                      { name = Named (func_name ^ " " ^ v)
+                      ; bound = body
+                      ; implicit = false
+                      }
                   | Context.Regular -> body
                 in
                 Surface.Lambda { name = Named v; bound = inner; implicit })
@@ -2205,11 +2211,11 @@ let%expect_test "rewrite_recursive_calls: case-suc of add" =
       ~func_name:"add'"
       ~arity:2
       ~target_pos:0
-      ~rec_arg_to_ih:[ "m", "ih-m" ]
+      ~rec_arg_to_ih:[ "m", "add' m" ]
       body
   in
   print_string @@ [%show: Surface.preterm] rewritten;
-  [%expect {| (ih-m n) |}]
+  [%expect {| (add' m n) |}]
 ;;
 
 let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
@@ -2225,7 +2231,7 @@ let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
       ~func_name:"add'"
       ~arity:2
       ~target_pos:0
-      ~rec_arg_to_ih:[ "m", "ih-m" ]
+      ~rec_arg_to_ih:[ "m", "add' m" ]
       body
   in
   print_string @@ [%show: Surface.preterm] rewritten;
