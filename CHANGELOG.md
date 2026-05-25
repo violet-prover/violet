@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- interaction module
+
 ## 0.4.0
 
 - universe polymorphic properly
