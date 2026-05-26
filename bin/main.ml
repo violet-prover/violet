@@ -16,7 +16,14 @@ let mode_for_entry ?explicit_root (filename : string) : mode =
   match explicit_root with
   | Some root -> mk_project root
   | None ->
-    let start = Filename.dirname (Filename.concat (Sys.getcwd ()) filename) in
+    let start =
+      let full =
+        if Filename.is_relative filename
+        then Filename.concat (Sys.getcwd ()) filename
+        else filename
+      in
+      Filename.dirname full
+    in
     (match Violet_project.Root.find_root start with
      | Some root -> mk_project root
      | None -> Single_file (Filename.dirname filename))
