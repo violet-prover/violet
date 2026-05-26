@@ -720,7 +720,60 @@ let rec core_term_to_surface
     (match List.assoc_opt n owner_map with
      | Some owner -> Surface.Var [ owner; n ]
      | None -> Surface.Var [ n ])
-  | Core.App (f, a) -> Surface.App (false, rb f, rb a)
+  | Core.App _ ->
+    let rec collect_spine acc = function
+      | Core.App (f, a) -> collect_spine (a :: acc) f
+      | head -> head, acc
+    in
+    let head, spine = collect_spine [] t in
+    let imps =
+      match head with
+      | Core.Var x ->
+        let ind_imps =
+          match Context.S.resolve [ x ] with
+          | Some (_, `Inductive info) ->
+            let pi = List.map (fun (p : _ Syntax.binder) -> p.implicit) info.params in
+            let di = List.map (fun (d : _ Syntax.binder) -> d.implicit) info.deps in
+            Some (pi @ di)
+          | _ -> None
+        in
+        let ctor_imps =
+          match List.assoc_opt x owner_map with
+          | Some owner ->
+            (match Context.S.resolve [ owner ] with
+             | Some (_, `Inductive info) ->
+               let data_imps = List.map (fun _ -> true) info.params in
+               let ctor_opt =
+                 List.find_opt
+                   (fun (c : _ Syntax.binder) -> Syntax.Name.to_string c.name = x)
+                   info.ctors
+               in
+               let binder_imps =
+                 match ctor_opt with
+                 | Some c ->
+                   List.map
+                     (fun (b : _ Syntax.binder) -> b.implicit)
+                     (Surface.telescope c.bound)
+                 | None -> []
+               in
+               Some (data_imps @ binder_imps)
+             | _ -> None)
+          | None -> None
+        in
+        (match ind_imps, ctor_imps with
+         | Some imps, _ -> imps
+         | _, Some imps -> imps
+         | None, None -> [])
+      | _ -> []
+    in
+    let head_s = rb head in
+    List.fold_left
+      (fun (acc, i) arg ->
+         let imp = i < List.length imps && List.nth imps i in
+         Surface.App (imp, acc, rb arg), i + 1)
+      (head_s, 0)
+      spine
+    |> fst
   | Core.Lambda { name; bound; implicit } ->
     let ns = Syntax.Name.to_string name in
     let cv' = Context_view.extend cv ns in
@@ -2166,6 +2219,11 @@ let build_inline_elim_dispatch
     | _ -> target_full_spine
   in
   let target_full_spine_surface = List.map readback_v target_full_spine_raw in
+  let elim_param_imps =
+    let pi = List.map (fun (p : _ Syntax.binder) -> p.implicit) info.params in
+    let di = List.map (fun (d : _ Syntax.binder) -> d.implicit) info.deps in
+    pi @ di
+  in
   let refl_args =
     if id_reify then List.init m_indices (fun _ -> Surface.Var [ "Id"; "refl" ]) else []
   in
@@ -2174,10 +2232,19 @@ let build_inline_elim_dispatch
     | Some e -> e
     | None -> Surface.Var [ target_name ]
   in
+  let all_args =
+    target_full_spine_surface @ [ target_arg; motive ] @ case_args @ refl_args
+  in
+  let n_spine = List.length target_full_spine_surface in
   List.fold_left
-    (fun acc a -> Surface.App (false, acc, a))
-    (Surface.Var [ ind_head; "elim" ])
-    (target_full_spine_surface @ [ target_arg; motive ] @ case_args @ refl_args)
+    (fun (acc, i) a ->
+       let imp =
+         i < n_spine && i < List.length elim_param_imps && List.nth elim_param_imps i
+       in
+       Surface.App (imp, acc, a), i + 1)
+    (Surface.Var [ ind_head; "elim" ], 0)
+    all_args
+  |> fst
 ;;
 
 let with_handlers (k : unit -> 'a) : 'a =

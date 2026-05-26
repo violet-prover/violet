@@ -1,0 +1,8 @@
+\import std/equality
+
+\universe U
+
+\let UIP {A : U} {a b : A} : (p q : a = b) -> p = q \where
+  UIP p q <= \elim p
+  | UIP refl q <= \elim q
+  | UIP refl refl => refl
