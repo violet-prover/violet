@@ -10,7 +10,7 @@ bug-reports: "https://codeberg.org/dannypsnl/violet/issues"
 depends: [
   "ocaml" {>= "5.3"}
   "dune" {>= "3.17"}
-  "unix"
+  "base-unix"
   "violet_surface"
   "violet_elab"
   "tsort"

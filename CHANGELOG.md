@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.1
+
+- fix deps
+
 ## 0.5.0
 
 - fix: handle VIdAbsurd in unifier

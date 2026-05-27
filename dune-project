@@ -67,7 +67,7 @@
 (package
  (name violet_project)
  (synopsis "Violet project loader and manifest management")
- (depends (ocaml (>= 5.3)) dune unix violet_surface violet_elab tsort ppx_deriving ppx_expect))
+ (depends (ocaml (>= 5.3)) dune base-unix violet_surface violet_elab tsort ppx_deriving ppx_expect))
 
 (package
  (name violet_langserver)
