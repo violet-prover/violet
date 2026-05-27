@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0
+
 - fix: handle VIdAbsurd in unifier
 - improve error report messages about `<= split` and `<= elim`
 - `violet lsp --stdio` runs a language server
