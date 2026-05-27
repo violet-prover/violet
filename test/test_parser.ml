@@ -261,8 +261,9 @@ let record_lit_test () =
       | Violet_surface.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_surface.Surface.SI_Name ("f", _); Violet_surface.Surface.SI_Imp_arg inner ]
-           ->
+         | [ Violet_surface.Surface.SI_Name ("f", _)
+           ; Violet_surface.Surface.SI_Imp_arg inner
+           ] ->
            let inner_str = Violet_surface.Surface.show_preterm (peel inner) in
            if String.equal inner_str "x"
            then Format.printf "record_lit_test OK  implicit-app@."
@@ -391,8 +392,9 @@ let record_update_test () =
       | Violet_surface.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_surface.Surface.SI_Name ("f", _); Violet_surface.Surface.SI_Imp_arg _ ] ->
-           Format.printf "record_update_test OK  regression-implicit-app@."
+         | [ Violet_surface.Surface.SI_Name ("f", _)
+           ; Violet_surface.Surface.SI_Imp_arg _
+           ] -> Format.printf "record_update_test OK  regression-implicit-app@."
          | _ ->
            Format.printf
              "record_update_test FAIL regression-implicit-app: body=%s@."
