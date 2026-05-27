@@ -65,21 +65,13 @@ let has (x : string) : bool =
 let lookup (x : string) : Core.value_ty =
   match S.resolve [ x ] with
   | Some (v, _) -> v
-  | None ->
-    Reporter.fatalf
-      NoVar_error
-      "cannot find type of `%s` in context"
-      (String.concat " " [ x ])
+  | None -> Reporter.fatalf NoVar_error "`%s` is not defined" x
 ;;
 
 let lookup_path (xs : string list) : Core.value_ty =
   match S.resolve xs with
   | Some (v, _) -> v
-  | None ->
-    Reporter.fatalf
-      NoVar_error
-      "cannot find type of `%s` in context"
-      (String.concat "/" xs)
+  | None -> Reporter.fatalf NoVar_error "`%s` is not defined" (String.concat "/" xs)
 ;;
 
 let has_path (xs : string list) : bool = Option.is_some (S.resolve xs)

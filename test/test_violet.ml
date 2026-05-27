@@ -106,19 +106,17 @@ let run_check_in_child filename ~msg_file =
   Unix.dup2 devnull Unix.stderr;
   Unix.close devnull;
   let exit_code = ref 0 in
+  let diag_collector = Violet_common.Diagnostic_collector.create () in
+  let emit d = Violet_common.Diagnostic_collector.emit diag_collector d in
+  let fatal d =
+    emit d;
+    exit_code := 1;
+    raise Exit
+  in
   (try
      Eio_main.run
      @@ fun _env ->
-     Violet_common.Reporter.run
-       ~emit:(fun _ -> ())
-       ~fatal:(fun (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
-         (try
-            let oc = open_out msg_file in
-            output_string oc (Asai.Diagnostic.string_of_text d.explanation.value);
-            close_out oc
-          with
-          | _ -> ());
-         exit 1)
+     Violet_common.Reporter.run ~emit ~fatal
      @@ fun () ->
      let open Violet_elab.Context.Handler in
      Violet_elab.Context.S.run ~shadow ~not_found ~hook
@@ -132,7 +130,17 @@ let run_check_in_child filename ~msg_file =
           Violet_elab.Elab.check_module ~module_path m)
        (load_with_deps filename)
    with
-   | _ -> exit_code := 1);
+   | _ -> ());
+  (match Violet_common.Diagnostic_collector.latest_error diag_collector with
+   | Some d ->
+     exit_code := 1;
+     (try
+        let oc = open_out msg_file in
+        output_string oc (Asai.Diagnostic.string_of_text d.explanation.value);
+        close_out oc
+      with
+      | _ -> ())
+   | None -> ());
   exit !exit_code
 ;;
 
@@ -292,6 +300,7 @@ let expected : (string * want) list =
     , `FailWith [ "n : Nat"; "which is a parameter" ] )
   ; ( "./fixtures/bad/bad-elim-param.vt"
     , `FailWith [ "target"; "is a parameter"; "move it past" ] )
+  ; "./fixtures/bad/contains-many-errors.vt", `FailWith [ "is not defined" ]
   ]
 ;;
 

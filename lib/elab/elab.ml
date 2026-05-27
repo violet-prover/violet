@@ -904,10 +904,15 @@ let check_module
        Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]))
     file.imports;
   let goal_counter = ref 0 in
+  let run_top (top : Surface.top Asai.Range.located) =
+    let loc = Option.get top.loc in
+    check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value
+  in
   List.iter
-    (fun (top : Surface.top Asai.Range.located) ->
-       let loc = Option.get top.loc in
-       check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value)
+    (fun top ->
+       Reporter.try_with
+         ~fatal:(fun diag -> Reporter.emit_diagnostic diag)
+         (fun () -> Reporter.merge_loc top.loc (fun () -> run_top top)))
     file.tops;
   let bound_names : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   Yuujinchou.Trie.iter
@@ -1026,13 +1031,9 @@ let%expect_test "module: \\export-less let stays private from importers" =
   let mod_b : Surface.t =
     { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
   in
-  (try
-     with_handlers (fun () ->
-       check_module mod_a;
-       check_module mod_b);
-     print_endline "UNEXPECTED: importer saw private name"
-   with
-   | _ -> print_endline "rejected as expected (foo is private)");
+  with_handlers_emitting (fun () ->
+    check_module mod_a;
+    check_module mod_b);
   [%expect
     {|
     +checking [module] a (a.vt)
@@ -1045,7 +1046,7 @@ let%expect_test "module: \\export-less let stays private from importers" =
     +
     +[Warning] Could not find any data within the subtree at a.
     +
-    rejected as expected (foo is private)
+    [Reporter.Message.NoVar_error] `foo` is not defined
     |}]
 ;;
 

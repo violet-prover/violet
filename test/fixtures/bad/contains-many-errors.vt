@@ -1,0 +1,5 @@
+\universe U
+
+\let bad1 : U => not_defined
+\let good (A : U) : U => A
+\let bad2 : U => also_not_defined

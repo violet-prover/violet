@@ -291,19 +291,26 @@ let cmd ~env =
 ;;
 
 let () =
-  let fatal diagnostics =
-    Tty.display diagnostics;
+  let collector = Violet_common.Diagnostic_collector.create () in
+  let emit diag =
+    Violet_common.Diagnostic_collector.emit collector diag;
+    Tty.display diag
+  in
+  let fatal diag =
+    emit diag;
     exit 1
   in
   Printexc.record_backtrace true;
   Eio_main.run
   @@ fun env ->
-  Violet_surface.Reporter.run ~emit:Tty.display ~fatal
+  Violet_surface.Reporter.run ~emit ~fatal
   @@ fun () ->
   let open Violet_elab.Context.Handler in
   Violet_elab.Context.S.run ~shadow ~not_found ~hook
   @@ fun () ->
   let open Violet_elab.Env.Handler in
   Violet_elab.Env.S.run ~shadow ~not_found ~hook
-  @@ fun () -> exit @@ Cmd.eval ~catch:false @@ cmd ~env
+  @@ fun () ->
+  let code = Cmd.eval ~catch:false @@ cmd ~env in
+  if Violet_common.Diagnostic_collector.has_errors collector then exit 1 else exit code
 ;;

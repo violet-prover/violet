@@ -11,14 +11,14 @@ let recheck (t : t) ~uri : unit =
   | Some d ->
     let filename = Linol_lsp.Lsp.Types.DocumentUri.to_path uri in
     let module_path = !(d.snapshot).module_path in
-    let diags : Linol_lsp.Lsp.Types.Diagnostic.t list ref = ref [] in
+    let diag_collector = Violet_common.Diagnostic_collector.create () in
     let collector = Violet_interactive.Collector.create () in
     let aborted = ref false in
     let emit (diag : Violet_common.Reporter.Message.t Asai.Diagnostic.t) =
-      diags := Diagnostics.lsp_of_asai diag :: !diags
+      Violet_common.Diagnostic_collector.emit diag_collector diag
     in
     let fatal (diag : Violet_common.Reporter.Message.t Asai.Diagnostic.t) =
-      diags := Diagnostics.lsp_of_asai diag :: !diags;
+      emit diag;
       aborted := true;
       raise Exit
     in
@@ -61,10 +61,17 @@ let recheck (t : t) ~uri : unit =
      | Exit -> ());
     let new_index = Violet_interactive.Collector.to_index collector in
     let prev_last_good = !(d.snapshot).last_good_index in
-    let last_good = if !aborted then prev_last_good else new_index in
+    let has_errors =
+      !aborted || Violet_common.Diagnostic_collector.has_errors diag_collector
+    in
+    let last_good = if has_errors then prev_last_good else new_index in
+    let lsp_diags =
+      List.map Diagnostics.lsp_of_asai
+      @@ Violet_common.Diagnostic_collector.all diag_collector
+    in
     d.snapshot
     := { module_path
-       ; diagnostics = List.rev !diags
+       ; diagnostics = lsp_diags
        ; index = new_index
        ; last_good_index = last_good
        };
@@ -124,6 +131,31 @@ let%expect_test "recheck of clean buffer populates index" =
     +checking [module] Demo (/tmp/Demo.vt)
     diags=0 has_entries=true
   |}]
+;;
+
+let%expect_test "recheck continues after first error and collects multiple diagnostics" =
+  let store = Doc_store.create () in
+  let project_index = Project_index.create () in
+  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Multi.vt" in
+  let text =
+    {|\universe U
+\let bad1 : U => not_defined
+\let good (A : U) : U => A
+\let bad2 : U => also_not_defined
+|}
+  in
+  let _ = Doc_store.update store ~uri ~text ~version:1 in
+  let c = create ~store ~project_index in
+  recheck c ~uri;
+  let d = Option.get (Doc_store.find store ~uri) in
+  let snap = !(d.snapshot) in
+  let entry_count = List.length (Violet_interactive.Index.all_entries snap.index) in
+  Printf.printf "diags=%d entries=%d" (List.length snap.diagnostics) entry_count;
+  [%expect
+    {|
+    +checking [module] Multi (/tmp/Multi.vt)
+    diags=2 entries=7
+    |}]
 ;;
 
 let%expect_test "recheck of broken buffer preserves last_good_index" =

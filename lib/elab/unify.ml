@@ -335,6 +335,142 @@ let%expect_test "record eta: VRecordIntro vs neutral unifies" =
   [%expect {| ok |}]
 ;;
 
+let%expect_test "lambda eta: (fun x => f x) unifies with f" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.make ~names:(Snoc (Emp, "f")) ~lvl:1 in
+  let f : Core.value = Core.RigidLocal (0, Emp) in
+  let eta_f : Core.value =
+    Core.VLambda
+      { name = Named "x"
+      ; implicit = false
+      ; bound = (fun x -> Core.RigidLocal (0, Snoc (Emp, x)))
+      }
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv f eta_f;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| ok |}]
+;;
+
+let%expect_test "Pi codomain mismatch rejects" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let pi1 =
+    Core.VPi
+      ( { name = Named "x"; bound = Core.Universe Level.LZero; implicit = false }
+      , fun _ -> Core.Universe Level.LZero )
+  in
+  let pi2 =
+    Core.VPi
+      ( { name = Named "x"; bound = Core.Universe Level.LZero; implicit = false }
+      , fun _ -> Core.Universe (Level.lsuc Level.LZero) )
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv pi1 pi2;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| FAILED |}]
+;;
+
+let%expect_test "spine mismatch rejects cleanly" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
+  let v1 : Core.value = Core.RigidLocal (0, Snoc (Emp, Core.Universe Level.LZero)) in
+  let v2 : Core.value =
+    Core.RigidLocal (0, Snoc (Emp, Core.Universe (Level.lsuc Level.LZero)))
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv v1 v2;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| FAILED |}]
+;;
+
+let%expect_test "same rigid head with same spine unifies" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "f"), "a")) ~lvl:2 in
+  let arg : Core.value = Core.RigidLocal (1, Emp) in
+  let v : Core.value = Core.RigidLocal (0, Snoc (Emp, arg)) in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv v v;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| ok |}]
+;;
+
+let%expect_test "distinct rigid heads reject" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
+  let v1 : Core.value = Core.RigidLocal (0, Emp) in
+  let v2 : Core.value = Core.RigidLocal (1, Emp) in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv v1 v2;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| FAILED |}]
+;;
+
+let%expect_test "universe level mismatch rejects" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv (Core.Universe Level.LZero) (Core.Universe (Level.lsuc Level.LZero));
+    "ok"
+  in
+  print_endline result;
+  [%expect {| FAILED |}]
+;;
+
+let%expect_test "universe same level unifies" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv (Core.Universe Level.LZero) (Core.Universe Level.LZero);
+    "ok"
+  in
+  print_endline result;
+  [%expect {| ok |}]
+;;
+
+let%expect_test "meta solving: flex = rigid solves meta" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.make ~names:(Snoc (Emp, "x")) ~lvl:1 in
+  let m = Core.MetaVar 99999 in
+  let x : Core.value = Core.RigidLocal (0, Emp) in
+  let flex : Core.value = Core.Flex (m, Snoc (Emp, x)) in
+  let target : Core.value = Core.Universe Level.LZero in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv flex target;
+    match Meta.lookup_meta m with
+    | Some _ -> "solved"
+    | None -> "unsolved"
+  in
+  print_endline result;
+  [%expect {| solved |}]
+;;
+
 let%expect_test "quote renders a local by binder name in a unify context" =
   let cv = Context_view.empty in
   let cv = Context_view.extend cv "n" in

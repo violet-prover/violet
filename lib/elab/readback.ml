@@ -3,6 +3,7 @@ open Violet_common
 module Syntax = Violet_kernel.Syntax
 module Context_view = Violet_kernel.Context_view
 module Pretty = Violet_kernel.Pretty
+module Level = Violet_kernel.Level
 module Evaluation = Wiring.Eval
 open Syntax
 open Surface_utils
@@ -182,6 +183,75 @@ let rec core_term_to_surface
     Surface.RecordLit (List.map (fun (f, e) -> f, rb e) fields)
   | Core.RecordProj { record; field } -> Surface.Proj (rb record, field)
   | Core.IdAbsurd t -> Surface.IdAbsurd (rb t)
+;;
+
+let%expect_test "core_term_to_surface: Universe" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Universe Level.LZero) in
+  print_string (Surface.show_preterm result);
+  [%expect {| 𝓤 |}]
+;;
+
+let%expect_test "core_term_to_surface: LocalVar renders binder name" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.extend Context_view.empty "x" in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.LocalVar 0) in
+  print_string (Surface.show_preterm result);
+  [%expect {| x |}]
+;;
+
+let%expect_test "core_term_to_surface: Lambda preserves binder name" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let tm = Core.Lambda { name = Named "y"; bound = Core.LocalVar 0; implicit = false } in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in
+  print_string (Surface.show_preterm result);
+  [%expect {| fun y => y |}]
+;;
+
+let%expect_test "core_term_to_surface: Meta becomes Hole" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Meta (Core.MetaVar 0)) in
+  print_string (Surface.show_preterm result);
+  [%expect {| _ |}]
+;;
+
+let%expect_test "core_term_to_surface: Var with owner_map qualifies" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let owner_map = [ "zero", "Nat"; "suc", "Nat" ] in
+  let result = core_term_to_surface ~loc ~cv ~owner_map (Core.Var "zero") in
+  print_string (Surface.show_preterm result);
+  [%expect {| Nat/zero |}]
+;;
+
+let%expect_test "core_term_to_surface: RecordIntro" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let tm =
+    Core.RecordIntro
+      { name = "Pair"; fields = [ "fst", Core.Var "a"; "snd", Core.Var "b" ] }
+  in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in
+  print_string (Surface.show_preterm result);
+  [%expect {| { fst = a, snd = b } |}]
+;;
+
+let%expect_test "core_term_to_surface: RecordProj" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let tm = Core.RecordProj { record = Core.Var "p"; field = "x" } in
+  let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in
+  print_string (Surface.show_preterm result);
+  [%expect {| p.x |}]
+;;
+
+let%expect_test "cv_of_user_level_names builds correct context" =
+  let cv = cv_of_user_level_names [ 0, "n"; 1, "m" ] in
+  Printf.printf "lvl=%d" (Context_view.lvl cv);
+  [%expect {| lvl=2 |}]
 ;;
 
 let readback_value_to_surface
