@@ -13,18 +13,6 @@ let loc_or (default : Asai.Range.t) (t : Surface.preterm) : Asai.Range.t =
   Option.value (loc_of t) ~default
 ;;
 
-(* Wrap a constructor's user-written type with implicit Π over the inductive
-   type's params, so the stored global type is self-contained and so the
-   params are in scope while checking the user's constructor type. *)
-let close_ctor_type (params : Surface.pretype binder list) (typ : Surface.pretype)
-  : Surface.pretype
-  =
-  List.fold_right
-    (fun param result -> Surface.Pi ({ param with implicit = true }, result))
-    params
-    typ
-;;
-
 let drop_key (name : string) (assoc : (string * 'a) list) : (string * 'a) list =
   List.filter (fun (k, _) -> not (String.equal k name)) assoc
 ;;
@@ -190,61 +178,6 @@ let rewrite_recursive_calls
     | Surface.Inline_elim _ as t -> t
   in
   rw body
-;;
-
-(* Walk the function's full Pi tower (params ++ outer Pi-layers of
-   signature) in parallel with the user's intros to produce one entry
-   per Pi-binder: `(name, implicit)`. Implicit Pi-binders the user
-   didn't bracket are auto-filled from the binder's own name; explicit
-   Pi-binders must be matched by a bare intro. *)
-let compute_effective_intros
-      ~(loc : Asai.Range.t)
-      ~(bindings : Surface.pretype binder list)
-      ~(signature : Surface.pretype)
-      ~(intros : (string * bool) list)
-  : (string * bool) list
-  =
-  let rec walk_pi params sig_binders user =
-    match params, user with
-    | (_, true) :: prest, (uname, true) :: urest ->
-      (uname, true) :: walk_pi prest sig_binders urest
-    | (pname, true) :: prest, _ -> (pname, true) :: walk_pi prest sig_binders user
-    | (_, false) :: prest, (uname, false) :: urest ->
-      (uname, false) :: walk_pi prest sig_binders urest
-    | (pname, false) :: _, (uname, true) :: _ ->
-      Reporter.fatalf
-        ~loc
-        Elab_error
-        "intro `{%s}` provided at explicit param `%s`"
-        uname
-        pname
-    | (pname, false) :: _, [] ->
-      Reporter.fatalf ~loc Elab_error "missing intro for explicit param `%s`" pname
-    | [], _ -> walk_sig sig_binders user
-  and walk_sig (bs : Surface.pretype binder list) user =
-    match bs, user with
-    | _, [] -> []
-    | [], (uname, _) :: _ ->
-      Reporter.fatalf ~loc Elab_error "intro `%s` has no matching Pi-layer" uname
-    | b :: rest, ((uname, u_impl) :: urest as user) ->
-      (match b.implicit, u_impl with
-       | true, true -> (uname, true) :: walk_sig rest urest
-       | true, false -> (Name.to_string b.name, true) :: walk_sig rest user
-       | false, false -> (uname, false) :: walk_sig rest urest
-       | false, true ->
-         Reporter.fatalf
-           ~loc
-           Elab_error
-           "intro `{%s}` at explicit Pi-binder `%s`"
-           uname
-           (Name.to_string b.name))
-  in
-  let param_binders =
-    List.map
-      (fun (b : Surface.pretype binder) -> Name.to_string b.name, b.implicit)
-      bindings
-  in
-  walk_pi param_binders (pi_domain signature) intros
 ;;
 
 (* Walk effective intros in parallel with one clause's patterns.
@@ -650,6 +583,61 @@ let qualify_ctor_namespaces
     opened_namespaces
 ;;
 
+(* Walk the function's full Pi tower (params ++ outer Pi-layers of
+   signature) in parallel with the user's intros to produce one entry
+   per Pi-binder: `(name, implicit)`. Implicit Pi-binders the user
+   didn't bracket are auto-filled from the binder's own name; explicit
+   Pi-binders must be matched by a bare intro. *)
+let compute_effective_intros
+      ~(loc : Asai.Range.t)
+      ~(bindings : Surface.pretype binder list)
+      ~(signature : Surface.pretype)
+      ~(intros : (string * bool) list)
+  : (string * bool) list
+  =
+  let rec walk_pi params sig_binders user =
+    match params, user with
+    | (_, true) :: prest, (uname, true) :: urest ->
+      (uname, true) :: walk_pi prest sig_binders urest
+    | (pname, true) :: prest, _ -> (pname, true) :: walk_pi prest sig_binders user
+    | (_, false) :: prest, (uname, false) :: urest ->
+      (uname, false) :: walk_pi prest sig_binders urest
+    | (pname, false) :: _, (uname, true) :: _ ->
+      Reporter.fatalf
+        ~loc
+        Elab_error
+        "intro `{%s}` provided at explicit param `%s`"
+        uname
+        pname
+    | (pname, false) :: _, [] ->
+      Reporter.fatalf ~loc Elab_error "missing intro for explicit param `%s`" pname
+    | [], _ -> walk_sig sig_binders user
+  and walk_sig (bs : Surface.pretype binder list) user =
+    match bs, user with
+    | _, [] -> []
+    | [], (uname, _) :: _ ->
+      Reporter.fatalf ~loc Elab_error "intro `%s` has no matching Pi-layer" uname
+    | b :: rest, ((uname, u_impl) :: urest as user) ->
+      (match b.implicit, u_impl with
+       | true, true -> (uname, true) :: walk_sig rest urest
+       | true, false -> (Name.to_string b.name, true) :: walk_sig rest user
+       | false, false -> (uname, false) :: walk_sig rest urest
+       | false, true ->
+         Reporter.fatalf
+           ~loc
+           Elab_error
+           "intro `{%s}` at explicit Pi-binder `%s`"
+           uname
+           (Name.to_string b.name))
+  in
+  let param_binders =
+    List.map
+      (fun (b : Surface.pretype binder) -> Name.to_string b.name, b.implicit)
+      bindings
+  in
+  walk_pi param_binders (pi_domain signature) intros
+;;
+
 let split_target_params_indices
       ~(loc : Asai.Range.t)
       ~(n_total_params : int)
@@ -670,8 +658,8 @@ let split_target_params_indices
 
 (* For a constructor, peel its core type past the data params and its own
    field-binders to reach its index spine. Returns the index spine, the flex
-   levels assigned to the ctor's fields, and the level→original-binder-name
-   map (used later to translate σ back into clause-binder names). *)
+   levels assigned to the ctor's fields, and the map
+   from level to original-binder-name. *)
 let ctor_spine_and_flex
       ~(loc : Asai.Range.t)
       ~(ind_head : string)
@@ -1040,7 +1028,7 @@ let build_elim_body_unify
              ~check_loc:loc
              ctor_info_.binder_names
              (wrap_p_binders absurd_body)
-         | Index_unify.Success sigma ->
+         | Index_unify.Success subst_sigma ->
            let clause =
              match opt_clause with
              | Some c -> c
@@ -1067,13 +1055,8 @@ let build_elim_body_unify
                ~normalize_pattern
                clause
            in
-           (* Apply σ as a substitution: ctor field-binder name → surface
-              readback of the σ value. Index_unify's σ maps ctor flex levels
-              to values; the flex_name_map maps levels back to the original
-              ctor binder names, and the user may have renamed those via
-              `cons {m} x xs` syntax (recorded in `pc.vs`). *)
-           let body_after_sigma =
-             let sigma_renamings : (string * Surface.preterm) list =
+           let body_subst_applied =
+             let renamings : (string * Surface.preterm) list =
                List.filter_map
                  (fun (lvl, v) ->
                     match List.assoc_opt lvl flex_name_map with
@@ -1088,12 +1071,12 @@ let build_elim_body_unify
                         | Not_found -> orig_name
                       in
                       Some (user_name, readback_v v))
-                 sigma
+                 subst_sigma
              in
-             subst_vars_surface sigma_renamings pc.rewritten_body
+             subst_vars_surface renamings pc.rewritten_body
            in
            let body_with_siblings =
-             match body_after_sigma with
+             match body_subst_applied with
              | Surface.Inline_elim d when List.length matched_clauses > 1 ->
                let siblings =
                  make_siblings_with_views
@@ -1107,8 +1090,8 @@ let build_elim_body_unify
                    matched_clauses
                in
                Surface.Inline_elim
-                 { d with siblings; outer_subst = sigma @ d.outer_subst }
-             | _ -> body_after_sigma
+                 { d with siblings; outer_subst = subst_sigma @ d.outer_subst }
+             | _ -> body_subst_applied
            in
            let qualified_body =
              qualify_ctor_namespaces

@@ -11,6 +11,23 @@ module Check = Wiring.Check
 open Syntax
 open Bwd
 
+(* A user-written constructor's type is complete only after the parameters
+   of the inductive type are bound implicitly by constructor.
+   Let's take an example here:
+
+   \data List (A : U) : U
+   | nil : List A
+
+   the type of `List/nil` should be `{A : U} -> List A` *)
+let complete_ctor_type (params : Surface.pretype binder list) (typ : Surface.pretype)
+  : Surface.pretype
+  =
+  List.fold_right
+    (fun param acc_ty -> Surface.Pi ({ param with implicit = true }, acc_ty))
+    params
+    typ
+;;
+
 let bind_constructor
       ~(check_type : loc:Asai.Range.t -> local_ctx -> Surface.pretype -> Core.term)
       ~loc
@@ -26,14 +43,14 @@ let bind_constructor
   : unit
   =
   let name = Syntax.Name.to_string name in
-  let typ = Inductive.close_ctor_type params typ in
-  let ctor_ty_tm = check_type ~loc ctx typ in
-  let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
-  let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_ty) in
-  Observer.emit (Def { path = [ ind_name; name ]; loc; name_loc; ty = ctor_ty; pp_ty });
+  let ctor_typ = complete_ctor_type params typ in
+  let ctor_typ_tm = check_type ~loc ctx ctor_typ in
+  let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
+  let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
+  Observer.emit (Def { path = [ ind_name; name ]; loc; name_loc; ty = ctor_typ; pp_ty });
   let ctor_flat = ind_name ^ "/" ^ name in
   (* Context: multi-segment for type-directed surface resolution *)
-  publish_to_context ~exported [ ind_name; name ] (ctor_ty, `Constructor);
+  publish_to_context ~exported [ ind_name; name ] (ctor_typ, `Constructor);
   (* Env: flat key matching the kernel's E.lookup string.
      The Label value carries the BARE name so the eliminator reducer's
      find_ctor_index (which compares against info.ctor_name = bare name) works. *)
@@ -42,7 +59,7 @@ let bind_constructor
      round-trip (Label x -> Var x -> eval -> lookup x) still finds Label x. *)
   publish_to_env ~exported [ name ] (Core.Label (name, Bwd.Emp), `Constructor);
   let qctor_name = module_name ^ "." ^ ind_name ^ "." ^ name in
-  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_ty_tm
+  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_typ_tm
 ;;
 
 let handle_top_data (m : machine) loc data =
