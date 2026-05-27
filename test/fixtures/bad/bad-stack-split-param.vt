@@ -1,0 +1,11 @@
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+# `<= split` directly on a parameter (no intro first)
+\let bad (n : Nat) : Nat \where
+  <= \split
+  | bad zero => ?h1
+  | bad (suc m) => ?h2

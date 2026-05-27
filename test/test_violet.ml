@@ -288,6 +288,8 @@ let expected : (string * want) list =
   ; "./fixtures/src/stress-deep-vec.vt", `Ok
   ; "./fixtures/src/stress-deep-nat.vt", `Ok
   ; "./fixtures/src/underscore-name.vt", `Ok
+  ; ( "./fixtures/bad/bad-stack-split-param.vt"
+    , `FailWith [ "n : Nat"; "which is a parameter" ] )
   ]
 ;;
 

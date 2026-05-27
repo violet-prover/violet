@@ -383,8 +383,18 @@ let rec walk_moves
           data-type's params + deps to prepend to the eliminator's spine. The
           target's type is the domain of the (pattern_position - n_params)-th
           Pi-layer of `signature`. *)
+       let sig_index = pattern_position - n_params in
+       if sig_index < 0
+       then
+         Reporter.fatalf
+           ~loc
+           Elab_error
+           "`<= split` targets `%s : %s` which is a parameter; only arguments introduced \
+            by `<= intro` after the parameters can be split on"
+           (Syntax.Name.to_string target_name)
+           (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target_ty));
        let target_type_surface : Surface.pretype =
-         match List.nth_opt (pi_domain signature) (pattern_position - n_params) with
+         match List.nth_opt (pi_domain signature) sig_index with
          | Some b -> b.bound
          | None ->
            Reporter.fatalf
