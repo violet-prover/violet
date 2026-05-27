@@ -1,6 +1,8 @@
 (* Record elaboration: literal, update, projection, record type declarations. *)
 
 open Elab_common
+open Violet_surface
+open Violet_common
 module Syntax = Violet_kernel.Syntax
 module Level = Violet_kernel.Level
 module Pretty = Violet_kernel.Pretty

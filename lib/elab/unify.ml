@@ -1,3 +1,4 @@
+open Violet_common
 module Syntax = Violet_kernel.Syntax
 module Evaluation = Wiring.Eval
 module Level = Violet_kernel.Level

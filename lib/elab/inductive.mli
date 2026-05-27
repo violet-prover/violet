@@ -3,6 +3,7 @@
    (KTopData_HaveType, KTopElimDef_HaveType, bind_constructor) delegates
    to the functions below. *)
 
+open Violet_surface
 open Violet_kernel.Syntax
 
 (* Wrap a constructor's user-written type with implicit Π over the inductive

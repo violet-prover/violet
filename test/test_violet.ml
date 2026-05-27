@@ -109,9 +109,9 @@ let run_check_in_child filename ~msg_file =
   (try
      Eio_main.run
      @@ fun _env ->
-     Violet_elab.Reporter.run
+     Violet_common.Reporter.run
        ~emit:(fun _ -> ())
-       ~fatal:(fun (d : Violet_elab.Reporter.Message.t Asai.Diagnostic.t) ->
+       ~fatal:(fun (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
          (try
             let oc = open_out msg_file in
             output_string oc (Asai.Diagnostic.string_of_text d.explanation.value);

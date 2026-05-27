@@ -1,3 +1,5 @@
+open Violet_surface
+open Violet_common
 module Syntax = Violet_kernel.Syntax
 open Syntax
 open Surface_utils

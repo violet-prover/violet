@@ -14,10 +14,10 @@ let recheck (t : t) ~uri : unit =
     let diags : Linol_lsp.Lsp.Types.Diagnostic.t list ref = ref [] in
     let collector = Violet_interactive.Collector.create () in
     let aborted = ref false in
-    let emit (diag : Violet_elab.Reporter.Message.t Asai.Diagnostic.t) =
+    let emit (diag : Violet_common.Reporter.Message.t Asai.Diagnostic.t) =
       diags := Diagnostics.lsp_of_asai diag :: !diags
     in
-    let fatal (diag : Violet_elab.Reporter.Message.t Asai.Diagnostic.t) =
+    let fatal (diag : Violet_common.Reporter.Message.t Asai.Diagnostic.t) =
       diags := Diagnostics.lsp_of_asai diag :: !diags;
       aborted := true;
       raise Exit
@@ -25,7 +25,7 @@ let recheck (t : t) ~uri : unit =
     let text_override path = if path = filename then Some d.text else None in
     let on_event = Violet_interactive.Collector.on_event collector in
     (try
-       Violet_elab.Reporter.run ~emit ~fatal (fun () ->
+       Violet_common.Reporter.run ~emit ~fatal (fun () ->
          let open Violet_elab in
          Context.S.run
            ~shadow:Context.Handler.shadow
@@ -37,7 +37,7 @@ let recheck (t : t) ~uri : unit =
            ~not_found:Env.Handler.not_found
            ~hook:Env.Handler.hook
          @@ fun () ->
-         let m = Parser.parse_buffer ~filename d.text in
+         let m = Violet_surface.Parser.parse_buffer ~filename d.text in
          let deps = Hashtbl.create 16 in
          let mods = Hashtbl.create 16 in
          let mode = Violet_project.Loader.mode_for_entry filename in
@@ -78,7 +78,7 @@ let ensure_indexed (t : t) ~file : unit =
     let collector = Violet_interactive.Collector.create () in
     let on_event = Violet_interactive.Collector.on_event collector in
     (try
-       Violet_elab.Reporter.run
+       Violet_common.Reporter.run
          ~emit:(fun _ -> ())
          ~fatal:(fun _ -> raise Exit)
          (fun () ->
@@ -93,7 +93,7 @@ let ensure_indexed (t : t) ~file : unit =
               ~not_found:Env.Handler.not_found
               ~hook:Env.Handler.hook
             @@ fun () ->
-            let m = Parser.parse_file file in
+            let m = Violet_surface.Parser.parse_file file in
             let module_path = [ Violet_project.Loader.module_name file ] in
             Elab.check_module ~on_event ~module_path m)
      with

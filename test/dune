@@ -6,6 +6,7 @@
  (preprocess
   (pps ppx_deriving.show))
  (libraries
+  violet_common
   violet_surface
   violet_elab
   violet_kernel

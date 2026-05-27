@@ -22,7 +22,7 @@ let lsp_range_of_asai (loc : Asai.Range.t) : Linol_lsp.Lsp.Types.Range.t =
     Linol_lsp.Lsp.Types.Range.create ~start:zero ~end_:zero
 ;;
 
-let lsp_of_asai (d : Violet_elab.Reporter.Message.t Asai.Diagnostic.t)
+let lsp_of_asai (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t)
   : Linol_lsp.Lsp.Types.Diagnostic.t
   =
   let range =
@@ -42,7 +42,7 @@ let lsp_of_asai (d : Violet_elab.Reporter.Message.t Asai.Diagnostic.t)
   Linol_lsp.Lsp.Types.Diagnostic.create
     ~range
     ~severity:(lsp_severity d.severity)
-    ~code:(`String (Violet_elab.Reporter.Message.short_code d.message))
+    ~code:(`String (Violet_common.Reporter.Message.short_code d.message))
     ~source:"violet"
     ~message:(`String message)
     ()

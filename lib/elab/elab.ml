@@ -1,4 +1,6 @@
 include Elab_common
+open Violet_surface
+open Violet_common
 open Syntax
 open Asai.Range
 open Bwd
@@ -852,7 +854,7 @@ let check_module
     | None -> [ Filename.chop_extension @@ Filename.basename file.name ]
   in
   let module_name = String.concat "/" module_path in
-  let file = Op_resolver.resolve_module ~module_name file in
+  let file = Violet_surface.Op_resolver.resolve_module ~module_name file in
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
   Context.clear_level_vars ();

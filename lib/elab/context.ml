@@ -1,5 +1,7 @@
 open Yuujinchou
 open Bwd
+open Violet_surface
+open Violet_common
 module Syntax = Violet_kernel.Syntax
 module Context_view = Violet_kernel.Context_view
 module Pretty = Violet_kernel.Pretty
