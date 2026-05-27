@@ -290,6 +290,8 @@ let expected : (string * want) list =
   ; "./fixtures/src/underscore-name.vt", `Ok
   ; ( "./fixtures/bad/bad-stack-split-param.vt"
     , `FailWith [ "n : Nat"; "which is a parameter" ] )
+  ; ( "./fixtures/bad/bad-elim-param.vt"
+    , `FailWith [ "target"; "is a parameter"; "move it past" ] )
   ]
 ;;
 

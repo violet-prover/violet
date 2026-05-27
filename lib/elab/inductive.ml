@@ -1175,8 +1175,18 @@ let build_elim_body
   (* Target's Pi-binder is at position (target_pos - np) in `signature`
      (signature has only the past-params Pi-layers). Take its domain — the
      target's type — as a Surface term. *)
+  let sig_index = target_pos - np in
+  if sig_index < 0
+  then
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "`<= \\elim %s`: target `%s` is a parameter; move it past the `:` in the signature \
+       to make it an argument that can be eliminated"
+      target
+      target;
   let target_type_surface : Surface.pretype =
-    match List.nth_opt (pi_domain signature) (target_pos - np) with
+    match List.nth_opt (pi_domain signature) sig_index with
     | Some b -> b.bound
     | None ->
       Reporter.fatalf ~loc Elab_error "elim: signature has fewer Pi-layers than required"

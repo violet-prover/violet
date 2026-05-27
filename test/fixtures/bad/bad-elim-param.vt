@@ -1,0 +1,13 @@
+\import std/nat
+
+\universe U
+
+\data List : U -> U
+  | nil  : {A : U} -> List A
+  | cons : {A : U} -> A -> List A -> List A
+
+# Eliminating on parameter `xs` — should suggest moving it past `:`.
+\let bad {A : U} (xs : List A) : Nat \where
+  bad xs <= \elim xs
+  | bad nil => zero
+  | bad (cons x xs) => suc (bad xs)
