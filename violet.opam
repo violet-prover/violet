@@ -19,6 +19,7 @@ depends: [
   "ppx_expect"
   "linenoise"
   "violet_kernel"
+  "violet_surface"
   "violet_elab"
   "violet_langserver"
   "odoc" {with-doc}

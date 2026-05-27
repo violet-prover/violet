@@ -36,7 +36,7 @@ let timeout_sec = 30
 (* Topologically load the file and its imports, mirroring what bin/main.ml's
    `prepare_dependencies` does. Without this, examples that `import nat` fail
    to find Nat / zero / suc when checked alone. *)
-let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
+let load_with_deps (filename : string) : (string * Violet_surface.Surface.t) list =
   let mods = Hashtbl.create 16 in
   let deps = Hashtbl.create 16 in
   let mode =
@@ -58,9 +58,9 @@ let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
     then ()
     else begin
       let canonical_libraries =
-        List.map (fun lib -> prefix_segs @ lib) m.Violet_elab.Surface.imports
+        List.map (fun lib -> prefix_segs @ lib) m.Violet_surface.Surface.imports
       in
-      Hashtbl.add mods key { m with Violet_elab.Surface.imports = canonical_libraries };
+      Hashtbl.add mods key { m with Violet_surface.Surface.imports = canonical_libraries };
       Hashtbl.add deps key (List.map (String.concat "/") canonical_libraries);
       List.iter2
         (fun user_library canonical_library ->
@@ -80,12 +80,16 @@ let load_with_deps (filename : string) : (string * Violet_elab.Surface.t) list =
              | `Single_file root ->
                ctx, prefix_segs, root ^ "/" ^ String.concat "/" user_library ^ ".vt"
            in
-           walk next_ctx next_segs canonical_key (Violet_elab.Parser.parse_file filepath))
+           walk
+             next_ctx
+             next_segs
+             canonical_key
+             (Violet_surface.Parser.parse_file filepath))
         m.imports
         canonical_libraries
     end
   in
-  let m = Violet_elab.Parser.parse_file filename in
+  let m = Violet_surface.Parser.parse_file filename in
   let root_key = Filename.chop_extension @@ Filename.basename m.name in
   walk mode [] root_key m;
   match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with

@@ -2,7 +2,7 @@
  (name violet_project)
  (public_name violet_project)
  (inline_tests)
- (libraries unix violet_elab tsort)
+ (libraries unix violet_surface violet_elab tsort)
  (preprocess
   (pps ppx_deriving.show ppx_expect)))
 

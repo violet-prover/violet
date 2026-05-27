@@ -27,7 +27,7 @@ let rec walk_vt_files (dir : string) : string list =
 let mode_for_entry ?explicit_root (filename : string) : mode =
   let mk_project root =
     try Project (Resolve.load root) with
-    | Resolve.Project_error msg -> Violet_elab.Reporter.fatalf Parse_error "%s" msg
+    | Resolve.Project_error msg -> Violet_surface.Reporter.fatalf Parse_error "%s" msg
   in
   match explicit_root with
   | Some root -> mk_project root
@@ -46,7 +46,7 @@ let mode_for_entry ?explicit_root (filename : string) : mode =
 ;;
 
 type dependencies = (string, string list) Hashtbl.t
-type modules = (string, Violet_elab.Surface.t) Hashtbl.t
+type modules = (string, Violet_surface.Surface.t) Hashtbl.t
 
 let rec prepare_dependencies
           ?(text_override = fun _ -> None)
@@ -55,7 +55,7 @@ let rec prepare_dependencies
           (mods : modules)
           (deps : dependencies)
           (key : string)
-          (m : Violet_elab.Surface.t)
+          (m : Violet_surface.Surface.t)
   =
   if Hashtbl.mem deps key
   then ()
@@ -83,8 +83,8 @@ let rec prepare_dependencies
          in
          let m =
            match text_override filepath with
-           | Some text -> Violet_elab.Parser.parse_buffer ~filename:filepath text
-           | None -> Violet_elab.Parser.parse_file filepath
+           | Some text -> Violet_surface.Parser.parse_buffer ~filename:filepath text
+           | None -> Violet_surface.Parser.parse_file filepath
          in
          prepare_dependencies ~text_override next_mode next_segs mods deps canonical_key m)
       m.imports

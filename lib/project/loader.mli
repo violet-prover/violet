@@ -7,7 +7,7 @@ val walk_vt_files : string -> string list
 val mode_for_entry : ?explicit_root:string -> string -> mode
 
 type dependencies = (string, string list) Hashtbl.t
-type modules = (string, Violet_elab.Surface.t) Hashtbl.t
+type modules = (string, Violet_surface.Surface.t) Hashtbl.t
 
 val prepare_dependencies
   :  ?text_override:(string -> string option)
@@ -16,5 +16,5 @@ val prepare_dependencies
   -> modules
   -> dependencies
   -> string
-  -> Violet_elab.Surface.t
+  -> Violet_surface.Surface.t
   -> unit

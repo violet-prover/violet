@@ -8,6 +8,7 @@
   (pps ppx_deriving.show ppx_expect))
  (libraries
   violet_kernel
+  violet_surface
   violet_elab
   violet_interactive
   violet_project

@@ -2,13 +2,13 @@
    Tests correctness of specific parsing constructs. *)
 
 let positive_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<positive_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<positive_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<positive_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<positive_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Basic let binding parses OK *)
   let tops = parse_tops "\\let f : U -> U => \\x -> x\n" in
@@ -20,13 +20,13 @@ let positive_test () =
 ;;
 
 let goal_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<goal_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<goal_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<goal_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<goal_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Elim-style where-clause parses OK *)
   let tops =
@@ -40,13 +40,13 @@ let goal_test () =
 ;;
 
 let elim_intro_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<elim_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<elim_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<elim_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<elim_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Bare intros — all explicit *)
   let tops1 =
@@ -54,9 +54,9 @@ let elim_intro_test () =
   in
   (match tops1 with
    | [ { Asai.Range.value =
-           Violet_elab.Surface.Elim_def
+           Violet_surface.Surface.Elim_def
              { intros = [ ("x", false) ]
-             ; clauses = [ { patterns = [ Violet_elab.Surface.PVar "x" ]; _ } ]
+             ; clauses = [ { patterns = [ Violet_surface.Surface.PVar "x" ]; _ } ]
              ; _
              }
        ; _
@@ -71,7 +71,7 @@ let elim_intro_test () =
   in
   (match tops2 with
    | [ { Asai.Range.value =
-           Violet_elab.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
+           Violet_surface.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
        ; _
        }
      ] -> Format.printf "elim_intro_test OK  bracketed intros@."
@@ -84,10 +84,12 @@ let elim_intro_test () =
   in
   match tops3 with
   | [ { Asai.Range.value =
-          Violet_elab.Surface.Elim_def
+          Violet_surface.Surface.Elim_def
             { clauses =
                 [ { patterns =
-                      [ Violet_elab.Surface.PImpVar "A"; Violet_elab.Surface.PVar "x" ]
+                      [ Violet_surface.Surface.PImpVar "A"
+                      ; Violet_surface.Surface.PVar "x"
+                      ]
                   ; _
                   }
                 ]
@@ -102,18 +104,18 @@ let elim_intro_test () =
 ;;
 
 let record_top_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_top_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<record_top_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<record_top_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<record_top_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Record with two fields, no parameters *)
   let tops = parse_tops "\\record Point : U\n  | x : Nat\n  | y : Nat" in
   (match tops with
-   | [ { Asai.Range.value = Violet_elab.Surface.Record r; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Record r; _ } ] ->
      if
        String.equal r.name "Point" && List.length r.fields = 2 && List.length r.params = 0
      then Format.printf "record_top_test OK  no-params@."
@@ -133,7 +135,7 @@ let record_top_test () =
     parse_tops "\\record Sigma (A : U) (B : A -> U) : U\n  | fst : A\n  | snd : B fst"
   in
   match tops2 with
-  | [ { Asai.Range.value = Violet_elab.Surface.Record r; _ } ] ->
+  | [ { Asai.Range.value = Violet_surface.Surface.Record r; _ } ] ->
     if String.equal r.name "Sigma" && List.length r.fields = 2 && List.length r.params = 2
     then Format.printf "record_top_test OK  with-params@."
     else begin
@@ -150,20 +152,20 @@ let record_top_test () =
 ;;
 
 let record_lit_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_lit_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<record_lit_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<record_lit_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<record_lit_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   let rec peel = function
-    | Violet_elab.Surface.Located { value; _ } -> peel value
+    | Violet_surface.Surface.Located { value; _ } -> peel value
     | t -> t
   in
   let peel_item = function
-    | Violet_elab.Surface.SI_Atom a -> Violet_elab.Surface.SI_Atom (peel a)
+    | Violet_surface.Surface.SI_Atom a -> Violet_surface.Surface.SI_Atom (peel a)
     | other -> other
   in
   (* Helper: extract RecordLit from the Op_soup wrapper that the parser emits
@@ -171,9 +173,9 @@ let record_lit_test () =
      Op_soup [ SI_Atom (RecordLit […]) ]. *)
   let unwrap_record_lit body =
     match peel body with
-    | Violet_elab.Surface.Op_soup items ->
+    | Violet_surface.Surface.Op_soup items ->
       (match List.map peel_item items with
-       | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit entries) ] ->
+       | [ Violet_surface.Surface.SI_Atom (Violet_surface.Surface.RecordLit entries) ] ->
          Some entries
        | _ -> None)
     | _ -> None
@@ -181,13 +183,13 @@ let record_lit_test () =
   (* Empty record literal *)
   let tops0 = parse_tops "\\let p : Point => {}" in
   (match tops0 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [] -> Format.printf "record_lit_test OK  empty@."
       | _ ->
         Format.printf
           "record_lit_test FAIL empty: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_lit_test FAIL empty: wrong shape@.";
@@ -195,13 +197,13 @@ let record_lit_test () =
   (* Plain literal: { x = a, y = b } *)
   let tops1 = parse_tops "\\let p : Point => { x = a, y = b }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", _); ("y", _) ] -> Format.printf "record_lit_test OK  plain-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL plain-lit: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_lit_test FAIL plain-lit: wrong shape@.";
@@ -209,20 +211,20 @@ let record_lit_test () =
   (* Pun literal: { x, y } desugars to { x = x, y = y } *)
   let tops2 = parse_tops "\\let p : Point => { x, y }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", xv); ("y", yv) ]
         when (match peel xv with
-              | Violet_elab.Surface.Var [ "x" ] -> true
+              | Violet_surface.Surface.Var [ "x" ] -> true
               | _ -> false)
              &&
              match peel yv with
-             | Violet_elab.Surface.Var [ "y" ] -> true
+             | Violet_surface.Surface.Var [ "y" ] -> true
              | _ -> false -> Format.printf "record_lit_test OK  pun-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL pun-lit: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_lit_test FAIL pun-lit: wrong shape@.";
@@ -230,20 +232,20 @@ let record_lit_test () =
   (* Mixed: { x, y = e, z } desugars to { x = x, y = e, z = z } *)
   let tops3 = parse_tops "\\let p : Point => { x, y = e, z }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [ ("x", xv); ("y", _); ("z", zv) ]
         when (match peel xv with
-              | Violet_elab.Surface.Var [ "x" ] -> true
+              | Violet_surface.Surface.Var [ "x" ] -> true
               | _ -> false)
              &&
              match peel zv with
-             | Violet_elab.Surface.Var [ "z" ] -> true
+             | Violet_surface.Surface.Var [ "z" ] -> true
              | _ -> false -> Format.printf "record_lit_test OK  mixed-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL mixed-lit: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_lit_test FAIL mixed-lit: wrong shape@.";
@@ -254,14 +256,14 @@ let record_lit_test () =
      using the show_preterm output. *)
   let tops4 = parse_tops "\\let r : U => f {x}" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
-      | Violet_elab.Surface.Op_soup items ->
+      | Violet_surface.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_elab.Surface.SI_Name ("f", _); Violet_elab.Surface.SI_Imp_arg inner ]
+         | [ Violet_surface.Surface.SI_Name ("f", _); Violet_surface.Surface.SI_Imp_arg inner ]
            ->
-           let inner_str = Violet_elab.Surface.show_preterm (peel inner) in
+           let inner_str = Violet_surface.Surface.show_preterm (peel inner) in
            if String.equal inner_str "x"
            then Format.printf "record_lit_test OK  implicit-app@."
            else begin
@@ -271,12 +273,12 @@ let record_lit_test () =
          | _ ->
            Format.printf
              "record_lit_test FAIL implicit-app: body=%s@."
-             (Violet_elab.Surface.show_preterm body);
+             (Violet_surface.Surface.show_preterm body);
            exit 1)
       | _ ->
         Format.printf
           "record_lit_test FAIL implicit-app: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_lit_test FAIL implicit-app: wrong shape@.";
@@ -285,28 +287,31 @@ let record_lit_test () =
 ;;
 
 let record_update_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<record_update_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<record_update_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks =
+      Array.of_list (Violet_surface.Parser.tokens "<record_update_test>" lexbuf)
+    in
+    let m = Violet_surface.Parser.parse_buf ~name:"<record_update_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   let rec peel = function
-    | Violet_elab.Surface.Located { value; _ } -> peel value
+    | Violet_surface.Surface.Located { value; _ } -> peel value
     | t -> t
   in
   let peel_item = function
-    | Violet_elab.Surface.SI_Atom a -> Violet_elab.Surface.SI_Atom (peel a)
+    | Violet_surface.Surface.SI_Atom a -> Violet_surface.Surface.SI_Atom (peel a)
     | other -> other
   in
   (* Helper: unwrap RecordUpdate from Op_soup wrapper *)
   let unwrap_record_update body =
     match peel body with
-    | Violet_elab.Surface.Op_soup items ->
+    | Violet_surface.Surface.Op_soup items ->
       (match List.map peel_item items with
-       | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordUpdate (base, entries))
+       | [ Violet_surface.Surface.SI_Atom
+             (Violet_surface.Surface.RecordUpdate (base, entries))
          ] -> Some (base, entries)
        | _ -> None)
     | _ -> None
@@ -314,13 +319,13 @@ let record_update_test () =
   (* Simple single-field update: { p | x = z } *)
   let tops1 = parse_tops "\\let q : Point => { p | x = z }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", _) ]) -> Format.printf "record_update_test OK  simple@."
       | _ ->
         Format.printf
           "record_update_test FAIL simple: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_update_test FAIL simple: wrong shape@.";
@@ -328,13 +333,13 @@ let record_update_test () =
   (* Multi-field update: { p | x = z, y = w } *)
   let tops2 = parse_tops "\\let q : Point => { p | x = z, y = w }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", _); ("y", _) ]) -> Format.printf "record_update_test OK  multi@."
       | _ ->
         Format.printf
           "record_update_test FAIL multi: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_update_test FAIL multi: wrong shape@.";
@@ -342,16 +347,16 @@ let record_update_test () =
   (* Pun-style override: { p | x } desugars to { p | x = x } *)
   let tops3 = parse_tops "\\let q : Point => { p | x }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
       | Some (_, [ ("x", xv) ])
         when match peel xv with
-             | Violet_elab.Surface.Var [ "x" ] -> true
+             | Violet_surface.Surface.Var [ "x" ] -> true
              | _ -> false -> Format.printf "record_update_test OK  pun@."
       | _ ->
         Format.printf
           "record_update_test FAIL pun: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_update_test FAIL pun: wrong shape@.";
@@ -359,21 +364,21 @@ let record_update_test () =
   (* Regression: plain literal { x = a } must still be RecordLit, not RecordUpdate *)
   let tops4 = parse_tops "\\let p : Point => { x = a }" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
-      | Violet_elab.Surface.Op_soup items ->
+      | Violet_surface.Surface.Op_soup items ->
         (match List.map peel_item items with
-         | [ Violet_elab.Surface.SI_Atom (Violet_elab.Surface.RecordLit _) ] ->
+         | [ Violet_surface.Surface.SI_Atom (Violet_surface.Surface.RecordLit _) ] ->
            Format.printf "record_update_test OK  regression-literal@."
          | _ ->
            Format.printf
              "record_update_test FAIL regression-literal: body=%s@."
-             (Violet_elab.Surface.show_preterm body);
+             (Violet_surface.Surface.show_preterm body);
            exit 1)
       | _ ->
         Format.printf
           "record_update_test FAIL regression-literal: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_update_test FAIL regression-literal: wrong shape@.";
@@ -381,22 +386,22 @@ let record_update_test () =
   (* Regression: implicit application f {x} must still work *)
   let tops5 = parse_tops "\\let r : U => f {x}" in
   (match tops5 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
-      | Violet_elab.Surface.Op_soup items ->
+      | Violet_surface.Surface.Op_soup items ->
         let items = List.map peel_item items in
         (match items with
-         | [ Violet_elab.Surface.SI_Name ("f", _); Violet_elab.Surface.SI_Imp_arg _ ] ->
+         | [ Violet_surface.Surface.SI_Name ("f", _); Violet_surface.Surface.SI_Imp_arg _ ] ->
            Format.printf "record_update_test OK  regression-implicit-app@."
          | _ ->
            Format.printf
              "record_update_test FAIL regression-implicit-app: body=%s@."
-             (Violet_elab.Surface.show_preterm body);
+             (Violet_surface.Surface.show_preterm body);
            exit 1)
       | _ ->
         Format.printf
           "record_update_test FAIL regression-implicit-app: body=%s@."
-          (Violet_elab.Surface.show_preterm body);
+          (Violet_surface.Surface.show_preterm body);
         exit 1)
    | _ ->
      Format.printf "record_update_test FAIL regression-implicit-app: wrong shape@.";
@@ -405,53 +410,55 @@ let record_update_test () =
 ;;
 
 let projection_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<projection_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<projection_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks = Array.of_list (Violet_surface.Parser.tokens "<projection_test>" lexbuf) in
+    let m = Violet_surface.Parser.parse_buf ~name:"<projection_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Simple projection *)
   let src1 = "\\let n : Nat => p.x" in
   let tops1 = parse_tops src1 in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
-     Printf.printf "simple: %s\n" (Violet_elab.Surface.show_preterm body)
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+     Printf.printf "simple: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "simple: unexpected\n");
   (* Chained projection -- left-associative *)
   let src2 = "\\let n : Nat => r.x.y" in
   let tops2 = parse_tops src2 in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
-     Printf.printf "chained: %s\n" (Violet_elab.Surface.show_preterm body)
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+     Printf.printf "chained: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "chained: unexpected\n");
   (* Projection on application -- (f x).y *)
   let src3 = "\\let n : Nat => (f x).y" in
   let tops3 = parse_tops src3 in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
-     Printf.printf "appl: %s\n" (Violet_elab.Surface.show_preterm body)
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+     Printf.printf "appl: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "appl: unexpected\n");
   (* Regression: Nat/zero must parse as Var ["Nat"; "zero"], not affected by dot *)
   let src4 = "\\let n : Nat => Nat/zero" in
   let tops4 = parse_tops src4 in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_elab.Surface.Let { body; _ }; _ } ] ->
-     Printf.printf "qname: %s\n" (Violet_elab.Surface.show_preterm body)
+   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+     Printf.printf "qname: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "qname: unexpected\n");
   print_endline "projection_test OK"
 ;;
 
 let pattern_record_test () =
-  Violet_elab.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
-    let toks = Array.of_list (Violet_elab.Parser.tokens "<pattern_record_test>" lexbuf) in
-    let m = Violet_elab.Parser.parse_buf ~name:"<pattern_record_test>" toks in
-    m.Violet_elab.Surface.tops
+    let toks =
+      Array.of_list (Violet_surface.Parser.tokens "<pattern_record_test>" lexbuf)
+    in
+    let m = Violet_surface.Parser.parse_buf ~name:"<pattern_record_test>" toks in
+    m.Violet_surface.Surface.tops
   in
   (* Use stack-move style `<= \intro; <= \split` which is the correct
      \split syntax in Violet.  The elim-style `name p <= \split` is not
@@ -472,12 +479,12 @@ let pattern_record_test () =
      The \split via stack moves produces a Stack_def top. *)
   (match tops with
    | [ { Asai.Range.value =
-           Violet_elab.Surface.Stack_def
+           Violet_surface.Surface.Stack_def
              { clauses =
                  [ { patterns =
-                       [ Violet_elab.Surface.PRecord
-                           [ ("fst", Violet_elab.Surface.PVar "a")
-                           ; ("snd", Violet_elab.Surface.PVar "b")
+                       [ Violet_surface.Surface.PRecord
+                           [ ("fst", Violet_surface.Surface.PVar "a")
+                           ; ("snd", Violet_surface.Surface.PVar "b")
                            ]
                        ]
                    ; _
@@ -498,13 +505,13 @@ let unicode_ident_test () =
   let lex_all src =
     let lexbuf = Lexing.from_string src in
     let rec loop acc =
-      match Violet_elab.Lexer.token lexbuf with
-      | Violet_elab.Lexer.EOF -> List.rev acc
+      match Violet_surface.Lexer.token lexbuf with
+      | Violet_surface.Lexer.EOF -> List.rev acc
       | t -> loop (t :: acc)
     in
     loop []
   in
-  let open Violet_elab.Lexer in
+  let open Violet_surface.Lexer in
   let expect label src expected =
     let got = lex_all src in
     if got = expected
@@ -539,8 +546,8 @@ let unicode_ident_test () =
   let toks =
     let lexbuf = Lexing.from_string "\\universe 𝓤\n" in
     let rec loop acc =
-      match Violet_elab.Lexer.token lexbuf with
-      | Violet_elab.Lexer.EOF -> List.rev acc
+      match Violet_surface.Lexer.token lexbuf with
+      | Violet_surface.Lexer.EOF -> List.rev acc
       | t -> loop (t :: acc)
     in
     loop []

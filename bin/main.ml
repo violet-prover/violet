@@ -1,5 +1,5 @@
 open Cmdliner
-module Tty = Asai.Tty.Make (Violet_elab.Reporter.Message)
+module Tty = Asai.Tty.Make (Violet_surface.Reporter.Message)
 
 let version = "0.4.0"
 
@@ -22,7 +22,7 @@ let load_cmd ~env =
       const (fun explicit_root filename ->
         let deps = Hashtbl.create ~random:true 1000 in
         let mods = Hashtbl.create ~random:true 1000 in
-        let m = Violet_elab.Parser.parse_file filename in
+        let m = Violet_surface.Parser.parse_file filename in
         let mode = Violet_project.Loader.mode_for_entry ?explicit_root filename in
         let entry_key = Violet_project.Loader.module_name m.name in
         Violet_project.Loader.prepare_dependencies mode [] mods deps entry_key m;
@@ -34,7 +34,7 @@ let load_cmd ~env =
                 Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
              r
          | ErrorCycle err_list ->
-           Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
+           Violet_surface.Reporter.fatalf Parse_error "Cycle import %s"
            @@ String.concat ", " err_list);
         let entry = Hashtbl.find mods entry_key in
         Repl.run ~entry_module:entry)
@@ -65,7 +65,7 @@ let check_cmd ~env =
         let mods = Hashtbl.create ~random:true 1000 in
         match file_opt with
         | Some filename ->
-          let m = Violet_elab.Parser.parse_file filename in
+          let m = Violet_surface.Parser.parse_file filename in
           let mode = Violet_project.Loader.mode_for_entry ?explicit_root filename in
           Violet_project.Loader.prepare_dependencies
             mode
@@ -82,7 +82,7 @@ let check_cmd ~env =
                   Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
                r
            | ErrorCycle err_list ->
-             Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
+             Violet_surface.Reporter.fatalf Parse_error "Cycle import %s"
              @@ String.concat ", " err_list)
         | None ->
           let root =
@@ -92,21 +92,21 @@ let check_cmd ~env =
               (match Violet_project.Root.find_root (Sys.getcwd ()) with
                | Some r -> r
                | None ->
-                 Violet_elab.Reporter.fatalf
+                 Violet_surface.Reporter.fatalf
                    Parse_error
                    "no info.vt found in cwd or its ancestors; pass a file or use --root")
           in
           let proj =
             try Violet_project.Resolve.load root with
             | Violet_project.Resolve.Project_error msg ->
-              Violet_elab.Reporter.fatalf Parse_error "%s" msg
+              Violet_surface.Reporter.fatalf Parse_error "%s" msg
           in
           let mode = Violet_project.Loader.Project proj in
           let src_dir = Filename.concat root "src" in
           let files = Violet_project.Loader.walk_vt_files src_dir in
           List.iter
             (fun filename ->
-               let m = Violet_elab.Parser.parse_file filename in
+               let m = Violet_surface.Parser.parse_file filename in
                Violet_project.Loader.prepare_dependencies
                  mode
                  []
@@ -123,7 +123,7 @@ let check_cmd ~env =
                   Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
                r
            | ErrorCycle err_list ->
-             Violet_elab.Reporter.fatalf Parse_error "Cycle import %s"
+             Violet_surface.Reporter.fatalf Parse_error "Cycle import %s"
              @@ String.concat ", " err_list))
       $ arg_root
       $ arg_file)
@@ -150,7 +150,7 @@ let new_cmd ~env =
       const (fun project ->
         if Sys.file_exists project
         then
-          Violet_elab.Reporter.fatalf
+          Violet_surface.Reporter.fatalf
             Parse_error
             "cannot create project: %s already exists"
             project;
@@ -194,18 +194,18 @@ let add_cmd ~env =
             (match Violet_project.Root.find_root (Sys.getcwd ()) with
              | Some r -> r
              | None ->
-               Violet_elab.Reporter.fatalf
+               Violet_surface.Reporter.fatalf
                  Parse_error
                  "no info.vt found in cwd or its ancestors")
         in
         let manifest =
           try Violet_project.Resolve.load_manifest root with
           | Violet_project.Resolve.Project_error msg ->
-            Violet_elab.Reporter.fatalf Parse_error "%s" msg
+            Violet_surface.Reporter.fatalf Parse_error "%s" msg
         in
         if
           List.exists (fun (d : Violet_project.Manifest.dep) -> d.key = key) manifest.deps
-        then Violet_elab.Reporter.fatalf Parse_error "dep `%s` is already declared" key;
+        then Violet_surface.Reporter.fatalf Parse_error "dep `%s` is already declared" key;
         let info_path = Filename.concat root "info.vt" in
         let oc = open_out_gen [ Open_append; Open_creat ] 0o644 info_path in
         (Fun.protect ~finally:(fun () -> close_out oc)
@@ -237,14 +237,14 @@ let update_cmd ~env =
             (match Violet_project.Root.find_root (Sys.getcwd ()) with
              | Some r -> r
              | None ->
-               Violet_elab.Reporter.fatalf
+               Violet_surface.Reporter.fatalf
                  Parse_error
                  "no info.vt found in cwd or its ancestors")
         in
         let manifest =
           try Violet_project.Resolve.load_manifest root with
           | Violet_project.Resolve.Project_error msg ->
-            Violet_elab.Reporter.fatalf Parse_error "%s" msg
+            Violet_surface.Reporter.fatalf Parse_error "%s" msg
         in
         let entries =
           List.filter_map
@@ -298,7 +298,7 @@ let () =
   Printexc.record_backtrace true;
   Eio_main.run
   @@ fun env ->
-  Violet_elab.Reporter.run ~emit:Tty.display ~fatal
+  Violet_surface.Reporter.run ~emit:Tty.display ~fatal
   @@ fun () ->
   let open Violet_elab.Context.Handler in
   Violet_elab.Context.S.run ~shadow ~not_found ~hook

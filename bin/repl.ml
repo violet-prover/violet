@@ -1,11 +1,11 @@
 open Bwd
-module Surface = Violet_elab.Surface
-module Parser = Violet_elab.Parser
-module Op_resolver = Violet_elab.Op_resolver
+module Surface = Violet_surface.Surface
+module Parser = Violet_surface.Parser
+module Op_resolver = Violet_surface.Op_resolver
 module Elab = Violet_elab.Elab
 module ElabREPL = Violet_elab.Repl
 module Evaluation = Violet_elab.Wiring.Eval
-module Reporter = Violet_elab.Reporter
+module Reporter = Violet_surface.Reporter
 module Context = Violet_elab.Context
 module Env = Violet_elab.Env
 module Tty = Asai.Tty.Make (Reporter.Message)

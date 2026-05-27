@@ -1,0 +1,9 @@
+(ocamllex lexer)
+
+(library
+ (name violet_surface)
+ (public_name violet_surface)
+ (inline_tests)
+ (preprocess
+  (pps ppx_deriving.show ppx_expect))
+ (libraries violet_common violet_kernel asai yuujinchou))

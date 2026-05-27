@@ -6,6 +6,7 @@
  (preprocess
   (pps ppx_deriving.show))
  (libraries
+  violet_surface
   violet_elab
   violet_kernel
   violet_project
@@ -19,8 +20,8 @@
 
 (test
  (name test_parser)
- (libraries violet_elab violet_kernel asai))
+ (libraries violet_surface violet_elab violet_kernel asai))
 
 (test
  (name test_interactive)
- (libraries violet_interactive violet_elab violet_kernel asai))
+ (libraries violet_interactive violet_surface violet_elab violet_kernel asai))
