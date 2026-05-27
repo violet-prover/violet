@@ -139,7 +139,18 @@ let rewrite_recursive_calls
              func_name
              arity
              (List.length args);
-         let _, target_arg = List.nth args target_pos in
+         let _, target_arg =
+           match List.nth_opt args target_pos with
+           | Some v -> v
+           | None ->
+             Reporter.fatalf
+               ~loc:here
+               Elab_error
+               "recursive call to `%s`: target position %d out of bounds (args len=%d)"
+               func_name
+               target_pos
+               (List.length args)
+         in
          (match strip target_arg with
           | Surface.Var [ v ] when List.mem_assoc v rec_arg_to_ih ->
             let ih = List.assoc v rec_arg_to_ih in
@@ -764,7 +775,18 @@ let build_unify_motive
           let id_ty =
             Surface.apply
               (Surface.Var [ "Id" ])
-              [ Surface.Var [ idx_name i ]; List.nth target_index_surfaces i ]
+              [ Surface.Var [ idx_name i ]
+              ; (match List.nth_opt target_index_surfaces i with
+                 | Some v -> v
+                 | None ->
+                   Reporter.fatalf
+                     ~loc
+                     Elab_error
+                     "build_unify_motive: target_index_surfaces index %d out of bounds \
+                      (len=%d)"
+                     i
+                     (List.length target_index_surfaces))
+              ]
           in
           wrap_ids
             (i - 1)
@@ -1452,6 +1474,7 @@ let find_var_in_spine ~(name : string) (spine : Surface.preterm list)
 ;;
 
 let build_cong_extractor
+      ~(loc : Asai.Range.t)
       ~(dep_binder_idx : int)
       ~(sub_opt : (string * int) option)
       ~(info : Context.ind_info)
@@ -1460,7 +1483,17 @@ let build_cong_extractor
   match sub_opt with
   | None -> Some (Surface.lambda [ "__sh" ] (Surface.Var [ "__sh" ]))
   | Some (matched_ctor_name, sub_arg_idx) ->
-    let dep_binder = List.nth info.deps dep_binder_idx in
+    let dep_binder =
+      match List.nth_opt info.deps dep_binder_idx with
+      | Some v -> v
+      | None ->
+        Reporter.fatalf
+          ~loc
+          Elab_error
+          "build_cong_extractor: dep binder index %d out of bounds (deps len=%d)"
+          dep_binder_idx
+          (List.length info.deps)
+    in
     (match head_of_surface dep_binder.Syntax.bound with
      | Surface.Var [ index_ind_name ] ->
        (match Context.S.resolve [ index_ind_name ] with
@@ -1475,7 +1508,21 @@ let build_cong_extractor
                      c
                  in
                  if c.name = Named matched_ctor_name && sub_arg_idx < List.length fields
-                 then Surface.lambda lambdas (Surface.Var [ List.nth fields sub_arg_idx ])
+                 then
+                   Surface.lambda
+                     lambdas
+                     (Surface.Var
+                        [ (match List.nth_opt fields sub_arg_idx with
+                           | Some v -> v
+                           | None ->
+                             Reporter.fatalf
+                               ~loc
+                               Elab_error
+                               "build_cong_extractor: field index %d out of bounds \
+                                (fields len=%d)"
+                               sub_arg_idx
+                               (List.length fields))
+                        ])
                  else (
                    let default_ctor =
                      match Eliminator_synth.arities_of index_info with
@@ -1642,7 +1689,18 @@ let build_inline_elim_dispatch
             let id_ty =
               Surface.apply
                 (Surface.Var [ "Id" ])
-                [ Surface.Var [ idx_name i ]; List.nth target_index_surfaces i ]
+                [ Surface.Var [ idx_name i ]
+                ; (match List.nth_opt target_index_surfaces i with
+                   | Some v -> v
+                   | None ->
+                     Reporter.fatalf
+                       ~loc
+                       Elab_error
+                       "build_inline_elim_dispatch: target_index_surfaces index %d out \
+                        of bounds (len=%d)"
+                       i
+                       (List.length target_index_surfaces))
+                ]
             in
             wrap_ids
               (i - 1)
@@ -1900,7 +1958,18 @@ let build_inline_elim_dispatch
                     match (kind : Context.binder_kind) with
                     | Context.Regular -> None
                     | Context.Recursive dep_names ->
-                      let bind_user_name = List.nth vs i in
+                      let bind_user_name =
+                        match List.nth_opt vs i with
+                        | Some v -> v
+                        | None ->
+                          Reporter.fatalf
+                            ~loc
+                            Elab_error
+                            "build_inline_elim_dispatch: user variable index %d out of \
+                             bounds (vs len=%d)"
+                            i
+                            (List.length vs)
+                      in
                       let coerce =
                         List.find_map
                           (fun dep_name ->
@@ -1924,6 +1993,7 @@ let build_inline_elim_dispatch
                           | Some (spine_idx, sub_opt) ->
                             let extractor =
                               build_cong_extractor
+                                ~loc
                                 ~dep_binder_idx:spine_idx
                                 ~sub_opt
                                 ~info
@@ -1939,7 +2009,18 @@ let build_inline_elim_dispatch
                                (match dep_pos_opt with
                                 | None -> None
                                 | Some dep_pos ->
-                                  let dep_user_name = List.nth vs dep_pos in
+                                  let dep_user_name =
+                                    match List.nth_opt vs dep_pos with
+                                    | Some v -> v
+                                    | None ->
+                                      Reporter.fatalf
+                                        ~loc
+                                        Elab_error
+                                        "build_inline_elim_dispatch: dep user name index \
+                                         %d out of bounds (vs len=%d)"
+                                        dep_pos
+                                        (List.length vs)
+                                  in
                                   let rename_subst : (string * Surface.preterm) list =
                                     List.map2
                                       (fun bn uv -> bn, Surface.Var [ uv ])
@@ -1949,10 +2030,31 @@ let build_inline_elim_dispatch
                                   let cons_idx_lhs =
                                     subst_vars_surface
                                       rename_subst
-                                      (List.nth cod_spine spine_idx)
+                                      (match List.nth_opt cod_spine spine_idx with
+                                       | Some v -> v
+                                       | None ->
+                                         Reporter.fatalf
+                                           ~loc
+                                           Elab_error
+                                           "build_inline_elim_dispatch: cod_spine index \
+                                            %d out of bounds (len=%d)"
+                                           spine_idx
+                                           (List.length cod_spine))
                                   in
                                   let cons_idx_rhs =
-                                    List.nth target_index_surfaces spine_idx
+                                    match
+                                      List.nth_opt target_index_surfaces spine_idx
+                                    with
+                                    | Some v -> v
+                                    | None ->
+                                      Reporter.fatalf
+                                        ~loc
+                                        Elab_error
+                                        "build_inline_elim_dispatch: \
+                                         target_index_surfaces index %d out of bounds \
+                                         (len=%d)"
+                                        spine_idx
+                                        (List.length target_index_surfaces)
                                   in
                                   let cong_proof =
                                     Surface.App
@@ -2065,7 +2167,11 @@ let build_inline_elim_dispatch
   List.fold_left
     (fun (acc, i) a ->
        let imp =
-         i < n_spine && i < List.length elim_param_imps && List.nth elim_param_imps i
+         i < n_spine
+         &&
+         match List.nth_opt elim_param_imps i with
+         | Some v -> v
+         | None -> false
        in
        Surface.App (imp, acc, a), i + 1)
     (Surface.Var [ ind_head; "elim" ], 0)

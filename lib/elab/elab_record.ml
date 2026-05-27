@@ -605,12 +605,23 @@ let handle_top_record_have_type
         | Core.LocalVar ix ->
           let j = ix - extra_depth in
           if j >= 0 && j < n_before
-          then
+          then (
             (* field reference: replace with projection on r (at extra_depth below us) *)
+            let field_idx = n_before - 1 - j in
             Core.RecordProj
               { record = Core.LocalVar extra_depth
-              ; field = List.nth prev_field_names (n_before - 1 - j)
-              }
+              ; field =
+                  (match List.nth_opt prev_field_names field_idx with
+                   | Some v -> v
+                   | None ->
+                     Reporter.fatalf
+                       ~loc
+                       Elab_error
+                       "record field projection: field index %d out of bounds (prev \
+                        fields len=%d)"
+                       field_idx
+                       (List.length prev_field_names))
+              })
           else
             (* deeper local or something else: shift down to account for lost field binders,
                but add 1 for the new r binder *)

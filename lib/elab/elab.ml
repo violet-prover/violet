@@ -327,8 +327,26 @@ let rec dispatch (m : machine) (g : goal) : unit =
               Elab_error
               "\\absurd-id: Id-typed argument has unexpected spine length %d"
               (List.length xs);
-          let lhs = List.nth xs (List.length xs - 2) in
-          let rhs = List.nth xs (List.length xs - 1) in
+          let lhs =
+            match List.nth_opt xs (List.length xs - 2) with
+            | Some v -> v
+            | None ->
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "\\absurd-id: cannot read lhs from Id spine (len=%d)"
+                (List.length xs)
+          in
+          let rhs =
+            match List.nth_opt xs (List.length xs - 1) with
+            | Some v -> v
+            | None ->
+              Reporter.fatalf
+                ~loc
+                Elab_error
+                "\\absurd-id: cannot read rhs from Id spine (len=%d)"
+                (List.length xs)
+          in
           (match Evaluation.force_head lhs, Evaluation.force_head rhs with
            | Core.Label (c1, _), Core.Label (c2, _) when not (String.equal c1 c2) ->
              let empty_ty = Core.IndType ("Empty", Bwd.Emp) in

@@ -99,7 +99,17 @@ let check_strict_positivity
            (fun i si ->
               if i < n_params
               then begin
-                let expected = List.nth param_names i in
+                let expected =
+                  match List.nth_opt param_names i with
+                  | Some v -> v
+                  | None ->
+                    Reporter.fatalf
+                      ?loc
+                      Type_error
+                      "strict positivity: param index %d out of bounds (params len=%d)"
+                      i
+                      (List.length param_names)
+                in
                 match strip si with
                 | Surface.Var [ n ] when Named n = expected -> ()
                 | got ->
@@ -121,11 +131,20 @@ let check_strict_positivity
               (fun i si ->
                  if i < n_pols
                  then
-                   begin match List.nth pols i with
-                   | Context.StrictlyPositive -> sp ~ctor_name ~arg_ty si
-                   | Context.Unrestricted ->
+                   begin match List.nth_opt pols i with
+                   | Some Context.StrictlyPositive -> sp ~ctor_name ~arg_ty si
+                   | Some Context.Unrestricted ->
                      if occurs_in ind_name si
                      then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1)
+                   | None ->
+                     Reporter.fatalf
+                       ?loc
+                       Type_error
+                       "strict positivity: polarity index %d out of bounds for `%s` \
+                        (polarities len=%d)"
+                       i
+                       n
+                       n_pols
                    end
                  else if occurs_in ind_name si
                  then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1))
@@ -391,9 +410,12 @@ let infer_param_polarity
               (fun i si ->
                  if i < n_pols
                  then
-                   begin match List.nth pols i with
-                   | Context.StrictlyPositive -> walk si
-                   | Context.Unrestricted -> demote_if_in si
+                   begin match List.nth_opt pols i with
+                   | Some Context.StrictlyPositive -> walk si
+                   | Some Context.Unrestricted -> demote_if_in si
+                   | None ->
+                     (* index out of bounds — conservatively demote *)
+                     demote_if_in si
                    end
                  else demote_if_in si)
               spine

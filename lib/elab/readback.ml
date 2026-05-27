@@ -139,7 +139,11 @@ let rec core_term_to_surface
     let head_s = rb head in
     List.fold_left
       (fun (acc, i) arg ->
-         let imp = i < List.length imps && List.nth imps i in
+         let imp =
+           match List.nth_opt imps i with
+           | Some v -> v
+           | None -> false
+         in
          Surface.App (imp, acc, rb arg), i + 1)
       (head_s, 0)
       spine

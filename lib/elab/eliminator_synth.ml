@@ -493,7 +493,18 @@ let build_elim_reducer
         (match find_ctor_index ctor_name with
          | None -> None
          | Some i ->
-           let info = List.nth ctor_infos i in
+           let info =
+             match List.nth_opt ctor_infos i with
+             | Some v -> v
+             | None ->
+               Reporter.fatalf
+                 Elab_error
+                 "internal: iota-reduction for `%s/elim`: ctor info index %d out of \
+                  bounds (len=%d)"
+                 ind_name
+                 i
+                 (List.length ctor_infos)
+           in
            let label_list = Bwd.to_list label_sp in
            let own_args = List.drop n_data_params label_list in
            let env = List.combine info.binder_names own_args in
@@ -505,8 +516,30 @@ let build_elim_reducer
            in
            let params_sp = List.filteri (fun j _ -> j < n_params) structural in
            let cases_sp = List.filteri (fun j _ -> j >= cases_start) structural in
-           let motive = List.nth structural motive_idx in
-           let case = List.nth structural (cases_start + i) in
+           let motive =
+             match List.nth_opt structural motive_idx with
+             | Some v -> v
+             | None ->
+               Reporter.fatalf
+                 Elab_error
+                 "internal: iota-reduction for `%s/elim`: motive index %d out of bounds \
+                  (structural len=%d)"
+                 ind_name
+                 motive_idx
+                 (List.length structural)
+           in
+           let case =
+             match List.nth_opt structural (cases_start + i) with
+             | Some v -> v
+             | None ->
+               Reporter.fatalf
+                 Elab_error
+                 "internal: iota-reduction for `%s/elim`: case index %d out of bounds \
+                  (structural len=%d)"
+                 ind_name
+                 (cases_start + i)
+                 (List.length structural)
+           in
            let case_args =
              List.concat_map
                (fun (arg, kind) ->
