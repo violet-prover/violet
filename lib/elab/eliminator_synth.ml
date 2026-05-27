@@ -488,7 +488,8 @@ let build_elim_reducer
     else (
       let structural = List.filteri (fun j _ -> j < n_structural) spine_list in
       let trailing = List.filteri (fun j _ -> j >= n_structural) spine_list in
-      match List.nth_opt structural target_idx with
+      let target = List.nth_opt structural target_idx in
+      match Option.map Evaluation.force_head target with
       | Some (Core.Label (ctor_name, label_sp)) ->
         (match find_ctor_index ctor_name with
          | None -> None

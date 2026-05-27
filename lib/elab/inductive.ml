@@ -88,16 +88,62 @@ let qualify_ctor_names
     body
 ;;
 
-(* In a clause body, rewrite calls to the function being defined where the
-   target-position argument is a recursive case-arg, replacing the call with
-   the corresponding IH applied to the trailing args. Errors on non-structural
-   recursive calls (target-position arg is not a recursive case-arg). *)
-let rewrite_recursive_calls
+(* Given the function's intro signature [(name, implicit); …] and user-supplied
+   call args [(is_implicit, term); …], produce a fully-aligned arg list where
+   every implicit position carries `implicit = true` and missing implicits are
+   filled with Hole.
+
+   Accepts three calling conventions:
+     length {A} xs   →  [{A}, xs]         already aligned
+     length A xs     →  [{A}, xs]         bare implicit gets braces
+     length xs       →  [{_}, xs]         omitted implicit gets Hole  *)
+let align_call_implicits
       ~(loc : Asai.Range.t)
       ~(func_name : string)
-      ~(arity : int)
-      ~(target_pos : int)
-      ~(rec_arg_to_ih : (string * string) list)
+      ~(intros : (string * bool) list)
+      (args : (bool * Surface.preterm) list)
+  : (bool * Surface.preterm) list
+  =
+  let arity = List.length intros in
+  let explicit_arity = List.length (List.filter (fun (_, imp) -> not imp) intros) in
+  let n_args = List.length args in
+  if n_args = arity
+  then
+    List.map2
+      (fun (arg_impl, arg) (_, param_impl) ->
+         if param_impl then true, arg else arg_impl, arg)
+      args
+      intros
+  else if n_args = explicit_arity
+  then
+    List.fold_right
+      (fun (_, is_imp) k explicit_args ->
+         if is_imp
+         then (true, Surface.Hole) :: k explicit_args
+         else (
+           match explicit_args with
+           | a :: rest -> a :: k rest
+           | [] -> assert false))
+      intros
+      (fun _ -> [])
+      args
+  else
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "recursive call to `%s` expects %d args (or %d without implicits), got %d"
+      func_name
+      arity
+      explicit_arity
+      n_args
+;;
+
+(* Walk a Surface term and fix implicit markers on recursive calls to
+   [func_name] so the elaborator can process them normally. *)
+let mark_recursive_call_implicits
+      ~(loc : Asai.Range.t)
+      ~(func_name : string)
+      ~(intros : (string * bool) list)
       (body : Surface.preterm)
   : Surface.preterm
   =
@@ -110,55 +156,19 @@ let rewrite_recursive_calls
     | Surface.Located { value = t; _ } -> strip t
     | t -> t
   in
+  let rebuild head args =
+    List.fold_left (fun f (impl, a) -> Surface.App (impl, f, a)) head args
+  in
   let rec rw t =
     match t with
     | Surface.Located { value = inner; loc } -> Surface.Located { value = rw inner; loc }
     | Surface.App _ ->
-      let here = loc_or loc t in
       let head, args = spine_of [] t in
+      let args = List.map (fun (impl, a) -> impl, rw a) args in
       (match strip head with
        | Surface.Var [ n ] when String.equal n func_name ->
-         if List.length args <> arity
-         then
-           Reporter.fatalf
-             ~loc:here
-             Elab_error
-             "recursive call to `%s` must be fully applied (%d args), got %d"
-             func_name
-             arity
-             (List.length args);
-         let _, target_arg =
-           match List.nth_opt args target_pos with
-           | Some v -> v
-           | None ->
-             Reporter.fatalf
-               ~loc:here
-               Elab_error
-               "recursive call to `%s`: target position %d out of bounds (args len=%d)"
-               func_name
-               target_pos
-               (List.length args)
-         in
-         (match strip target_arg with
-          | Surface.Var [ v ] when List.mem_assoc v rec_arg_to_ih ->
-            let ih = List.assoc v rec_arg_to_ih in
-            let trailing =
-              List.filteri (fun i _ -> i > target_pos) args
-              |> List.map (fun (impl, a) -> impl, rw a)
-            in
-            List.fold_left
-              (fun acc (impl, a) -> Surface.App (impl, acc, a))
-              (Surface.Var [ ih ])
-              trailing
-          | _ ->
-            Reporter.fatalf
-              ~loc:(loc_or here target_arg)
-              Elab_error
-              "non-structural recursive call to `%s` in clause body"
-              func_name)
-       | _ ->
-         let args' = List.map (fun (impl, a) -> impl, rw a) args in
-         List.fold_left (fun acc (impl, a) -> Surface.App (impl, acc, a)) (rw head) args')
+         rebuild head (align_call_implicits ~loc ~func_name ~intros args)
+       | _ -> rebuild (rw head) args)
     | Surface.Lambda b -> Surface.Lambda { b with bound = rw b.bound }
     | Surface.TypedLambda (b, body) ->
       Surface.TypedLambda ({ b with bound = rw b.bound }, rw body)
@@ -166,10 +176,7 @@ let rewrite_recursive_calls
     | Surface.Max (a, b) -> Surface.Max (rw a, rw b)
     | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd _ -> t
-    | Surface.Op_soup _ ->
-      Reporter.fatalf
-        Elab_error
-        "internal: Op_soup reached clause-body rewrite (resolver should have lowered it)"
+    | Surface.Op_soup _ -> t
     | Surface.RecordLit entries ->
       Surface.RecordLit (List.map (fun (f, e) -> f, rw e) entries)
     | Surface.RecordUpdate (base, entries) ->
@@ -254,7 +261,7 @@ type processed_clause =
   ; vs : string list (* ctor field-binder names taken from the clause's pattern *)
   ; rec_arg_to_ih : (string * string) list
   ; trailing_pattern_names : string list
-  ; rewritten_body : Surface.preterm
+  ; normalized_body : Surface.preterm
   }
 
 let find_matched_clauses_for_ctor
@@ -436,18 +443,15 @@ let process_clause
       ~(loc : Asai.Range.t)
       ~(func_name : string)
       ~(ctor_name : string)
-      ~(arity : int)
       ~(implicits : bool list)
       ~(ctor_info_ : Context.ctor_info)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
-      ~(n_intros : int)
       ~(n_trailing : int)
       ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       (clause : Surface.clause)
   : processed_clause
   =
-  let _ = arity in
   let clause_loc = loc_or loc clause.body in
   let aligned_patterns = align_clause_patterns ~loc:clause_loc intros clause.patterns in
   if not (String.equal clause.head func_name)
@@ -524,16 +528,10 @@ let process_clause
       ctor_name
       n_trailing
       (List.length trailing_pattern_names);
-  let rewritten_body =
-    rewrite_recursive_calls
-      ~loc:clause_loc
-      ~func_name
-      ~arity:n_intros
-      ~target_pos
-      ~rec_arg_to_ih
-      clause.body
+  let normalized_body =
+    mark_recursive_call_implicits ~loc:clause_loc ~func_name ~intros clause.body
   in
-  { clause_loc; vs; rec_arg_to_ih; trailing_pattern_names; rewritten_body }
+  { clause_loc; vs; rec_arg_to_ih; trailing_pattern_names; normalized_body }
 ;;
 
 (* Qualify bare constructor references in [body] across the scrutinee's
@@ -938,7 +936,7 @@ let build_elim_body_unify
   let trailing_intros = List.filteri (fun i _ -> i > target_pos) intros in
   let case_args : Surface.preterm list =
     List.map
-      (fun (ctor_name, arity, implicits, outcome, flex_name_map) ->
+      (fun (ctor_name, _arity, implicits, outcome, flex_name_map) ->
          let ctor_info_ =
            List.find
              (fun (i : Context.ctor_info) -> String.equal i.ctor_name ctor_name)
@@ -1045,12 +1043,10 @@ let build_elim_body_unify
                ~loc
                ~func_name
                ~ctor_name
-               ~arity
                ~implicits
                ~ctor_info_
                ~intros
                ~target_pos
-               ~n_intros
                ~n_trailing:(List.length trailing_intros)
                ~normalize_pattern
                clause
@@ -1073,7 +1069,7 @@ let build_elim_body_unify
                       Some (user_name, readback_v v))
                  subst_sigma
              in
-             subst_vars_surface renamings pc.rewritten_body
+             subst_vars_surface renamings pc.normalized_body
            in
            let body_with_siblings =
              match body_subst_applied with
@@ -1300,7 +1296,7 @@ let build_elim_body
     let trailing_intros = List.filteri (fun i _ -> i > target_pos) intros in
     let case_args : Surface.preterm list =
       List.map
-        (fun (ctor_name, arity) ->
+        (fun (ctor_name, _arity) ->
            let ctor_info_ =
              List.find
                (fun (i : Context.ctor_info) -> String.equal i.ctor_name ctor_name)
@@ -1342,12 +1338,10 @@ let build_elim_body
                ~loc
                ~func_name
                ~ctor_name
-               ~arity
                ~implicits
                ~ctor_info_
                ~intros
                ~target_pos
-               ~n_intros
                ~n_trailing:(List.length trailing_intros)
                ~normalize_pattern
                clause
@@ -1366,8 +1360,8 @@ let build_elim_body
                    ~binder_names:ctor_info_.binder_names
                    matched_clauses
                in
-               annotate_inline_elim_siblings pc.rewritten_body siblings)
-             else pc.rewritten_body
+               annotate_inline_elim_siblings pc.normalized_body siblings)
+             else pc.normalized_body
            in
            let qualified_body =
              qualify_ctor_namespaces
@@ -2177,47 +2171,6 @@ let with_handlers (k : unit -> 'a) : 'a =
     ~not_found:Env.Handler.not_found
     ~hook:Env.Handler.hook
   @@ k
-;;
-
-let%expect_test "rewrite_recursive_calls: case-suc of add" =
-  (* Body: `add' m n` with `m` being a recursive case-arg. *)
-  let body =
-    Surface.App
-      ( false
-      , Surface.App (false, Surface.Var [ "add'" ], Surface.Var [ "m" ])
-      , Surface.Var [ "n" ] )
-  in
-  let rewritten =
-    rewrite_recursive_calls
-      ~loc:(Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos))
-      ~func_name:"add'"
-      ~arity:2
-      ~target_pos:0
-      ~rec_arg_to_ih:[ "m", "add' m" ]
-      body
-  in
-  print_string @@ [%show: Surface.preterm] rewritten;
-  [%expect {| (add' m n) |}]
-;;
-
-let%expect_test "rewrite_recursive_calls: non-recursive call left alone" =
-  let body =
-    Surface.App
-      ( false
-      , Surface.App (false, Surface.Var [ "foo" ], Surface.Var [ "m" ])
-      , Surface.Var [ "n" ] )
-  in
-  let rewritten =
-    rewrite_recursive_calls
-      ~loc:(Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos))
-      ~func_name:"add'"
-      ~arity:2
-      ~target_pos:0
-      ~rec_arg_to_ih:[ "m", "add' m" ]
-      body
-  in
-  print_string @@ [%show: Surface.preterm] rewritten;
-  [%expect {| ((foo m) n) |}]
 ;;
 
 let%expect_test "compute_effective_intros: bracketed intro at explicit param errors" =

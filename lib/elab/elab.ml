@@ -408,6 +408,17 @@ let rec dispatch (m : machine) (g : goal) : unit =
     Elab_decl.handle_top_let_have_type m ~loc ~name ~name_loc ~body ~bindings
   | KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val } ->
     Elab_decl.handle_top_let_have_body m ~loc ~name ~name_loc ~typ_tm ~typ_val
+  | KTopElimDef_HaveBody { loc; name; name_loc; typ_tm; typ_val; func_name; target_pos }
+    ->
+    Elab_elim.handle_elim_def_have_body
+      m
+      ~loc
+      ~name
+      ~name_loc
+      ~typ_tm
+      ~typ_val
+      ~func_name
+      ~target_pos
   | GTopStackDef { loc; name; name_loc; bindings; result_ty; moves; clauses } ->
     Elab_elim.handle_stack_def m ~loc ~name ~name_loc ~bindings ~result_ty ~moves ~clauses
   | KTopStackDef_HaveType { loc; name; name_loc; bindings; signature; moves; clauses } ->

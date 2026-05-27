@@ -141,6 +141,15 @@ type goal =
       ; typ_tm : Core.term
       ; typ_val : Core.value_ty
       }
+  | KTopElimDef_HaveBody of
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; typ_tm : Core.term
+      ; typ_val : Core.value_ty
+      ; func_name : string
+      ; target_pos : int
+      }
   | KTopData_HaveType of
       { loc : t
       ; name : string

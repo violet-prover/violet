@@ -5,7 +5,6 @@ open Elab_common
 open Violet_surface
 open Violet_common
 module Syntax = Violet_kernel.Syntax
-module Level = Violet_kernel.Level
 module Pretty = Violet_kernel.Pretty
 module Evaluation = Wiring.Eval
 open Syntax
@@ -607,12 +606,119 @@ let handle_elim_def_have_type
         intros
         elim_inner
     in
-    push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
+    publish_to_context ~exported:(m.is_exported name) [ name ] (typ_val, `Defn);
+    push
+      m
+      (KTopElimDef_HaveBody
+         { loc; name; name_loc; typ_tm; typ_val; func_name = name; target_pos });
     push m (GCheck (loc, term, typ_val))
   | other ->
     Reporter.fatalf
       Elab_error
       "KTopElimDef_HaveType: bad result %s"
+      ([%show: produced] other)
+;;
+
+(* Walks a Core.term and replaces applications of `Var func_name` where
+   the argument at [target_pos] is `LocalVar k` with `LocalVar (k-1)`
+   applied to the remaining arguments. Such an application is invoking
+   the definition itself recursively, hence should be replaced by IH
+   of eliminator.
+
+   The IH is always at index field_index - 1 because the eliminator
+   lambda-wrapping binds: λ field. λ ih. … *)
+let rewrite_recursive_calls ~loc ~func_name ~target_pos term =
+  let open Violet_kernel.Syntax.Core in
+  let rec core_spine_of acc = function
+    | App (f, a) -> core_spine_of (a :: acc) f
+    | head -> head, acc
+  in
+  let rebuild_app head args = List.fold_left (fun f a -> App (f, a)) head args in
+  let rec rw t =
+    match t with
+    | App _ ->
+      let head, args = core_spine_of [] t in
+      (match head with
+       | Var n when String.equal n func_name ->
+         if List.length args <= target_pos
+         then
+           Reporter.fatalf
+             ~loc
+             Elab_error
+             "recursive call to `%s`: not enough arguments (need > %d, got %d)"
+             func_name
+             target_pos
+             (List.length args);
+         let target_arg = List.nth args target_pos in
+         (match target_arg with
+          | LocalVar k ->
+            let ih = LocalVar (k - 1) in
+            let trailing = List.filteri (fun i _ -> i > target_pos) args in
+            rebuild_app ih (List.map rw trailing)
+          | _ ->
+            Reporter.fatalf
+              ~loc
+              Elab_error
+              "non-structural recursive call to `%s` in clause body"
+              func_name)
+       | _ -> rebuild_app (rw head) (List.map rw args))
+    | Lambda b -> Lambda { b with bound = rw b.bound }
+    | TypedLambda (b, body) -> TypedLambda ({ b with bound = rw b.bound }, rw body)
+    | Pi (b, body) -> Pi ({ b with bound = rw b.bound }, rw body)
+    | Lift r -> Lift { r with ty = rw r.ty }
+    | LiftTerm r -> LiftTerm { r with ty = rw r.ty; tm = rw r.tm }
+    | UnliftTerm r -> UnliftTerm { r with ty = rw r.ty; tm = rw r.tm }
+    | RecordType r ->
+      RecordType
+        { r with
+          params = List.map rw r.params
+        ; fields =
+            List.map
+              (fun (b : typ Syntax.binder) -> { b with bound = rw b.bound })
+              r.fields
+        }
+    | RecordIntro r ->
+      RecordIntro { r with fields = List.map (fun (f, e) -> f, rw e) r.fields }
+    | RecordProj r -> RecordProj { r with record = rw r.record }
+    | IdAbsurd t -> IdAbsurd (rw t)
+    | LocalVar _ | Var _ | Universe _ | Meta _ | InsertedMeta _ -> t
+  in
+  rw term
+;;
+
+let handle_elim_def_have_body
+      (m : machine)
+      ~loc
+      ~name
+      ~(name_loc : Asai.Range.t option)
+      ~typ_tm
+      ~typ_val
+      ~(func_name : string)
+      ~(target_pos : int)
+  =
+  match take_result m with
+  | PTerm term ->
+    let term = rewrite_recursive_calls ~loc ~func_name ~target_pos term in
+    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
+    Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
+    let exported = m.is_exported name in
+    let body_val = Evaluation.eval m.ctx.env term in
+    publish_to_env ~exported [ name ] (body_val, `Defn);
+    Env.register_definition name body_val;
+    let qname = m.module_name ^ "." ^ name in
+    (try Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term with
+     | Violet_kernel.Error.Kernel_error err ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "kernel rejected `%s`: %s"
+         qname
+         (Violet_kernel.Error.show_kernel_error err));
+    m.result <- Some PUnit
+  | other ->
+    Reporter.fatalf
+      Elab_error
+      "KTopElimDef_HaveBody: bad result %s"
       ([%show: produced] other)
 ;;
 
