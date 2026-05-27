@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: handle VIdAbsurd in unifier
+- improve error report messages about `<= split` and `<= elim`
 - `violet lsp --stdio` runs a language server
 - fix file path resolution
 - update name of recursive call in context, now one will see `f m'` instead of `ih-m` for definition `f`

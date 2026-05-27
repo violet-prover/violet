@@ -214,6 +214,7 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     unify_spine ~loc cv sp1 sp2
   | VRecordProj (v1, f1), VRecordProj (v2, f2) when String.equal f1 f2 ->
     unify ~loc cv v1 v2
+  | VIdAbsurd v1, VIdAbsurd v2 -> unify ~loc cv v1 v2
   | VLambda { name; bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
     unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)
