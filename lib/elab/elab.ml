@@ -562,50 +562,79 @@ type goal =
   | KEnsureUniverse of t
   | KIdAbsurd_HaveArg of t
   | GTopLet of
-      t * string * Surface.pretype binder list * Surface.pretype * Surface.preterm
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; bindings : Surface.pretype binder list
+      ; result_ty : Surface.pretype
+      ; body : Surface.preterm
+      }
   | GTopData of t * Surface.top
-  | GTopUniverseDecl of string list
+  | GTopUniverseDecl of (string * Asai.Range.t option) list
   | GTopStackDef of
-      t
-      * string
-      * Surface.pretype binder list
-      * Surface.pretype
-      * Surface.stack_move list
-      * Surface.clause list
-  | KTopLet_HaveType of t * string * Surface.preterm * Surface.pretype binder list
-  | KTopLet_HaveBody of t * string * Core.term * Core.value_ty
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; bindings : Surface.pretype binder list
+      ; result_ty : Surface.pretype
+      ; moves : Surface.stack_move list
+      ; clauses : Surface.clause list
+      }
+  | KTopLet_HaveType of
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; body : Surface.preterm
+      ; bindings : Surface.pretype binder list
+      }
+  | KTopLet_HaveBody of
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; typ_tm : Core.term
+      ; typ_val : Core.value_ty
+      }
   | KTopData_HaveType of
-      t
-      * string
-      * Surface.pretype binder list
-      * Surface.pretype binder list
-      * Surface.pretype
-      * Surface.pretype binder list
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; params : Surface.pretype binder list
+      ; deps : Surface.pretype binder list
+      ; ind_ty : Surface.pretype
+      ; ctors : Surface.pretype binder list
+      ; ctor_name_locs : Asai.Range.t option list
+      }
   | KTopStackDef_HaveType of
-      t
-      * string
-      * Surface.pretype binder list
-      * Surface.pretype
-      * Surface.stack_move list
-      * Surface.clause list
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; bindings : Surface.pretype binder list
+      ; signature : Surface.pretype
+      ; moves : Surface.stack_move list
+      ; clauses : Surface.clause list
+      }
   | GTopElimDef of
-      t
-      * string
-      * Surface.pretype binder list
-      * Surface.pretype
-      * string list
-      * (string * bool) list
-      * string
-      * Surface.clause list
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; bindings : Surface.pretype binder list
+      ; result_ty : Surface.pretype
+      ; opens : string list
+      ; intros : (string * bool) list
+      ; target : string
+      ; clauses : Surface.clause list
+      }
   | KTopElimDef_HaveType of
-      t
-      * string
-      * Surface.pretype binder list
-      * Surface.pretype
-      * string list
-      * (string * bool) list
-      * string
-      * Surface.clause list
+      { loc : t
+      ; name : string
+      ; name_loc : Asai.Range.t option
+      ; bindings : Surface.pretype binder list
+      ; signature : Surface.pretype
+      ; opens : string list
+      ; intros : (string * bool) list
+      ; target : string
+      ; clauses : Surface.clause list
+      }
   | GTopRecord of t * Surface.top
   | KTopRecord_HaveType of
       t
@@ -765,7 +794,7 @@ let emit_goal_report
 ;;
 
 let name_of_top : Surface.top -> string = function
-  | Surface.Let (n, _, _, _) -> n
+  | Surface.Let { name; _ } -> name
   | Surface.Data { name; _ } -> name
   | Surface.Stack_def { name; _ } -> name
   | Surface.Elim_def { name; _ } -> name
@@ -895,7 +924,12 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | None ->
        (match resolve_universe_var x with
         | Some l ->
-          m.result <- Some (PTermType (Core.Universe l, Core.Universe (Level.lsuc l)))
+          let ty = Core.Universe (Level.lsuc l) in
+          let pp_ty =
+            Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
+          in
+          Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
+          m.result <- Some (PTermType (Core.Universe l, ty))
         | None ->
           let ty = Context.lookup x in
           let pp_ty =
@@ -1481,18 +1515,27 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "KCheckBy_Infer: bad result %s"
          ([%show: produced] other))
   | GTopUniverseDecl names ->
-    List.iter Context.declare_level_var names;
+    List.iter
+      (fun (name, loc) ->
+         Context.declare_level_var name;
+         match loc with
+         | Some loc ->
+           let ty = Core.Universe (Level.LSuc (Level.LVar name)) in
+           let pp_ty = Pretty.pp_level (Level.LSuc (Level.LVar name)) in
+           Observer.emit (Def { path = [ name ]; loc; name_loc = Some loc; ty; pp_ty })
+         | None -> ())
+      names;
     m.result <- Some PUnit
-  | GTopLet (loc, name, bindings, result_ty, body) ->
+  | GTopLet { loc; name; name_loc; bindings; result_ty; body } ->
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
         bindings
         result_ty
     in
-    push m (KTopLet_HaveType (loc, name, body, bindings));
+    push m (KTopLet_HaveType { loc; name; name_loc; body; bindings });
     push m (GInferType (loc, typ))
-  | KTopLet_HaveType (loc, name, body, bindings) ->
+  | KTopLet_HaveType { loc; name; name_loc; body; bindings } ->
     (match take_result m with
      | PType (typ_tm, _) ->
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -1503,20 +1546,20 @@ let rec dispatch (m : machine) (g : goal) : unit =
            bindings
            body
        in
-       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
+       push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
          Elab_error
          "KTopLet_HaveType: bad result %s"
          ([%show: produced] other))
-  | KTopLet_HaveBody (loc, name, typ_tm, typ_val) ->
+  | KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val } ->
     (match take_result m with
      | PTerm term ->
        let pp_ty =
          Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
        in
-       Observer.emit (Def { path = [ name ]; loc; ty = typ_val; pp_ty });
+       Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
        let exported = m.is_exported name in
        publish_to_context ~exported [ name ] (typ_val, `Defn);
        let body_val = Evaluation.eval m.ctx.env term in
@@ -1537,7 +1580,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          Elab_error
          "KTopLet_HaveBody: bad result %s"
          ([%show: produced] other))
-  | GTopStackDef (loc, name, bindings, result_ty, moves, clauses) ->
+  | GTopStackDef { loc; name; name_loc; bindings; result_ty; moves; clauses } ->
     List.iter
       (fun (c : Surface.clause) ->
          List.iter
@@ -1557,9 +1600,12 @@ let rec dispatch (m : machine) (g : goal) : unit =
         bindings
         result_ty
     in
-    push m (KTopStackDef_HaveType (loc, name, bindings, result_ty, moves, clauses));
+    push
+      m
+      (KTopStackDef_HaveType
+         { loc; name; name_loc; bindings; signature = result_ty; moves; clauses });
     push m (GInferType (loc, typ))
-  | KTopStackDef_HaveType (loc, name, bindings, signature, moves, clauses) ->
+  | KTopStackDef_HaveType { loc; name; name_loc; bindings; signature; moves; clauses } ->
     (match take_result m with
      | PType (typ_tm, _) ->
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -1582,14 +1628,15 @@ let rec dispatch (m : machine) (g : goal) : unit =
            bindings
            inner
        in
-       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
+       push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
          Elab_error
          "KTopStackDef_HaveType: bad result %s"
          ([%show: produced] other))
-  | GTopElimDef (loc, name, bindings, result_ty, opens, intros, target, clauses) ->
+  | GTopElimDef
+      { loc; name; name_loc; bindings; result_ty; opens; intros; target; clauses } ->
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
@@ -1599,10 +1646,19 @@ let rec dispatch (m : machine) (g : goal) : unit =
     push
       m
       (KTopElimDef_HaveType
-         (loc, name, bindings, result_ty, opens, intros, target, clauses));
+         { loc
+         ; name
+         ; name_loc
+         ; bindings
+         ; signature = result_ty
+         ; opens
+         ; intros
+         ; target
+         ; clauses
+         });
     push m (GInferType (loc, typ))
-  | KTopElimDef_HaveType (loc, name, bindings, signature, opens, intros, target, clauses)
-    ->
+  | KTopElimDef_HaveType
+      { loc; name; name_loc; bindings; signature; opens; intros; target; clauses } ->
     (match take_result m with
      | PType (typ_tm, _) ->
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -1622,10 +1678,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
          in
          go 0 effective_intros
        in
-       (* Peel target_pos VPi binders off typ_val, substituting fresh
-          rigid_local levels (matching the levels the elaborator will
-          assign when it later checks the wrapping intro-lambdas). The
-          target's type is then the bound of the next VPi. *)
        let target_type_value : Core.value =
          let rec peel v n lvl =
            if n = 0
@@ -1670,23 +1722,35 @@ let rec dispatch (m : machine) (g : goal) : unit =
            intros
            elim_inner
        in
-       push m (KTopLet_HaveBody (loc, name, typ_tm, typ_val));
+       push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
        push m (GCheck (loc, term, typ_val))
      | other ->
        Reporter.fatalf
          Elab_error
          "KTopElimDef_HaveType: bad result %s"
          ([%show: produced] other))
-  | GTopData (loc, Surface.Data { name; params; deps; ind_ty; ctors }) ->
+  | GTopData
+      ( loc
+      , Surface.Data
+          { name; name_loc; params; deps; ind_ty; ind_ty_loc; ctors; ctor_name_locs } ) ->
+    let ind_ty_for_elab =
+      match ind_ty_loc with
+      | Some l -> Surface.Located { loc = Some l; value = ind_ty }
+      | None -> ind_ty
+    in
     let typ : Surface.pretype =
       List.fold_right
         (fun binding return_ty -> Surface.Pi (binding, return_ty))
         (params @ deps)
-        ind_ty
+        ind_ty_for_elab
     in
-    push m (KTopData_HaveType (loc, name, params, deps, ind_ty, ctors));
+    push
+      m
+      (KTopData_HaveType
+         { loc; name; name_loc; params; deps; ind_ty; ctors; ctor_name_locs });
     push m (GInferType (loc, typ))
-  | KTopData_HaveType (loc, name, params, deps, ind_ty, ctors) ->
+  | KTopData_HaveType { loc; name; name_loc; params; deps; ind_ty; ctors; ctor_name_locs }
+    ->
     (match take_result m with
      | PType (typ_tm, inferred_sort) ->
        let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -1750,6 +1814,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let ind_info : Context.ind_info =
          { params; deps; ind_ty; ctors; infos; param_polarity }
        in
+       let pp_ty =
+         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+       in
+       Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
        let exported = m.is_exported name in
        publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);
        publish_to_env ~exported [ name ] (Core.IndType (name, Bwd.Emp), `Constructor);
@@ -1761,16 +1829,20 @@ let rec dispatch (m : machine) (g : goal) : unit =
          List.map (fun cn -> m.module_name ^ "." ^ name ^ "." ^ cn) ctor_names
        in
        Check.accept_data m.kernel_module ~name:qname ~ty:typ_tm ~ctor_names:qctor_names;
-       List.iter
-         (bind_constructor
-            ~loc
-            ~exported
-            ~ind_name:name (* bare *)
-            ~ind_qname:qname (* module.Nat for kernel *)
-            ~module_name:m.module_name
-            ~kernel_module:m.kernel_module
-            m.ctx
-            params)
+       List.iter2
+         (fun ctor_name_loc ctor ->
+            bind_constructor
+              ~loc
+              ~name_loc:ctor_name_loc
+              ~exported
+              ~ind_name:name
+              ~ind_qname:qname
+              ~module_name:m.module_name
+              ~kernel_module:m.kernel_module
+              m.ctx
+              params
+              ctor)
+         ctor_name_locs
          ctors;
        let elim_typ : Surface.pretype =
          Eliminator_synth.eliminator_type ~name ~params ~deps ~ind_ty ctors
@@ -1838,7 +1910,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "KTopData_HaveType: bad result %s"
          ([%show: produced] other))
   | GTopData (_, _) -> Reporter.fatalf Elab_error "GTopData: payload is not Data"
-  | GTopRecord (loc, Surface.Record { name; params; ind_ty; fields }) ->
+  | GTopRecord (loc, Surface.Record { name; params; ind_ty; fields; _ }) ->
     (* Defensive check: implicit field binders are not supported.
        The parser does not emit them, but hand-constructed ASTs could. *)
     List.iter
@@ -2339,11 +2411,10 @@ and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Cor
 
 and bind_constructor
       ~loc
+      ~(name_loc : Asai.Range.t option)
       ~exported
       ~(ind_name : string)
-      (* bare inductive name for surface scope *)
       ~(ind_qname : string)
-      (* module-qualified for kernel *)
       ~(module_name : string)
       ~(kernel_module : Violet_kernel.Module.t)
       (ctx : local_ctx)
@@ -2355,6 +2426,8 @@ and bind_constructor
   let typ = Inductive.close_ctor_type params typ in
   let ctor_ty_tm = check_type ~loc ctx typ in
   let ctor_ty = Evaluation.eval ctx.env ctor_ty_tm in
+  let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_ty) in
+  Observer.emit (Def { path = [ ind_name; name ]; loc; name_loc; ty = ctor_ty; pp_ty });
   let ctor_flat = ind_name ^ "/" ^ name in
   (* Context: multi-segment for type-directed surface resolution *)
   publish_to_context ~exported [ ind_name; name ] (ctor_ty, `Constructor);
@@ -2660,13 +2733,25 @@ let check_top
   let g =
     match top with
     | Surface.Universe_decl names -> GTopUniverseDecl names
-    | Surface.Let (name, bindings, result_ty, body) ->
-      GTopLet (loc, name, bindings, result_ty, body)
+    | Surface.Let { name; name_loc; bindings; result_ty; body } ->
+      GTopLet { loc; name; name_loc; bindings; result_ty; body }
     | Surface.Data _ as d -> GTopData (loc, d)
-    | Surface.Stack_def { name; params; signature; moves; clauses } ->
-      GTopStackDef (loc, name, params, signature, moves, clauses)
-    | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
-      GTopElimDef (loc, name, params, signature, opens, intros, target, clauses)
+    | Surface.Stack_def { name; name_loc; params; signature; moves; clauses } ->
+      GTopStackDef
+        { loc; name; name_loc; bindings = params; result_ty = signature; moves; clauses }
+    | Surface.Elim_def
+        { name; name_loc; params; signature; opens; intros; target; clauses } ->
+      GTopElimDef
+        { loc
+        ; name
+        ; name_loc
+        ; bindings = params
+        ; result_ty = signature
+        ; opens
+        ; intros
+        ; target
+        ; clauses
+        }
     | Surface.Operator_decl _ ->
       Reporter.fatalf
         ~loc
@@ -2706,7 +2791,7 @@ let check_module
   Context.clear_level_vars ();
   let exports_set =
     let h = Hashtbl.create 16 in
-    List.iter (fun n -> Hashtbl.replace h n ()) file.exports;
+    List.iter (fun (n, _) -> Hashtbl.replace h n ()) file.exports;
     h
   in
   let is_exported name = Hashtbl.mem exports_set name in
@@ -2733,14 +2818,28 @@ let check_module
        | [] -> ()
        | seg :: _ -> Hashtbl.replace bound_names seg ())
     (Context.S.get_export ());
-  let undefined = List.filter (fun n -> not (Hashtbl.mem bound_names n)) file.exports in
+  let undefined =
+    List.filter (fun (n, _) -> not (Hashtbl.mem bound_names n)) file.exports
+  in
+  List.iter
+    (fun (name, loc) ->
+       match loc with
+       | Some loc ->
+         (match Context.S.resolve [ name ] with
+          | Some (ty, _) ->
+            let cv = Violet_kernel.Context_view.make ~names:Bwd.Emp ~lvl:0 in
+            let pp_ty = Pretty.pp_term cv (Evaluation.quote 0 ty) in
+            Observer.emit (Use { path = [ name ]; loc; def_loc = None; ty; pp_ty })
+          | None -> ())
+       | None -> ())
+    file.exports;
   match undefined with
   | [] -> ()
   | names ->
     Reporter.fatalf
       Export_error
       "the following names are listed in \\export but never defined: %s"
-      (String.concat ", " names)
+      (String.concat ", " (List.map fst names))
 ;;
 
 let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
@@ -2749,9 +2848,11 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -2762,10 +2863,17 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let let_zero : Surface.top =
-    Surface.Let ("x", [], Surface.Var [ "Nat" ], Surface.Var [ "zero" ])
+    Surface.Let
+      { name = "x"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty = Surface.Var [ "Nat" ]
+      ; body = Surface.Var [ "zero" ]
+      }
   in
   let ast : Surface.t =
     { name = "td-test.vt"
@@ -2789,23 +2897,30 @@ let%expect_test "module: \\export-less let stays private from importers" =
   (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
   let foo_def =
     Surface.Let
-      ( "foo"
-      , []
-      , Surface.Pi
-          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-          , Surface.Universe )
-      , Surface.Lambda
-          { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+      { name = "foo"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.Pi
+            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
+            , Surface.Universe )
+      ; body =
+          Surface.Lambda
+            { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
+      }
   in
   (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
   let uses_foo_def =
     Surface.Let
-      ( "uses_foo"
-      , []
-      , Surface.Pi
-          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-          , Surface.Universe )
-      , Surface.Var [ "foo" ] )
+      { name = "uses_foo"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.Pi
+            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
+            , Surface.Universe )
+      ; body = Surface.Var [ "foo" ]
+      }
   in
   let mod_a : Surface.t =
     { name = "a.vt"; imports = []; exports = []; tops = [ loc foo_def ] }
@@ -2842,26 +2957,33 @@ let%expect_test "module: \\export-listed let is visible to importers" =
   (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
   let foo_def =
     Surface.Let
-      ( "foo"
-      , []
-      , Surface.Pi
-          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-          , Surface.Universe )
-      , Surface.Lambda
-          { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false } )
+      { name = "foo"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.Pi
+            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
+            , Surface.Universe )
+      ; body =
+          Surface.Lambda
+            { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
+      }
   in
   (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
   let uses_foo_def =
     Surface.Let
-      ( "uses_foo"
-      , []
-      , Surface.Pi
-          ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-          , Surface.Universe )
-      , Surface.Var [ "foo" ] )
+      { name = "uses_foo"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.Pi
+            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
+            , Surface.Universe )
+      ; body = Surface.Var [ "foo" ]
+      }
   in
   let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "foo" ]; tops = [ loc foo_def ] }
+    { name = "a.vt"; imports = []; exports = [ "foo", None ]; tops = [ loc foo_def ] }
   in
   let mod_b : Surface.t =
     { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
@@ -2880,7 +3002,7 @@ let%expect_test "module: \\export-listed let is visible to importers" =
 
 let%expect_test "module: \\export of an undefined name fails" =
   let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "ghost" ]; tops = [] }
+    { name = "a.vt"; imports = []; exports = [ "ghost", None ]; tops = [] }
   in
   (try
      with_handlers (fun () -> check_module mod_a);
@@ -2902,9 +3024,11 @@ let%expect_test
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -2915,10 +3039,11 @@ let%expect_test
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "Nat" ]; tops = [ loc nat_data ] }
+    { name = "a.vt"; imports = []; exports = [ "Nat", None ]; tops = [ loc nat_data ] }
   in
   (* uses_bundle : Nat => Nat/zero — references both the type and a constructor,
      proving the inductive bundle (type + ctors) is visible cross-module. *)
@@ -2929,7 +3054,12 @@ let%expect_test
     ; tops =
         [ loc
             (Surface.Let
-               ("uses_bundle", [], Surface.Var [ "Nat" ], Surface.Var [ "Nat"; "zero" ]))
+               { name = "uses_bundle"
+               ; name_loc = None
+               ; bindings = []
+               ; result_ty = Surface.Var [ "Nat" ]
+               ; body = Surface.Var [ "Nat"; "zero" ]
+               })
         ]
     }
   in
@@ -2953,9 +3083,11 @@ let%expect_test
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -2966,11 +3098,13 @@ let%expect_test
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let point_record : Surface.top =
     Surface.Record
       { name = "Point"
+      ; name_loc = None
       ; params = []
       ; ind_ty = Surface.Universe
       ; fields =
@@ -2984,7 +3118,7 @@ let%expect_test
   let mod_a : Surface.t =
     { name = "a.vt"
     ; imports = []
-    ; exports = [ "Nat"; "Point" ]
+    ; exports = [ "Nat", None; "Point", None ]
     ; tops = [ loc nat_data; loc point_record ]
     }
   in
@@ -2998,12 +3132,15 @@ let%expect_test
     ; tops =
         [ loc
             (Surface.Let
-               ( "uses_proj"
-               , []
-               , Surface.Pi
-                   ( { name = Anon; bound = Surface.Var [ "Point" ]; implicit = false }
-                   , Surface.Var [ "Nat" ] )
-               , Surface.Var [ "Point/x" ] ))
+               { name = "uses_proj"
+               ; name_loc = None
+               ; bindings = []
+               ; result_ty =
+                   Surface.Pi
+                     ( { name = Anon; bound = Surface.Var [ "Point" ]; implicit = false }
+                     , Surface.Var [ "Nat" ] )
+               ; body = Surface.Var [ "Point/x" ]
+               })
         ]
     }
   in
@@ -3026,9 +3163,11 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -3039,11 +3178,13 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let point_record : Surface.top =
     Surface.Record
       { name = "Point"
+      ; name_loc = None
       ; params = []
       ; ind_ty = Surface.Universe
       ; fields =
@@ -3102,9 +3243,11 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -3115,11 +3258,13 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let pair_record : Surface.top =
     Surface.Record
       { name = "Pair"
+      ; name_loc = None
       ; params =
           [ { name = Named "A"; bound = Surface.Universe; implicit = false }
           ; { name = Named "B"; bound = Surface.Universe; implicit = false }
@@ -3134,15 +3279,18 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
   (* \let p : Pair Nat Nat => { fst = Nat/zero, snd = Nat/zero } *)
   let p_let : Surface.top =
     Surface.Let
-      ( "p"
-      , []
-      , Surface.App
-          ( false
-          , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
-          , Surface.Var [ "Nat" ] )
-      , Surface.RecordLit
-          [ "fst", Surface.Var [ "Nat"; "zero" ]; "snd", Surface.Var [ "Nat"; "zero" ] ]
-      )
+      { name = "p"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.App
+            ( false
+            , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
+            , Surface.Var [ "Nat" ] )
+      ; body =
+          Surface.RecordLit
+            [ "fst", Surface.Var [ "Nat"; "zero" ]; "snd", Surface.Var [ "Nat"; "zero" ] ]
+      }
   in
   let kernel_module = Violet_kernel.Module.create () in
   with_handlers (fun () ->
@@ -3183,9 +3331,11 @@ let%expect_test "check-mode record literal with missing field gives error" =
   let nat_data : Surface.top =
     Surface.Data
       { name = "Nat"
+      ; name_loc = None
       ; params = []
       ; deps = []
       ; ind_ty = Surface.Universe
+      ; ind_ty_loc = None
       ; ctors =
           [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
           ; { name = Named "suc"
@@ -3196,11 +3346,13 @@ let%expect_test "check-mode record literal with missing field gives error" =
             ; implicit = false
             }
           ]
+      ; ctor_name_locs = [ None; None ]
       }
   in
   let pair_record : Surface.top =
     Surface.Record
       { name = "Pair"
+      ; name_loc = None
       ; params =
           [ { name = Named "A"; bound = Surface.Universe; implicit = false }
           ; { name = Named "B"; bound = Surface.Universe; implicit = false }
@@ -3215,13 +3367,16 @@ let%expect_test "check-mode record literal with missing field gives error" =
   (* \let p : Pair Nat Nat => { fst = Nat/zero }  -- missing snd *)
   let p_let : Surface.top =
     Surface.Let
-      ( "p"
-      , []
-      , Surface.App
-          ( false
-          , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
-          , Surface.Var [ "Nat" ] )
-      , Surface.RecordLit [ "fst", Surface.Var [ "Nat"; "zero" ] ] )
+      { name = "p"
+      ; name_loc = None
+      ; bindings = []
+      ; result_ty =
+          Surface.App
+            ( false
+            , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
+            , Surface.Var [ "Nat" ] )
+      ; body = Surface.RecordLit [ "fst", Surface.Var [ "Nat"; "zero" ] ]
+      }
   in
   let kernel_module = Violet_kernel.Module.create () in
   let result =

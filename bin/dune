@@ -8,6 +8,7 @@
   violet_elab
   violet_project
   violet_kernel
+  violet_langserver
   cmdliner
   tsort
   eio

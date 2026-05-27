@@ -33,7 +33,8 @@
   ppx_expect
   linenoise
   violet_kernel
-  violet_elab)
+  violet_elab
+  violet_langserver)
  (tags
   ("dependent-types" "type-theory" "proof-assistant")))
 
@@ -51,5 +52,27 @@
  (name violet_interactive)
  (synopsis "Violet interactive query layer")
  (depends (ocaml (>= 5.3)) dune violet_elab violet_kernel asai))
+
+(package
+ (name violet_project)
+ (synopsis "Violet project loader and manifest management")
+ (depends (ocaml (>= 5.3)) dune unix violet_elab tsort ppx_deriving ppx_expect))
+
+(package
+ (name violet_langserver)
+ (synopsis "Violet language server (LSP)")
+ (depends
+  (ocaml (>= 5.3))
+  dune
+  violet_interactive
+  violet_elab
+  violet_kernel
+  violet_project
+  asai
+  eio
+  linol
+  linol-eio
+  tsort
+  ppx_expect))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

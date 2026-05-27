@@ -2,6 +2,7 @@ type event =
   | Def of
       { path : string list
       ; loc : Asai.Range.t
+      ; name_loc : Asai.Range.t option
       ; ty : Violet_kernel.Syntax.Core.value_ty
       ; pp_ty : string
       }

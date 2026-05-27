@@ -13,6 +13,8 @@ type entry =
   ; def_loc : Asai.Range.t option
   ; ty : Violet_kernel.Syntax.Core.value_ty option
   ; pp_ty : string option
+  ; ctx : (string * string) list
+  ; pp_target : string option
   }
 
 type t =
@@ -29,18 +31,64 @@ let start_offset (r : Asai.Range.t) : int =
 let empty = { by_offset = IntMap.empty; def_of = IntMap.empty }
 
 let entry_of_event : Violet_elab.Observer.event -> entry = function
-  | Violet_elab.Observer.Def { path; loc; ty; pp_ty } ->
-    { path; kind = Def; loc; def_loc = Some loc; ty = Some ty; pp_ty = Some pp_ty }
+  | Violet_elab.Observer.Def { path; loc; name_loc; ty; pp_ty } ->
+    { path
+    ; kind = Def
+    ; loc
+    ; def_loc = Some (Option.value name_loc ~default:loc)
+    ; ty = Some ty
+    ; pp_ty = Some pp_ty
+    ; ctx = []
+    ; pp_target = None
+    }
   | Violet_elab.Observer.Use { path; loc; def_loc; ty; pp_ty } ->
-    { path; kind = Use; loc; def_loc; ty = Some ty; pp_ty = Some pp_ty }
-  | Violet_elab.Observer.Goal { path; loc; ty; _ } ->
-    { path; kind = Goal; loc; def_loc = None; ty = Some ty; pp_ty = None }
+    { path
+    ; kind = Use
+    ; loc
+    ; def_loc
+    ; ty = Some ty
+    ; pp_ty = Some pp_ty
+    ; ctx = []
+    ; pp_target = None
+    }
+  | Violet_elab.Observer.Goal { path; loc; ty; ctx; pp_target } ->
+    { path
+    ; kind = Goal
+    ; loc
+    ; def_loc = None
+    ; ty = Some ty
+    ; pp_ty = None
+    ; ctx
+    ; pp_target = Some pp_target
+    }
   | Violet_elab.Observer.Binder { path; loc } ->
-    { path; kind = Binder; loc; def_loc = Some loc; ty = None; pp_ty = None }
+    { path
+    ; kind = Binder
+    ; loc
+    ; def_loc = Some loc
+    ; ty = None
+    ; pp_ty = None
+    ; ctx = []
+    ; pp_target = None
+    }
+;;
+
+let is_multiline (r : Asai.Range.t) : bool =
+  match Asai.Range.view r with
+  | `Range (s, e) -> s.line_num <> e.line_num
+  | `End_of_file _ -> false
 ;;
 
 let of_events evs =
-  let entries = List.map entry_of_event evs in
+  let entries =
+    List.filter_map
+      (fun ev ->
+         let e = entry_of_event ev in
+         match e.kind with
+         | Use when is_multiline e.loc -> None
+         | _ -> Some e)
+      evs
+  in
   let by_offset =
     List.fold_left
       (fun m e ->
@@ -58,7 +106,9 @@ let of_events evs =
     List.fold_left
       (fun m e ->
          match e.kind with
-         | Def -> (e.path, e.loc) :: m
+         | Def | Binder ->
+           let target = Option.value e.def_loc ~default:e.loc in
+           (e.path, target) :: m
          | _ -> m)
       []
       entries

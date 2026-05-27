@@ -11,6 +11,8 @@ type entry =
   ; def_loc : Asai.Range.t option
   ; ty : Violet_kernel.Syntax.Core.value_ty option
   ; pp_ty : string option
+  ; ctx : (string * string) list
+  ; pp_target : string option
   }
 
 type t
@@ -21,3 +23,4 @@ val find_at : source:string -> line:int -> col:int -> t -> entry option
 val def_of : entry -> t -> Asai.Range.t option
 val all_entries : t -> entry list
 val entries_at_path : string list -> t -> entry list
+val source_of_range : Asai.Range.t -> string option

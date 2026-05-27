@@ -809,7 +809,7 @@ let%expect_test "compute_levels: detects a cycle" =
 
 type tok =
   | TAtom of Surface.preterm
-  | TName of string
+  | TName of string * Asai.Range.t option
   | TImpArg of Surface.preterm
 
 (* The set of strings that appear as a literal part of any operator in the
@@ -840,7 +840,7 @@ let mk_state (table : op_table) (items : Surface.soup_item list) : parser_state 
       (List.map
          (function
            | Surface.SI_Atom p -> TAtom p
-           | Surface.SI_Name s -> TName s
+           | Surface.SI_Name (s, loc) -> TName (s, loc)
            | Surface.SI_Imp_arg p -> TImpArg p)
          items)
   in
@@ -1060,7 +1060,7 @@ and try_lit_starting_op (st : parser_state) (op : op_decl) (lvl : int) (i : int)
         !pos < n
         &&
         match st.toks.(!pos) with
-        | TName s' -> String.equal s s'
+        | TName (s', _) -> String.equal s s'
         | _ -> false
       then begin
         pos := !pos + 1;
@@ -1108,7 +1108,7 @@ and try_hole_starting_op
         !pos < n
         &&
         match st.toks.(!pos) with
-        | TName s' -> String.equal s s'
+        | TName (s', _) -> String.equal s s'
         | _ -> false
       then begin
         pos := !pos + 1;
@@ -1134,13 +1134,13 @@ and parse_atom_spine (st : parser_state) (i : int) : (Surface.preterm * int) opt
   let n = Array.length st.toks in
   let to_atom = function
     | TAtom p -> p
-    | TName s -> Surface.Var [ s ]
+    | TName (s, _) -> Surface.Var [ s ]
     | TImpArg _ -> assert false
   in
   let is_atom_start t =
     match t with
     | TAtom _ -> true
-    | TName s -> not (is_op_lit st s)
+    | TName (s, _) -> not (is_op_lit st s)
     | TImpArg _ -> false
   in
   if i >= n || not (is_atom_start st.toks.(i))
@@ -1153,7 +1153,7 @@ and parse_atom_spine (st : parser_state) (i : int) : (Surface.preterm * int) opt
       else (
         match st.toks.(j) with
         | TAtom p -> loop (j + 1) (Surface.App (false, acc, p))
-        | TName s when not (is_op_lit st s) ->
+        | TName (s, _) when not (is_op_lit st s) ->
           loop (j + 1) (Surface.App (false, acc, Surface.Var [ s ]))
         | TImpArg p -> loop (j + 1) (Surface.App (true, acc, p))
         | _ -> acc, j)
@@ -1182,7 +1182,10 @@ let%expect_test "parse_soup: empty table, App spine" =
   let result =
     parse_soup
       empty_table
-      [ Surface.SI_Name "f"; Surface.SI_Name "x"; Surface.SI_Name "y" ]
+      [ Surface.SI_Name ("f", None)
+      ; Surface.SI_Name ("x", None)
+      ; Surface.SI_Name ("y", None)
+      ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| ((f x) y) |}]
@@ -1192,9 +1195,9 @@ let%expect_test "parse_soup: empty table, implicit arg" =
   let result =
     parse_soup
       empty_table
-      [ Surface.SI_Name "f"
+      [ Surface.SI_Name ("f", None)
       ; Surface.SI_Imp_arg (Surface.Var [ "A" ])
-      ; Surface.SI_Name "x"
+      ; Surface.SI_Name ("x", None)
       ]
   in
   print_string @@ [%show: Surface.preterm] result;
@@ -1210,7 +1213,12 @@ let%expect_test "parse_soup: binary infix" =
   in
   let table = add_decl plus empty_table in
   let result =
-    parse_soup table [ Surface.SI_Name "a"; Surface.SI_Name "+"; Surface.SI_Name "b" ]
+    parse_soup
+      table
+      [ Surface.SI_Name ("a", None)
+      ; Surface.SI_Name ("+", None)
+      ; Surface.SI_Name ("b", None)
+      ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| ((add a) b) |}]
@@ -1235,11 +1243,11 @@ let%expect_test "parse_soup: precedence — `*` tighter than `+`" =
   let result =
     parse_soup
       table
-      [ Surface.SI_Name "x1"
-      ; Surface.SI_Name "+"
-      ; Surface.SI_Name "x2"
-      ; Surface.SI_Name "*"
-      ; Surface.SI_Name "x3"
+      [ Surface.SI_Name ("x1", None)
+      ; Surface.SI_Name ("+", None)
+      ; Surface.SI_Name ("x2", None)
+      ; Surface.SI_Name ("*", None)
+      ; Surface.SI_Name ("x3", None)
       ]
   in
   print_string @@ [%show: Surface.preterm] result;
@@ -1257,12 +1265,12 @@ let%expect_test "parse_soup: ternary mixfix" =
   let result =
     parse_soup
       table
-      [ Surface.SI_Name "if"
-      ; Surface.SI_Name "c"
-      ; Surface.SI_Name "then"
-      ; Surface.SI_Name "a"
-      ; Surface.SI_Name "else"
-      ; Surface.SI_Name "b"
+      [ Surface.SI_Name ("if", None)
+      ; Surface.SI_Name ("c", None)
+      ; Surface.SI_Name ("then", None)
+      ; Surface.SI_Name ("a", None)
+      ; Surface.SI_Name ("else", None)
+      ; Surface.SI_Name ("b", None)
       ]
   in
   print_string @@ [%show: Surface.preterm] result;
@@ -1274,7 +1282,9 @@ let%expect_test "parse_soup: postfix `!`" =
     make_op_decl ~template:"\\x !" ~body:(Surface.Var [ "factorial" ]) ~options:[]
   in
   let table = add_decl bang empty_table in
-  let result = parse_soup table [ Surface.SI_Name "n"; Surface.SI_Name "!" ] in
+  let result =
+    parse_soup table [ Surface.SI_Name ("n", None); Surface.SI_Name ("!", None) ]
+  in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (factorial n) |}]
 ;;
@@ -1284,7 +1294,9 @@ let%expect_test "parse_soup: prefix `not`" =
     make_op_decl ~template:"not \\x" ~body:(Surface.Var [ "negate" ]) ~options:[]
   in
   let table = add_decl not_op empty_table in
-  let result = parse_soup table [ Surface.SI_Name "not"; Surface.SI_Name "b" ] in
+  let result =
+    parse_soup table [ Surface.SI_Name ("not", None); Surface.SI_Name ("b", None) ]
+  in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (negate b) |}]
 ;;
@@ -1300,11 +1312,11 @@ let%expect_test "parse_soup: \\associativity \\right" =
   let result =
     parse_soup
       table
-      [ Surface.SI_Name "a"
-      ; Surface.SI_Name "==>"
-      ; Surface.SI_Name "b"
-      ; Surface.SI_Name "==>"
-      ; Surface.SI_Name "c"
+      [ Surface.SI_Name ("a", None)
+      ; Surface.SI_Name ("==>", None)
+      ; Surface.SI_Name ("b", None)
+      ; Surface.SI_Name ("==>", None)
+      ; Surface.SI_Name ("c", None)
       ]
   in
   print_string @@ [%show: Surface.preterm] result;
@@ -1375,31 +1387,40 @@ let lower_clause (table : op_table) (c : Surface.clause) : Surface.clause =
    handled separately by the walker (it consumes the form rather than
    lowering it). *)
 let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
-  | Surface.Let (name, bindings, result_ty, body) ->
+  | Surface.Let { name; name_loc; bindings; result_ty; body } ->
     Surface.Let
-      ( name
-      , lower_binders table bindings
-      , lower_preterm table result_ty
-      , lower_preterm table body )
-  | Surface.Data { name; params; deps; ind_ty; ctors } ->
+      { name
+      ; name_loc
+      ; bindings = lower_binders table bindings
+      ; result_ty = lower_preterm table result_ty
+      ; body = lower_preterm table body
+      }
+  | Surface.Data
+      { name; name_loc; params; deps; ind_ty; ind_ty_loc; ctors; ctor_name_locs } ->
     Surface.Data
       { name
+      ; name_loc
       ; params = lower_binders table params
       ; deps = lower_binders table deps
       ; ind_ty = lower_preterm table ind_ty
+      ; ind_ty_loc
       ; ctors = lower_binders table ctors
+      ; ctor_name_locs
       }
-  | Surface.Stack_def { name; params; signature; moves; clauses } ->
+  | Surface.Stack_def { name; name_loc; params; signature; moves; clauses } ->
     Surface.Stack_def
       { name
+      ; name_loc
       ; params = lower_binders table params
       ; signature = lower_preterm table signature
       ; moves
       ; clauses = List.map (lower_clause table) clauses
       }
-  | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
+  | Surface.Elim_def { name; name_loc; params; signature; opens; intros; target; clauses }
+    ->
     Surface.Elim_def
       { name
+      ; name_loc
       ; params = lower_binders table params
       ; signature = lower_preterm table signature
       ; opens
@@ -1412,12 +1433,13 @@ let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
     Reporter.fatalf
       Elab_error
       "internal: lower_top_with should not be called on Operator_decl"
-  | Surface.Record { name; params; ind_ty; fields } ->
+  | Surface.Record { name; name_loc; params; ind_ty; fields } ->
     let lower_binders' =
       List.map (fun b -> { b with Surface.bound = lower_preterm table b.Surface.bound })
     in
     Surface.Record
       { name
+      ; name_loc
       ; params = lower_binders' params
       ; ind_ty = lower_preterm table ind_ty
       ; fields = lower_binders' fields
@@ -1511,11 +1533,17 @@ let%expect_test "resolve_module: operator then let — soup uses operator, decl 
     { loc = None
     ; value =
         Surface.Let
-          ( "two"
-          , []
-          , Surface.Op_soup [ Surface.SI_Name "Nat" ]
-          , Surface.Op_soup
-              [ Surface.SI_Name "one"; Surface.SI_Name "+"; Surface.SI_Name "one" ] )
+          { name = "two"
+          ; name_loc = None
+          ; bindings = []
+          ; result_ty = Surface.Op_soup [ Surface.SI_Name ("Nat", None) ]
+          ; body =
+              Surface.Op_soup
+                [ Surface.SI_Name ("one", None)
+                ; Surface.SI_Name ("+", None)
+                ; Surface.SI_Name ("one", None)
+                ]
+          }
     }
   in
   let file : Surface.t =
@@ -1524,7 +1552,12 @@ let%expect_test "resolve_module: operator then let — soup uses operator, decl 
   let result = resolve_module file in
   let printed = List.map (fun lt -> lt.Asai.Range.value) result.tops in
   print_string @@ [%show: Surface.top list] printed;
-  [%expect {| [(Surface.Let ("two", [], Nat, ((add one) one)))] |}]
+  [%expect
+    {|
+    [Surface.Let {name = "two"; name_loc = None; bindings = []; result_ty = Nat;
+       body = ((add one) one)}
+      ]
+    |}]
 ;;
 
 let%expect_test "resolve_module: diamond import of common library does not duplicate" =
