@@ -263,6 +263,7 @@ let expected : (string * want) list =
   ; "./fixtures/bad/bad-operator-cycle.vt", `FailWith [ "precedence cycle" ]
   ; "./fixtures/src/record-extras.vt", `Ok
   ; "./fixtures/src/record-eta.vt", `Ok
+  ; "./fixtures/src/record-inner-binder-shadow.vt", `Ok
   ; ( "./fixtures/bad/bad-record-missing-field.vt"
     , `FailWith [ "missing field"; "record literal" ] )
   ; "./fixtures/bad/bad-proj-unknown-field.vt", `FailWith [ "has no field" ]

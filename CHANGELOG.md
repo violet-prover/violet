@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix elaborator: when build projection result type, make an error that Kernel reject it
+
 ## 0.5.1
 
 - fix deps

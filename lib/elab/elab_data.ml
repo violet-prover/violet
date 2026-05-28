@@ -59,7 +59,12 @@ let bind_constructor
      round-trip (Label x -> Var x -> eval -> lookup x) still finds Label x. *)
   publish_to_env ~exported [ name ] (Core.Label (name, Bwd.Emp), `Constructor);
   let qctor_name = module_name ^ "." ^ ind_name ^ "." ^ name in
-  Check.accept_ctor kernel_module ~name:qctor_name ~data:ind_qname ~ty:ctor_typ_tm
+  Kernel_accept.accept_ctor
+    kernel_module
+    ~loc
+    ~name:qctor_name
+    ~data:ind_qname
+    ~ty:ctor_typ_tm
 ;;
 
 let handle_top_data (m : machine) loc data =
@@ -171,7 +176,12 @@ let handle_top_data_have_type
     let qctor_names =
       List.map (fun cn -> m.module_name ^ "." ^ name ^ "." ^ cn) ctor_names
     in
-    Check.accept_data m.kernel_module ~name:qname ~ty:typ_tm ~ctor_names:qctor_names;
+    Kernel_accept.accept_data
+      m.kernel_module
+      ~loc
+      ~name:qname
+      ~ty:typ_tm
+      ~ctor_names:qctor_names;
     List.iter2
       (fun ctor_name_loc ctor ->
          bind_constructor
@@ -212,7 +222,12 @@ let handle_top_data_have_type
     (* Register in env under the flat key so kernel eval can find it *)
     publish_to_env ~exported [ elim_flat ] (elim_value, `Eliminator);
     let qelim_name = m.module_name ^ "." ^ name ^ "." ^ elim_name in
-    Check.accept_elim m.kernel_module ~name:qelim_name ~ty:elim_typ_tm ~reducer:elim_head;
+    Kernel_accept.accept_elim
+      m.kernel_module
+      ~loc
+      ~name:qelim_name
+      ~ty:elim_typ_tm
+      ~reducer:elim_head;
     if
       false
       && params = []
@@ -229,7 +244,12 @@ let handle_top_data_have_type
         publish_to_env ~exported [ nc_flat ] (nc_body_val, `Defn);
         Env.register_definition nc_flat nc_body_val;
         let qnc_name = m.module_name ^ "." ^ name ^ "." ^ nc_name in
-        Check.accept_let m.kernel_module ~name:qnc_name ~ty:nc_typ_tm ~body:nc_body_tm
+        Kernel_accept.accept_let
+          m.kernel_module
+          ~loc
+          ~name:qnc_name
+          ~ty:nc_typ_tm
+          ~body:nc_body_tm
       in
       let nct_typ, nct_body = Eliminator_synth.no_confusion_type_def ~name ~ctors in
       let nct_typ_tm = check_type ~loc m.ctx nct_typ in

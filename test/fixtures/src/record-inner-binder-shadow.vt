@@ -1,0 +1,22 @@
+\import std/nat
+
+\universe U
+
+\data Shape : U
+  | empty : Shape
+  | cons  : Nat -> Shape -> Shape
+
+\data Stack : Shape -> U
+  | nil  : Stack Shape/empty
+  | cons : {s : Shape} -> Nat -> Stack s -> Stack (Shape/cons Nat/zero s)
+
+# Triggers a previous bug in subst_proj_result_ty: the projector for `c`
+# substitutes earlier-field references with RecordProj, but used to also
+# mis-shift LocalVars introduced by the field's own inner binders. With
+# `n_before = 2`, the inner `{s}` binder's `s` was rewritten to a negative
+# index, producing a malformed core term that the kernel rejected with an
+# unprintable Kernel_error LocalVarOutOfRange.
+\record Reg : U
+  | a : Nat
+  | b : {s : Shape} -> Stack s
+  | c : {s : Shape} -> Stack s -> Nat

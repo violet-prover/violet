@@ -474,7 +474,7 @@ let handle_top_record_have_type
     publish_to_env ~exported [ name ] (head_body_val, `Defn);
     Env.register_definition name head_body_val;
     let qname = m.module_name ^ "." ^ name in
-    Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:head_body;
+    Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:head_body;
     let param_binder_core_terms =
       let _, terms =
         List.fold_left
@@ -593,7 +593,7 @@ let handle_top_record_have_type
     publish_to_env ~exported [ mk_name ] (mk_body_val, `Defn);
     Env.register_definition mk_name mk_body_val;
     let q_mk_name = m.module_name ^ "." ^ mk_name in
-    Check.accept_let m.kernel_module ~name:q_mk_name ~ty:mk_ty ~body:mk_body;
+    Kernel_accept.accept_let m.kernel_module ~loc ~name:q_mk_name ~ty:mk_ty ~body:mk_body;
     let subst_proj_result_ty
           ~(n_before : int)
           ~(prev_field_names : string list)
@@ -602,9 +602,10 @@ let handle_top_record_have_type
       =
       let rec go extra_depth t =
         match t with
+        | Core.LocalVar ix when ix < extra_depth -> t
         | Core.LocalVar ix ->
           let j = ix - extra_depth in
-          if j >= 0 && j < n_before
+          if j < n_before
           then (
             (* field reference: replace with projection on r (at extra_depth below us) *)
             let field_idx = n_before - 1 - j in
@@ -623,8 +624,8 @@ let handle_top_record_have_type
                        (List.length prev_field_names))
               })
           else
-            (* deeper local or something else: shift down to account for lost field binders,
-               but add 1 for the new r binder *)
+            (* deeper local from the outer context: shift down to account for the
+               lost field binders, but add 1 for the new r binder *)
             Core.LocalVar (ix - n_before + 1)
         | Core.Universe _ -> t
         | Core.Var _ -> t
@@ -707,7 +708,12 @@ let handle_top_record_have_type
          publish_to_env ~exported [ proj_name ] (proj_body_val, `Defn);
          Env.register_definition proj_name proj_body_val;
          let q_proj_name = m.module_name ^ "." ^ proj_name in
-         Check.accept_let m.kernel_module ~name:q_proj_name ~ty:proj_ty ~body:proj_body)
+         Kernel_accept.accept_let
+           m.kernel_module
+           ~loc
+           ~name:q_proj_name
+           ~ty:proj_ty
+           ~body:proj_body)
       fields;
     let ind_ty_tm = check_type ~loc m.ctx ind_ty in
     let elim_name = name ^ "/elim" in
@@ -825,7 +831,12 @@ let handle_top_record_have_type
     publish_to_env ~exported [ elim_name ] (elim_body_val, `Defn);
     Env.register_definition elim_name elim_body_val;
     let q_elim_name = m.module_name ^ "." ^ elim_name in
-    Check.accept_let m.kernel_module ~name:q_elim_name ~ty:elim_ty ~body:elim_body;
+    Kernel_accept.accept_let
+      m.kernel_module
+      ~loc
+      ~name:q_elim_name
+      ~ty:elim_ty
+      ~body:elim_body;
     m.result <- Some PUnit
   | other ->
     Reporter.fatalf

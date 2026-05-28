@@ -63,14 +63,7 @@ let handle_top_let_have_body (m : machine) ~loc ~name ~name_loc ~typ_tm ~typ_val
     publish_to_env ~exported [ name ] (body_val, `Defn);
     Env.register_definition name body_val;
     let qname = m.module_name ^ "." ^ name in
-    (try Check.accept_let m.kernel_module ~name:qname ~ty:typ_tm ~body:term with
-     | Violet_kernel.Error.Kernel_error err ->
-       Reporter.fatalf
-         ~loc
-         Elab_error
-         "kernel rejected `%s`: %s"
-         qname
-         (Violet_kernel.Error.show_kernel_error err));
+    Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit
   | other ->
     Reporter.fatalf Elab_error "KTopLet_HaveBody: bad result %s" ([%show: produced] other)
