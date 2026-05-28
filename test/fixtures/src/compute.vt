@@ -20,5 +20,5 @@
   | length nil => zero
   | length (cons x xs) => suc (length A xs)
 
-\let len-nil : Id (length nil) zero => refl
+\let len-nil {A : U} : Id (length {A} nil) zero => refl
 \let len-one : Id (length (List/cons Nat/zero List/nil)) one => refl

@@ -5,6 +5,31 @@ open Syntax
 open Asai.Range
 open Bwd
 
+(* [ty] 是 implicit Pi
+   但 [term] 不是 implicit lambda 時
+   1. 安插 `\{x} => ...` 在前面
+   2. 重新檢查 [term] 作為 implicit Pi 的 body 可不可行 *)
+let try_insert_implicit_abstraction
+      (m : machine)
+      (loc : Asai.Range.t)
+      (term : Surface.preterm)
+      (ty : Core.value_ty)
+  : bool
+  =
+  match Evaluation.force_head ty with
+  | Core.VPi ({ name = pi_name; bound = a; implicit = true }, b)
+    when match term with
+         | Lambda { implicit = true; _ } -> false
+         | _ -> true ->
+    let body_ty = b (Core.RigidLocal (m.ctx.lvl, Bwd.Emp)) in
+    save_ctx m;
+    m.ctx <- bind m.ctx pi_name a;
+    push m (KLam_Body (loc, pi_name, true));
+    push m (GCheck (loc, term, body_ty));
+    true
+  | _ -> false
+;;
+
 let rec dispatch (m : machine) (g : goal) : unit =
   match g with
   | GInfer (loc, Located { loc = loc'; value }) ->
@@ -13,6 +38,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | GCheck (loc, Located { loc = loc'; value }, ty) ->
     push m (GCheck (Option.get loc', value, ty));
     ignore loc
+  | GCheck (loc, term, ty) when try_insert_implicit_abstraction m loc term ty -> ()
   | GInferType (loc, Located { loc = loc'; value }) ->
     push m (GInferType (Option.get loc', value));
     ignore loc
@@ -390,6 +416,15 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | KCheckBy_Infer (loc, expected) ->
     (match take_result m with
      | PTermType (tm, infer_ty) ->
+       let rec insert_implicit_apps tm ty =
+         match Evaluation.force_head ty with
+         | Core.VPi ({ implicit = true; _ }, b) ->
+           let meta_tm = Meta.meta_fresh m.ctx.lvl in
+           let meta_val = Evaluation.eval m.ctx.env meta_tm in
+           insert_implicit_apps (Core.App (tm, meta_tm)) (b meta_val)
+         | _ -> tm, ty
+       in
+       let tm, infer_ty = insert_implicit_apps tm infer_ty in
        (match Evaluation.force_head expected, Evaluation.force_head infer_ty with
         | Core.Universe l1, Core.Universe l2 when Level.not_equal l1 l2 && Level.le l2 l1
           -> m.result <- Some (PTerm (Core.Lift { from_lvl = l2; to_lvl = l1; ty = tm }))
