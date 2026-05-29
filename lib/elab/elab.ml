@@ -183,7 +183,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
     (match take_result m with
      | PTermType (f_tm, f_ty) ->
        (match Evaluation.force_head f_ty with
-        | Core.VPi ({ implicit; name = _; bound = a }, b) ->
+        | Core.VPi ({ implicit; name = pi_name; bound = a }, b) ->
           if is_implicit = implicit
           then begin
             push m (KApp_HaveArg (loc, f_tm, b));
@@ -192,7 +192,13 @@ let rec dispatch (m : machine) (g : goal) : unit =
           else if implicit
           then begin
             (* Insert a fresh implicit meta on the f side, then retry. *)
-            let meta_tm = Meta.meta_fresh m.ctx.lvl in
+            let display =
+              Printf.sprintf
+                "{%s : %s}"
+                (Syntax.Name.to_string pi_name)
+                (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
+            in
+            let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
             let meta_val = Evaluation.eval m.ctx.env meta_tm in
             let new_f_tm = Core.App (f_tm, meta_tm) in
             let new_f_ty = b meta_val in
@@ -418,8 +424,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | PTermType (tm, infer_ty) ->
        let rec insert_implicit_apps tm ty =
          match Evaluation.force_head ty with
-         | Core.VPi ({ implicit = true; _ }, b) ->
-           let meta_tm = Meta.meta_fresh m.ctx.lvl in
+         | Core.VPi ({ implicit = true; name = pi_name; bound = a }, b) ->
+           let display =
+             Printf.sprintf
+               "{%s : %s}"
+               (Syntax.Name.to_string pi_name)
+               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
+           in
+           let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
            let meta_val = Evaluation.eval m.ctx.env meta_tm in
            insert_implicit_apps (Core.App (tm, meta_tm)) (b meta_val)
          | _ -> tm, ty

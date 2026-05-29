@@ -302,6 +302,7 @@ let expected : (string * want) list =
   ; ( "./fixtures/bad/bad-elim-param.vt"
     , `FailWith [ "target"; "is a parameter"; "move it past" ] )
   ; "./fixtures/bad/contains-many-errors.vt", `FailWith [ "is not defined" ]
+  ; "./fixtures/bad/bad-uninferable-implicit.vt", `FailWith [ "cannot infer implicit" ]
   ]
 ;;
 

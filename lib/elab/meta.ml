@@ -25,6 +25,18 @@ let goal_metas : (metavar, unit) Hashtbl.t = Hashtbl.create 32
 let register_goal (mvar : metavar) : unit = Hashtbl.replace goal_metas mvar ()
 let is_goal (mvar : metavar) : bool = Hashtbl.mem goal_metas mvar
 
+(* Records where is an inserted meta came from, so `OrphanMeta` can be
+   re-reported as `cannot infer implicit {x : X} at <loc>` instead of a
+   raw `OrphanMeta ?34`. *)
+type origin =
+  { loc : Asai.Range.t
+  ; display : string
+  }
+
+let origins : (metavar, origin) Hashtbl.t = Hashtbl.create 32
+let register_origin (mvar : metavar) (o : origin) : unit = Hashtbl.replace origins mvar o
+let origin_of (mvar : metavar) : origin option = Hashtbl.find_opt origins mvar
+
 (* Fresh meta as a core term, applied to all currently-bound locals 0..lvl-1.
    Eval of `InsertedMeta (m, lvl)` later reconstructs the spine from the live
    env. *)
@@ -32,6 +44,13 @@ let meta_fresh (lvl : int) : term =
   let r = InsertedMeta (MetaVar !count, lvl) in
   incr count;
   r
+;;
+
+let meta_fresh_with (lvl : int) ~(origin : origin) : term =
+  let mvar = MetaVar !count in
+  register_origin mvar origin;
+  incr count;
+  InsertedMeta (mvar, lvl)
 ;;
 
 let fresh_goal (lvl : int) : term =
@@ -46,6 +65,16 @@ let fresh_goal (lvl : int) : term =
    directly, since unify operates on values and tracks lvl explicitly. *)
 let fresh_meta_value (lvl : int) : value =
   let m = MetaVar !count in
+  incr count;
+  let rec build i acc =
+    if i = lvl then acc else build (i + 1) (acc <: RigidLocal (i, Emp))
+  in
+  Flex (m, build 0 Emp)
+;;
+
+let fresh_meta_value_with (lvl : int) ~(origin : origin) : value =
+  let m = MetaVar !count in
+  register_origin m origin;
   incr count;
   let rec build i acc =
     if i = lvl then acc else build (i + 1) (acc <: RigidLocal (i, Emp))

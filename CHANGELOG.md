@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- better elaborator errors for unsolvable implicits
 - elaborator implicit-lambda insertion
 - fix elaborator: when build projection result type, make an error that Kernel reject it
 

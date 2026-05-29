@@ -265,8 +265,15 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
   | VPi ({ name; _ }, b1), VPi (_, b2) ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
     unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)
-  | VPi ({ implicit = true; _ }, b), t | t, VPi ({ implicit = true; _ }, b) ->
-    let x = Meta.fresh_meta_value (Context_view.lvl cv) in
+  | VPi ({ implicit = true; name = pi_name; bound = a }, b), t
+  | t, VPi ({ implicit = true; name = pi_name; bound = a }, b) ->
+    let display =
+      Printf.sprintf
+        "{%s : %s}"
+        (Syntax.Name.to_string pi_name)
+        (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+    in
+    let x = Meta.fresh_meta_value_with (Context_view.lvl cv) ~origin:{ loc; display } in
     unify ~loc cv (b x) t
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc cv sp1 sp2
   | t, Flex (m, sp) | Flex (m, sp), t -> solve cv m sp t

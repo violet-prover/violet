@@ -2,12 +2,25 @@ open Violet_surface
 module Check = Wiring.Check
 
 let report_rejection ~loc ~name err =
-  Reporter.fatalf
-    ~loc
-    Elab_error
-    "kernel rejected `%s`: %s"
-    name
-    (Violet_kernel.Error.show_kernel_error err)
+  match err with
+  | Violet_kernel.Error.OrphanMeta mv ->
+    (match Meta.origin_of mv with
+     | Some { loc; display } ->
+       Reporter.fatalf ~loc Elab_error "cannot infer implicit %s" display
+     | None ->
+       Reporter.fatalf
+         ~loc
+         Elab_error
+         "kernel rejected `%s`: %s"
+         name
+         (Violet_kernel.Error.show_kernel_error err))
+  | _ ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "kernel rejected `%s`: %s"
+      name
+      (Violet_kernel.Error.show_kernel_error err)
 ;;
 
 let accept_let m ~loc ~name ~ty ~body =

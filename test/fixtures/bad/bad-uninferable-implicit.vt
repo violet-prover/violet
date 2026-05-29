@@ -1,0 +1,17 @@
+# `length nil` leaves `{A : U}` (on both `length` and `nil`) unconstrained:
+# the expected type `Nat` doesn't mention `A`, and `nil` itself is
+# implicit-polymorphic.  The elaborator should report this as a missing-
+# implicit at the call site, not surface the kernel's `OrphanMeta`.
+
+\import std/nat
+\import std/list
+
+\universe U
+
+\let length {A : U} : (xs : List A) -> Nat \where
+  \open Nat
+  length xs <= \elim xs
+  | length nil => zero
+  | length (cons x xs) => suc (length A xs)
+
+\let bad : Nat => length nil
