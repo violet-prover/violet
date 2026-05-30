@@ -262,6 +262,7 @@ let expected : (string * want) list =
     , `FailWith [ "duplicate operator template" ] )
   ; "./fixtures/bad/bad-operator-cycle.vt", `FailWith [ "precedence cycle" ]
   ; "./fixtures/src/record-extras.vt", `Ok
+  ; "./fixtures/src/record-field-op-soup.vt", `Ok
   ; "./fixtures/src/record-eta.vt", `Ok
   ; "./fixtures/src/record-inner-binder-shadow.vt", `Ok
   ; ( "./fixtures/bad/bad-record-missing-field.vt"

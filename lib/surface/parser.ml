@@ -729,33 +729,22 @@ module Grammar = struct
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
       (* RECORD LITERAL: `{ field = expr , … }` or `{ field , … }` (pun) or `{}`.
-         All variants start with T_LBRACKET.  Disambiguation from the binder form
-         `{x : T} -> body` is done by peek_is_record_lit.
-
-         `=` and `,` are both SYMBOL tokens in this lexer.  To prevent the full
-         term parser from consuming commas (which are part of the record separator
-         syntax) as operator soup tokens, record field values are parsed with a
-         *restricted* parser (p_record_value) that collects `atom_no_bracket`
-         items in a loop, stopping before any SYMBOL or R_BRACKET token.  Lbracket
-         forms ({…}) inside field values must be parenthesised. *)
-      (* Parse a record-entry value: a non-empty sequence of atom_no_bracket
-         items forming an application spine.  Stops before SYMBOL tokens (which
-         include "," and "=") and R_BRACKET.  Returns Op_soup for multi-item
-         spines, or unwraps single-item ones. *)
+         All variants start with T_LBRACKET. Disambiguation from the binder form `{x : T} -> body` is done by peek_is_record_lit. *)
       let p_record_value : S.preterm t =
         let tp =
           Tp.
             { null = false
-            ; first = C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA ]
+            ; first =
+                C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA; C.T_SYMBOL ]
             ; follow = C.empty
             }
         in
         let parse buf i =
           let n = Array.length buf in
           (* Greedily consume `.field` projections after an atom, mirroring the
-             postfix `proj_soup` loop in the full term parser.  Without this,
-             writing `{ fst = p.fst }` would fail to parse because the restricted
-             field-value loop doesn't include the projection layer. *)
+             postfix `proj_soup` loop in the full term parser. This makes
+             projection bind tighter than operators, so projections can mixin
+             the expression (e.g. `x.v + y.v`). *)
           let apply_proj_loop start_i base =
             let acc = ref base in
             let pos = ref start_i in
@@ -778,38 +767,73 @@ module Grammar = struct
             done;
             !pos, !acc
           in
-          (* Parse one atom_no_bracket item (with trailing `.field*`); returns
-             None when no more. *)
+          (* Tokens that end a field value (record separators and `}`). *)
+          let is_terminator tok =
+            match C.tag_of tok with
+            | C.T_RBRACKET | C.T_VERT -> true
+            | C.T_SYMBOL ->
+              (match tok with
+               | Lexer.SYMBOL "," -> true
+               | _ -> false)
+            | _ -> false
+          in
+          (* Parse one soup item; None at a terminator or end of input. *)
           let parse_item buf i =
             if i >= n
             then None
+            else if is_terminator buf.(i).Asai.Range.value
+            then None
             else (
               match C.tag_of buf.(i).Asai.Range.value with
-              | C.T_IDENT | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
-                let i, a = atom_no_bracket.parse buf i in
-                let i, a = apply_proj_loop i a in
-                Some (i, a)
+              | C.T_SYMBOL ->
+                (* operator name (any non-terminator symbol, including `=`) *)
+                let loc = buf.(i).Asai.Range.loc in
+                let s =
+                  match buf.(i).Asai.Range.value with
+                  | Lexer.SYMBOL s -> s
+                  | _ -> assert false
+                in
+                Some (i + 1, S.SI_Name (s, loc))
+              | C.T_IDENT ->
+                (* Mirror `p_ident_soup_item`: bare ident → SI_Name; qualified
+                   or projected ident → concrete SI_Atom. *)
+                let loc = buf.(i).Asai.Range.loc in
+                let bare =
+                  not (i + 1 < n && C.tag_of buf.(i + 1).Asai.Range.value = C.T_SLASH)
+                in
+                let first_name =
+                  match buf.(i).Asai.Range.value with
+                  | Lexer.IDENT s -> s
+                  | _ -> assert false
+                in
+                let i2, var = atom_no_bracket.parse buf i in
+                let i3, projected = apply_proj_loop i2 var in
+                if i3 > i2
+                then Some (i3, S.SI_Atom projected)
+                else if bare
+                then Some (i2, S.SI_Name (first_name, loc))
+                else Some (i2, S.SI_Atom var)
+              | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
+                let i2, a = atom_no_bracket.parse buf i in
+                let i3, a = apply_proj_loop i2 a in
+                Some (i3, S.SI_Atom a)
               | _ -> None)
           in
+          let start = i in
           match parse_item buf i with
           | None -> P.fail_at buf i
-          | Some (i, first_atom) ->
-            let atoms = ref [ first_atom ] in
+          | Some (i, first_item) ->
+            let items = ref [ first_item ] in
             let pos = ref i in
             let continue_ = ref true in
             while !continue_ do
               match parse_item buf !pos with
               | None -> continue_ := false
-              | Some (i', a) ->
-                atoms := a :: !atoms;
+              | Some (i', it) ->
+                items := it :: !items;
                 pos := i'
             done;
-            let result =
-              match List.rev !atoms with
-              | [ a ] -> a
-              | parts -> S.Op_soup (List.map (fun a -> S.SI_Atom a) parts)
-            in
-            !pos, result
+            !pos, wrap_loc (span_of buf start (!pos - 1)) (S.Op_soup (List.rev !items))
         in
         { tp; parse }
       in
@@ -1838,6 +1862,31 @@ let%expect_test "parse: operator decl alongside let" =
        options = []};
       Surface.Let {name = "two"; name_loc = (Some <opaque>); bindings = [];
         result_ty = <soup:[N(Nat)]>; body = <soup:[N(add); N(zero); N(zero)]>}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: op soup in record field value" =
+  print_string
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => { val = a ⊕ b }\n");
+  [%expect
+    {|
+    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
+       result_ty = <soup:[N(T)]>;
+       body = <soup:[A({ val = <soup:[N(a); N(⊕); N(b)]> })]>}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: projection inside op soup in record field value" =
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test "\\let r : T => { val = x.f ⍮* y.f }\n");
+  [%expect
+    {|
+    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
+       result_ty = <soup:[N(T)]>;
+       body = <soup:[A({ val = <soup:[A(x.f); N(⍮*); A(y.f)]> })]>}
       ]
     |}]
 ;;

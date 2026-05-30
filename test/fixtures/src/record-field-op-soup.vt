@@ -1,0 +1,16 @@
+\import std/nat
+
+\universe U
+
+# User-defined operator must be allowed at record field value position,
+# including projection syntax mixing (`x.f ⊕ y.f`) and parenthesised sub-soups.
+
+\operator "\x ⊕ \y" => add x y
+  \associativity: \right
+
+\record Box : U
+  | val : Nat
+
+\let mk (x y : Box) : Box => {
+  val = x.val ⊕ y.val ⊕ (Nat/zero ⊕ Nat/zero)
+}

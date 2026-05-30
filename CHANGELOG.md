@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix parser: record field value position now allows user-defined operator (e.g. `{ v = x + y }`), including projection syntax mixin it
 - better elaborator errors for unsolvable implicits
 - elaborator implicit-lambda insertion
 - fix elaborator: when build projection result type, make an error that Kernel reject it
