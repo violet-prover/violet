@@ -984,34 +984,94 @@ module Grammar = struct
         | [] -> S.SI_Name (first, loc)
         | _ -> S.SI_Atom (wrap_loc loc (S.Var (first :: rest)))
       in
+      (* Greedily consume a `T_DOT IDENT` chain starting at [pos], wrapping
+         [base] in left-associative `S.Proj`s. [start] anchors the projection
+         location span. Returns the new position and projected term. *)
+      let proj_loop buf start pos base =
+        let n = Array.length buf in
+        let acc = ref base in
+        let pos = ref pos in
+        let continue_ = ref true in
+        while !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT do
+          let dot_i = !pos + 1 in
+          if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
+          then begin
+            let field =
+              match buf.(dot_i).Asai.Range.value with
+              | Lexer.IDENT s -> s
+              | _ -> assert false
+            in
+            acc := wrap_loc (span_of buf start dot_i) (S.Proj (!acc, field));
+            pos := dot_i + 1
+          end
+          else continue_ := false
+        done;
+        !pos, !acc
+      in
+      (* Fold a trailing `.field` projection chain into a soup ITEM, so a
+         projected operand can be followed by an operator: `x.f + y.f` parses
+         as a soup of items `x.f`, `+`, `y.f` rather than terminating at the
+         first projection. Projection binds tighter than application and
+         operators. Operator symbols (T_SYMBOL) and implicit args are never
+         projected. Mirrors the field-value spine parser `p_record_value`. *)
+      let fold_proj (item : S.soup_item t) : S.soup_item t =
+        let parse buf i =
+          let start = i in
+          let i', it = item.parse buf i in
+          let n = Array.length buf in
+          let dot_next =
+            i' < n
+            && C.tag_of buf.(i').Asai.Range.value = C.T_DOT
+            && i' + 1 < n
+            && C.tag_of buf.(i' + 1).Asai.Range.value = C.T_IDENT
+          in
+          let is_symbol_start = C.tag_of buf.(start).Asai.Range.value = C.T_SYMBOL in
+          if not dot_next
+          then i', it
+          else if is_symbol_start
+          then i', it
+          else (
+            match it with
+            | S.SI_Imp_arg _ -> i', it
+            | S.SI_Name (s, loc) ->
+              let i'', p = proj_loop buf start i' (wrap_loc loc (S.Var [ s ])) in
+              i'', S.SI_Atom p
+            | S.SI_Atom a ->
+              let i'', p = proj_loop buf start i' a in
+              i'', S.SI_Atom p)
+        in
+        { tp = item.tp; parse }
+      in
       (* Soup-head item. First sets: T_IDENT, T_SYMBOL, T_QMARK, T_LPAREN,
          T_LAMBDA, T_LBRACKET — disjoint.
          T_LBRACKET uses the disambiguating p_lbracket_atom (record literal
          OR implicit-binder pi). *)
       let soup_head_item : S.soup_item t =
-        p_ident_soup_item
-        || (let+ loc, n = p_symbol_name_loc in
-            S.SI_Name (n, loc))
-        || (let+ a = structural_atom_no_lbracket in
-            S.SI_Atom a)
-        ||
-        let+ a = p_lbracket_atom in
-        S.SI_Atom a
+        fold_proj
+          (p_ident_soup_item
+           || (let+ loc, n = p_symbol_name_loc in
+               S.SI_Name (n, loc))
+           || (let+ a = structural_atom_no_lbracket in
+               S.SI_Atom a)
+           ||
+           let+ a = p_lbracket_atom in
+           S.SI_Atom a)
       in
       (* Soup-tail item. In tail position, `{...}` is ALWAYS an implicit
          argument (`{ atom }`); the binder form is illegal here. First sets
          disjoint with each other. *)
       let soup_tail_item : S.soup_item t =
-        p_ident_soup_item
-        || (let+ loc, n = p_symbol_name_loc in
-            S.SI_Name (n, loc))
-        || (let+ a = structural_atom_no_lbracket in
-            S.SI_Atom a)
-        ||
-        let+ _ = tok C.T_LBRACKET
-        and+ a = atom
-        and+ _ = tok C.T_RBRACKET in
-        S.SI_Imp_arg a
+        fold_proj
+          (p_ident_soup_item
+           || (let+ loc, n = p_symbol_name_loc in
+               S.SI_Name (n, loc))
+           || (let+ a = structural_atom_no_lbracket in
+               S.SI_Atom a)
+           ||
+           let+ _ = tok C.T_LBRACKET
+           and+ a = atom
+           and+ _ = tok C.T_RBRACKET in
+           S.SI_Imp_arg a)
       in
       (* A single op-soup: one head followed by zero-or-more tail items. *)
       let op_soup : S.preterm t =
@@ -1026,52 +1086,15 @@ module Grammar = struct
         in
         { tp; parse }
       in
-      (* Postfix `.field` projection loop.  After parsing an op-soup we
-         greedily consume `T_DOT IDENT` sequences and wrap the accumulator
-         in `S.Proj`.  This produces left-associative chains:
-             r.x.y  ⟹  Proj(Proj(r,"x"),"y")
-         Hand-coded because the typed-algebraic `star` combinator would need
-         the recursion to be expressed through `fix`, but this imperative
-         loop is simpler and correct. *)
-      let proj_soup : S.preterm t =
-        let tp = op_soup.tp in
-        let parse buf i =
-          let start = i in
-          let i, base = op_soup.parse buf i in
-          let n = Array.length buf in
-          let acc = ref base in
-          let pos = ref i in
-          let continue_ = ref true in
-          while
-            !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT
-          do
-            (* Peek that the next token after DOT is an IDENT. *)
-            let dot_i = !pos + 1 in
-            if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
-            then begin
-              let field_tok = buf.(dot_i).Asai.Range.value in
-              let field =
-                match field_tok with
-                | Lexer.IDENT s -> s
-                | _ -> assert false
-              in
-              let proj_loc = span_of buf start dot_i in
-              acc := wrap_loc proj_loc (S.Proj (!acc, field));
-              pos := dot_i + 1
-            end
-            else continue_ := false
-          done;
-          !pos, !acc
-        in
-        { tp; parse }
-      in
-      (* `max_level: proj_soup ('⊔' proj_soup)*`, right-associative as before. *)
+      (* `max_level: op_soup ('⊔' op_soup)*`, right-associative as before.
+         Trailing `.field` projections are folded into soup items by
+         `fold_proj`, so there is no separate postfix projection layer. *)
       let max_level : S.preterm t =
-        let+ head = proj_soup
+        let+ head = op_soup
         and+ tail =
           star
             (let+ _ = tok C.T_JOIN
-             and+ s = proj_soup in
+             and+ s = op_soup in
              s)
         in
         match List.rev (head :: tail) with
@@ -1887,6 +1910,17 @@ let%expect_test "parse: projection inside op soup in record field value" =
     [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
        result_ty = <soup:[N(T)]>;
        body = <soup:[A({ val = <soup:[A(x.f); N(⍮*); A(y.f)]> })]>}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: projection as operator operand in term position" =
+  print_string
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => x.f ⍮* y.f\n");
+  [%expect
+    {|
+    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
+       result_ty = <soup:[N(T)]>; body = <soup:[A(x.f); N(⍮*); A(y.f)]>}
       ]
     |}]
 ;;
