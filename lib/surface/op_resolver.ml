@@ -290,14 +290,14 @@ let make_op_decl
               template
           | None -> assoc_opt := Some a))
     options;
-  (* \associativity is only meaningful for binary infix operators (exactly
-     2 holes, Infix shape). *)
-  let n_holes = List.length (hole_names_of_parts parts) in
+  (* \associativity is only meaningful for infix operators (first and last
+     parts are holes). It governs how the outer holes chain; for mixfix infix
+     with >2 holes (e.g. `\x =⟨ \p ⟩ \y`) the inner holes are unaffected. *)
   (match !assoc_opt with
-   | Some _ when shape <> Infix || n_holes <> 2 ->
+   | Some _ when shape <> Infix ->
      Reporter.fatalf
        Parse_error
-       "operator `%s` is not binary infix; `\\associativity:` is not allowed here"
+       "operator `%s` is not infix; `\\associativity:` is not allowed here"
        template
    | _ -> ());
   let assoc = Option.value !assoc_opt ~default:Surface.OA_None in
@@ -463,6 +463,27 @@ let%expect_test "make_op_decl: \\associativity on non-infix is rejected" =
   in
   print_string outcome;
   [%expect {| rejected |}]
+;;
+
+(* Mixfix infix (>2 holes, first and last are holes) DOES allow associativity —
+   it governs how the outer holes chain, which is what equational-reasoning
+   operators like `\x =⟨ \p ⟩ \y` need to be right-associative. *)
+let%expect_test "make_op_decl: \\associativity allowed on mixfix infix" =
+  let outcome =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun _ -> "rejected")
+      (fun () ->
+         let _ =
+           make_op_decl
+             ~template:"\\x =⟨ \\p ⟩ \\y"
+             ~body:(Surface.Var [ "step" ])
+             ~options:[ Surface.OO_Associativity Surface.OA_Right ]
+         in
+         "ok")
+  in
+  print_string outcome;
+  [%expect {| ok |}]
 ;;
 
 (* ===========================================================================
@@ -1299,6 +1320,33 @@ let%expect_test "parse_soup: prefix `not`" =
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (negate b) |}]
+;;
+
+let%expect_test "parse_soup: right-assoc mixfix infix chains" =
+  let step =
+    make_op_decl
+      ~template:"\\x =⟨ \\p ⟩ \\y"
+      ~body:(Surface.Var [ "s" ])
+      ~options:[ Surface.OO_Associativity Surface.OA_Right ]
+  in
+  let table = add_decl step empty_table in
+  (* a =⟨ p ⟩ b =⟨ q ⟩ c  must right-nest: s a p (s b q c) *)
+  let result =
+    parse_soup
+      table
+      [ Surface.SI_Name ("a", None)
+      ; Surface.SI_Name ("=⟨", None)
+      ; Surface.SI_Name ("p", None)
+      ; Surface.SI_Name ("⟩", None)
+      ; Surface.SI_Name ("b", None)
+      ; Surface.SI_Name ("=⟨", None)
+      ; Surface.SI_Name ("q", None)
+      ; Surface.SI_Name ("⟩", None)
+      ; Surface.SI_Name ("c", None)
+      ]
+  in
+  print_string @@ [%show: Surface.preterm] result;
+  [%expect {| (((s a) p) (((s b) q) c)) |}]
 ;;
 
 let%expect_test "parse_soup: \\associativity \\right" =

@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- fix: projection now can be used in application
+- allow mixfix operator has associativity (to support reasoning style `x =⟨ p ⟩ y =⟨ q ⟩ z ∎`)
+- fix: projection now can be used in application (kernel vapp bug and parser bug)
 - fix parser: record field value position now allows user-defined operator (e.g. `{ v = x + y }`), including projection syntax mixin it
 - better elaborator errors for unsolvable implicits
 - elaborator implicit-lambda insertion
