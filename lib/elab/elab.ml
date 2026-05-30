@@ -953,7 +953,11 @@ let check_module
   let goal_counter = ref 0 in
   let run_top (top : Surface.top Asai.Range.located) =
     let loc = Option.get top.loc in
-    check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value
+    try
+      check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value
+    with
+    | Violet_kernel.Error.Kernel_error err ->
+      Kernel_accept.report_rejection ~loc ~name:(name_of_top top.value) err
   in
   List.iter
     (fun top ->
