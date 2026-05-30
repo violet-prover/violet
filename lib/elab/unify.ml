@@ -103,7 +103,8 @@ module PartialRenaming = struct
       RecordType { name; params = t_params; fields = walk pr fields }
     | VRecordIntro { name; fields } ->
       RecordIntro { name; fields = List.map (fun (f, v) -> f, rename m pr v) fields }
-    | VRecordProj (v, f) -> RecordProj { record = rename m pr v; field = f }
+    | VRecordProj (v, f, sp) ->
+      rename_sp m pr (RecordProj { record = rename m pr v; field = f }) sp
     | VIdAbsurd v -> IdAbsurd (rename m pr v)
 
   and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
@@ -212,8 +213,9 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     unify_spine ~loc cv sp1 sp2
   | Elim (h1, sp1), Elim (h2, sp2) when String.equal h1.elim_name h2.elim_name ->
     unify_spine ~loc cv sp1 sp2
-  | VRecordProj (v1, f1), VRecordProj (v2, f2) when String.equal f1 f2 ->
-    unify ~loc cv v1 v2
+  | VRecordProj (v1, f1, sp1), VRecordProj (v2, f2, sp2) when String.equal f1 f2 ->
+    unify ~loc cv v1 v2;
+    unify_spine ~loc cv sp1 sp2
   | VIdAbsurd v1, VIdAbsurd v2 -> unify ~loc cv v1 v2
   | VLambda { name; bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
@@ -325,7 +327,8 @@ let%expect_test "record eta: VRecordIntro vs neutral unifies" =
   let lit : Core.value =
     Core.VRecordIntro
       { name = "Point"
-      ; fields = [ "x", Core.VRecordProj (t, "x"); "y", Core.VRecordProj (t, "y") ]
+      ; fields =
+          [ "x", Core.VRecordProj (t, "x", Emp); "y", Core.VRecordProj (t, "y", Emp) ]
       }
   in
   let result =

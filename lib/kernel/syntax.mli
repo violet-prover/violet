@@ -104,7 +104,7 @@ module Core : sig
         { name : string
         ; fields : (string * value) list
         }
-    | VRecordProj of value * string
+    | VRecordProj of value * string * value Bwd.bwd
     | VIdAbsurd of value
   [@@deriving show]
 

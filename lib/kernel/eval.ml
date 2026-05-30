@@ -12,6 +12,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | Label (h, sp) -> Label (h, sp <: u)
     | IndType (h, sp) -> IndType (h, sp <: u)
     | Elim (h, sp) -> Elim (h, sp <: u)
+    | VRecordProj (r, f, sp) -> VRecordProj (r, f, sp <: u)
     | v -> raise (Error.Kernel_error (Error.BadApplication v))
 
   and vapp_spine (t : value) : value bwd -> value = function
@@ -25,7 +26,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
        | Not_found ->
          raise (Error.Kernel_error (Error.BadProjection { value = v; field = f })))
     | Flex _ | RigidLocal _ | Var _ | Label _ | IndType _ | Elim _ | VRecordProj _ ->
-      VRecordProj (v, f)
+      VRecordProj (v, f, Emp)
     | _ -> raise (Error.Kernel_error (Error.BadProjection { value = v; field = f }))
   ;;
 
@@ -52,13 +53,13 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
       (match reducer sp with
        | Some reduced -> force_head reduced
        | None -> Elim (h, sp))
-    | VRecordProj (inner, f) ->
+    | VRecordProj (inner, f, sp) ->
       (match force_head inner with
        | VRecordIntro r as full ->
-         (try force_head (List.assoc f r.fields) with
+         (try force_head (vapp_spine (List.assoc f r.fields) sp) with
           | Not_found ->
             raise (Error.Kernel_error (Error.BadProjection { value = full; field = f })))
-       | other -> VRecordProj (other, f))
+       | other -> VRecordProj (other, f, sp))
     | t -> t
   ;;
 
@@ -186,7 +187,8 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
       RecordType { name; params = q_params; fields = walk lvl fields }
     | VRecordIntro { name; fields } ->
       RecordIntro { name; fields = List.map (fun (f, v) -> f, quote lvl v) fields }
-    | VRecordProj (v, f) -> RecordProj { record = quote lvl v; field = f }
+    | VRecordProj (v, f, sp) ->
+      quote_spine lvl (RecordProj { record = quote lvl v; field = f }) sp
     | VIdAbsurd v -> IdAbsurd (quote lvl v)
 
   and quote_spine (lvl : int) (head : term) (sp : value bwd) : term =
@@ -276,6 +278,38 @@ let%expect_test "RecordProj on neutral stays neutral" =
   let tm : term = RecordProj { record = Var "p"; field = "x" } in
   print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
   [%expect {| p.x |}]
+;;
+
+let%expect_test "application of projected field on neutral stays neutral" =
+  (* `r.f X` where `r` is a free variable: the projection is stuck, so applying
+     it must stay a neutral value rather than raising BadApplication. *)
+  let tm : term =
+    App (RecordProj { record = Var "r"; field = "f" }, Universe Level.LZero)
+  in
+  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
+  [%expect {| r.f (universe 𝓤₀) |}]
+;;
+
+let%expect_test "application of projected field reduces when record known" =
+  (* `({ f = \x => x }).f X` must β/projection-reduce to `X`. *)
+  let tm : term =
+    App
+      ( RecordProj
+          { record =
+              RecordIntro
+                { name = "Box"
+                ; fields =
+                    [ ( "f"
+                      , Lambda { name = Named "x"; implicit = false; bound = LocalVar 0 }
+                      )
+                    ]
+                }
+          ; field = "f"
+          }
+      , Universe Level.LZero )
+  in
+  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
+  [%expect {| universe 𝓤₀ |}]
 ;;
 
 let%expect_test "eval RecordType with dependent fields uses rigid locals" =

@@ -279,6 +279,7 @@ let expected : (string * want) list =
     , `FailWith [ "unknown field"; "record pattern" ] )
   ; ( "./fixtures/bad/bad-record-duplicate-field.vt"
     , `FailWith [ "duplicate field"; "record literal" ] )
+  ; "./fixtures/src/apply-neutral-proj.vt", `Ok
   ; "./fixtures/src/dependent-record-literal.vt", `Ok
   ; "./fixtures/src/elim-unify.vt", `Ok
   ; "./fixtures/src/vec-head.vt", `Ok

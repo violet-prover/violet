@@ -1,0 +1,19 @@
+# Regression test for applying a projected, function-typed field of a *neutral*
+# record. `b.f` is a stuck projection (b is a bound variable), and `(b.f) Nat/zero`
+# applies it. The kernel evaluator's `vapp` previously had no case for a record
+# projection head, so evaluating this raised `BadApplication` — which, when it
+# happened inside a record literal that `elab_record` evaluates eagerly, escaped
+# elaboration as an uncaught OCaml exception. `VRecordProj` now carries a spine,
+# so the application stays a well-typed neutral and elaboration succeeds.
+
+\import std/nat
+
+\universe U
+
+\record Box : U
+  | f : Nat -> Nat
+
+\record Wrap : U
+  | v : Nat
+
+\let mk (b : Box) : Wrap => { v = (b.f) Nat/zero }

@@ -333,8 +333,25 @@ module Core = struct
           String.concat ", " (List.map (fun (f, v) -> f ^ " = " ^ show_value v) afields)
         in
         fprintf fmt "%s{ %s }" aname fs]
-    | VRecordProj of value * string
-    [@printer fun fmt (v, f) -> fprintf fmt "%s.%s" (show_value v) f]
+    (* A (possibly stuck) field projection, with a spine of arguments applied to
+       the projected field. The spine is non-empty only when the field has a
+       function type and the projection is blocked on a neutral record, e.g.
+       `r.f x` for a free variable `r` — there is no other place to hang the
+       arguments since spines otherwise live on the leaf neutral heads. *)
+    | VRecordProj of value * string * value bwd
+    [@printer
+      fun fmt (v, f, sp) ->
+        if Bwd.is_empty sp
+        then fprintf fmt "%s.%s" (show_value v) f
+        else
+          fprintf
+            fmt
+            "%s.%s %s"
+            (show_value v)
+            f
+            (String.concat
+               " "
+               (List.map (fun u -> "(" ^ show_value u ^ ")") @@ Bwd.to_list sp))]
     (* Stuck-neutral value for [Core.IdAbsurd]: the underlying Id is
        uninhabited at type-check time, so this value never reduces. *)
     | VIdAbsurd of value [@printer fun fmt v -> fprintf fmt "id-absurd %s" (show_value v)]

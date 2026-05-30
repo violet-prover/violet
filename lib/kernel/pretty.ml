@@ -92,7 +92,8 @@ let rec pp_value (cv : Context_view.t) (v : Core.value) : string =
       String.concat ", " (List.map (fun (f, v) -> f ^ " = " ^ pp_value cv v) fields)
     in
     Printf.sprintf "%s{ %s }" name fs
-  | Core.VRecordProj (v, f) -> Printf.sprintf "%s.%s" (pp_value cv v) f
+  | Core.VRecordProj (v, f, sp) ->
+    pp_neutral cv (Printf.sprintf "%s.%s" (pp_value cv v) f) sp
   | Core.VIdAbsurd v -> Printf.sprintf "id-absurd %s" (pp_value cv v)
 
 and pp_neutral (cv : Context_view.t) (head : string) (spine : Core.value bwd) : string =
