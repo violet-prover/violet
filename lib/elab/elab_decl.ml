@@ -49,7 +49,7 @@ let handle_top_let_have_type (m : machine) ~loc ~name ~name_loc ~body ~bindings 
     push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
     push m (GCheck (loc, term, typ_val))
   | other ->
-    Reporter.fatalf Elab_error "KTopLet_HaveType: bad result %s" ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopLet_HaveType: bad result %s" (produced_tag other)
 ;;
 
 let handle_top_let_have_body (m : machine) ~loc ~name ~name_loc ~typ_tm ~typ_val =
@@ -66,5 +66,5 @@ let handle_top_let_have_body (m : machine) ~loc ~name ~name_loc ~typ_tm ~typ_val
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit
   | other ->
-    Reporter.fatalf Elab_error "KTopLet_HaveBody: bad result %s" ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopLet_HaveBody: bad result %s" (produced_tag other)
 ;;

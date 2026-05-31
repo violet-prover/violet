@@ -581,7 +581,11 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
   let cz = Core.Var ("cz", Emp) in
   let cs = Core.Var ("cs", Emp) in
   let spine = Emp <: target <: motive <: cz <: cs in
-  print_string @@ [%show: Core.value option] (reducer spine);
+  (print_string
+   @@
+   match reducer spine with
+   | None -> "None"
+   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
   [%expect {| (Some cz) |}]
 ;;
 
@@ -595,8 +599,12 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
   let cz = Core.Var ("cz", Emp) in
   let cs = Core.Var ("cs", Emp) in
   let spine = Emp <: target <: motive <: cz <: cs in
-  print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some cs n Nat/elim n M cz cs) |}]
+  (print_string
+   @@
+   match reducer spine with
+   | None -> "None"
+   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
+  [%expect {| (Some cs n (Nat/elim n M cz cs)) |}]
 ;;
 
 let vec_ctors : Surface.pretype binder list =
@@ -649,6 +657,10 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let cnil = Core.Var ("cnil", Emp) in
   let ccons = Core.Var ("ccons", Emp) in
   let spine = Emp <: aV <: depN <: target <: motive <: cnil <: ccons in
-  print_string @@ [%show: Core.value option] (reducer spine);
-  [%expect {| (Some ccons k x xs Vec/elim A k xs M cnil ccons) |}]
+  (print_string
+   @@
+   match reducer spine with
+   | None -> "None"
+   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
+  [%expect {| (Some ccons k x xs (Vec/elim A k xs M cnil ccons)) |}]
 ;;

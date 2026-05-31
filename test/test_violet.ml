@@ -1,22 +1,23 @@
 (* Baseline regression test for the .vt fixture corpus.
 
-   Each fixture is run in a forked subprocess with a SIGALRM-based timeout
-   and a per-fixture temp file that the child writes its diagnostic
-   explanation to on fatal error.  We compare the actual outcome
-   (`Ok / `Fail msg / `Hung) against a `want` annotation:
+   This harness AUTO-DISCOVERS the .vt corpus rather than hand-listing each
+   fixture. Each fixture is run in a forked subprocess with a SIGALRM-based
+   timeout and a per-fixture temp file that the child writes its diagnostic
+   explanation to on fatal error. The discovered outcome is one of:
 
-   - `Ok            — expect successful elaboration.
-   - `Fail          — expect any failure (legacy; new entries should
-                      use `FailWith to pin the cause).
-   - `FailWith subs — expect failure whose explanation contains EVERY
-                      substring in `subs`. Use [single_phrase] for the
-                      common one-substring case; multi-substring is for
-                      pinning category+context (e.g. "duplicate field"
-                      AND "record update").
-   - `Hung          — expect to exceed `timeout_sec`.
+   - `Ok       — successful elaboration.
+   - `Fail msg — failure; `msg` is the rendered diagnostic explanation.
+   - `Hung     — exceeded `timeout_sec`.
 
-   When a refactor lands and a fixture behaves differently, update the
-   annotation to match — that's the point.  Don't paper over the diff. *)
+   Discovery rules:
+   - Files under test/fixtures/src/ and ../example/src/ must elaborate Ok.
+   - Files under test/fixtures/bad/ must FAIL, and the rendered explanation
+     must byte-equal a committed golden `<fixture>.vt.expected` file.
+   - Companion modules whose basename starts with `_` are imported by other
+     fixtures and are NOT run as standalone entries (skipped in discovery).
+
+   To regenerate the golden files after an intentional message change, run
+   the test exe with the env var PROMOTE_GOLDENS=1 set. *)
 
 type outcome =
   [ `Ok
@@ -26,8 +27,6 @@ type outcome =
 
 type want =
   [ `Ok
-  | `Fail
-  | `FailWith of string list
   | `Hung
   ]
 
@@ -197,139 +196,104 @@ let outcome_str = function
 
 let want_str = function
   | `Ok -> "OK"
-  | `Fail -> "FAIL"
-  | `FailWith subs -> Printf.sprintf "FAIL/%s" (String.concat " ⊕ " subs)
   | `Hung -> "HUNG"
 ;;
 
-(* Result of comparing actual against expected. The `Mismatch payload
-   records what went wrong so the run loop can print a useful diff. *)
+(* Auto-discovery of the .vt corpus.
+
+   - fixtures/src and example/src must elaborate Ok.
+   - fixtures/bad must FAIL, and the rendered diagnostic must byte-equal a
+     committed golden file `<fixture>.vt.expected`.
+
+   Companion modules exist only to be imported by another fixture (e.g. the
+   importer fixtures that test cross-module visibility); they are skipped as
+   standalone test entries — a valid companion in bad/ would otherwise fail the
+   "must FAIL" check. They are listed explicitly by basename rather than marked
+   with a filename prefix, because a Violet import path cannot begin with `_`. *)
+let companion_modules = [ "exportlib.vt" ]
+
+let vt_entries (dir : string) : string list =
+  Sys.readdir dir
+  |> Array.to_list
+  |> List.filter (fun f ->
+    Filename.check_suffix f ".vt" && not (List.mem f companion_modules))
+  |> List.sort String.compare
+  |> List.map (fun f -> Filename.concat dir f)
+;;
+
+(* The only outcome that cannot be inferred from the directory: fixtures we
+   expect to exceed the timeout. Keyed by the path as discovered. *)
+let hung_overrides : string list = []
+let golden_path vt = vt ^ ".expected"
+let read_file = read_msg_file
+
+(* Outcome comparison for the Ok/Hung (src/example) path. bad/ fixtures are
+   compared against golden files instead, so they don't go through this. *)
 type cmp =
   [ `Match
   | `Mismatch_outcome
-  | `Missing_substring of string * string (* expected sub, actual msg *)
   ]
-
-let contains haystack needle =
-  let lh = String.length haystack
-  and ln = String.length needle in
-  if ln = 0
-  then true
-  else (
-    let rec scan i =
-      if i + ln > lh
-      then false
-      else if String.sub haystack i ln = needle
-      then true
-      else scan (i + 1)
-    in
-    scan 0)
-;;
 
 let compare_outcome (got : outcome) (want : want) : cmp =
   match got, want with
   | `Ok, `Ok -> `Match
   | `Hung, `Hung -> `Match
-  | `Fail _, `Fail -> `Match
-  | `Fail msg, `FailWith subs ->
-    (match List.find_opt (fun s -> not (contains msg s)) subs with
-     | None -> `Match
-     | Some missing -> `Missing_substring (missing, msg))
   | _ -> `Mismatch_outcome
-;;
-
-let expected : (string * want) list =
-  [ "../example/src/index.vt", `Ok
-  ; "../example/src/pterodactyl.vt", `Ok
-  ; "../example/src/operators.vt", `Ok
-  ; "../example/src/record.vt", `Ok
-  ; "./fixtures/src/compute.vt", `Ok
-  ; "./fixtures/src/universe-explicit.vt", `Ok
-  ; "./fixtures/src/ind-namespacing.vt", `Ok
-  ; "./fixtures/src/operators-user.vt", `Ok
-  ; "./fixtures/src/goal_demo.vt", `Ok
-  ; "./fixtures/bad/bad-stack-not-pi.vt", `FailWith [ "needs a function type" ]
-  ; "./fixtures/bad/bad-stack-coverage.vt", `FailWith [ "no clause for constructor" ]
-  ; "./fixtures/src/stack-machine.vt", `Ok
-  ; ( "./fixtures/bad/independent-universes-bad.vt"
-    , `FailWith [ "cannot unify"; "universe" ] )
-  ; "./fixtures/bad/bad-positivity-negative.vt", `FailWith [ "negative position" ]
-  ; "./fixtures/bad/bad-positivity-nested.vt", `FailWith [ "non-positive slot" ]
-  ; "./fixtures/bad/bad-positivity-non-uniform.vt", `FailWith [ "non-uniformly" ]
-  ; ( "./fixtures/bad/bad-operator-no-holes.vt"
-    , `FailWith [ "template must contain at least one hole" ] )
-  ; ( "./fixtures/bad/bad-operator-duplicate.vt"
-    , `FailWith [ "duplicate operator template" ] )
-  ; "./fixtures/bad/bad-operator-cycle.vt", `FailWith [ "precedence cycle" ]
-  ; "./fixtures/src/record-extras.vt", `Ok
-  ; "./fixtures/src/record-field-op-soup.vt", `Ok
-  ; "./fixtures/src/record-eta.vt", `Ok
-  ; "./fixtures/src/record-inner-binder-shadow.vt", `Ok
-  ; ( "./fixtures/bad/bad-record-missing-field.vt"
-    , `FailWith [ "missing field"; "record literal" ] )
-  ; "./fixtures/bad/bad-proj-unknown-field.vt", `FailWith [ "has no field" ]
-  ; ( "./fixtures/bad/bad-proj-non-record.vt"
-    , `FailWith [ "expected a record type for projection" ] )
-  ; ( "./fixtures/bad/bad-record-update-unknown-field.vt"
-    , `FailWith [ "unknown field"; "record update" ] )
-  ; "./fixtures/bad/bad-record-update-empty.vt", `FailWith [ "empty record update" ]
-  ; ( "./fixtures/bad/bad-record-pattern-missing-field.vt"
-    , `FailWith [ "missing field"; "record pattern" ] )
-  ; ( "./fixtures/bad/bad-record-pattern-unknown-field.vt"
-    , `FailWith [ "unknown field"; "record pattern" ] )
-  ; ( "./fixtures/bad/bad-record-duplicate-field.vt"
-    , `FailWith [ "duplicate field"; "record literal" ] )
-  ; "./fixtures/src/apply-neutral-proj.vt", `Ok
-  ; "./fixtures/src/dependent-record-literal.vt", `Ok
-  ; "./fixtures/src/elim-unify.vt", `Ok
-  ; "./fixtures/src/vec-head.vt", `Ok
-  ; "./fixtures/bad/bad-elim-stuck.vt", `FailWith [ "unifier got stuck" ]
-  ; ( "./fixtures/bad/bad-record-literal-unknown.vt"
-    , `FailWith [ "unknown field"; "record literal" ] )
-  ; ( "./fixtures/bad/bad-record-update-duplicate.vt"
-    , `FailWith [ "duplicate field"; "record update" ] )
-  ; "./fixtures/bad/bad-axiom-k.vt", `FailWith [ "cannot unify" ]
-  ; "./fixtures/bad/bad-UIP.vt", `FailWith [ "cannot unify" ]
-  ; "./fixtures/src/positivity-self-shadow.vt", `Ok
-  ; "./fixtures/src/record-update-dep-chain.vt", `Ok
-  ; "./fixtures/src/stress-pi-chain.vt", `Ok
-  ; "./fixtures/src/stress-long-spine.vt", `Ok
-  ; "./fixtures/src/stress-many-fields.vt", `Ok
-  ; "./fixtures/src/stress-many-ctors.vt", `Ok
-  ; "./fixtures/src/stress-deep-vec.vt", `Ok
-  ; "./fixtures/src/stress-deep-nat.vt", `Ok
-  ; "./fixtures/src/underscore-name.vt", `Ok
-  ; ( "./fixtures/bad/bad-stack-split-param.vt"
-    , `FailWith [ "n : Nat"; "which is a parameter" ] )
-  ; ( "./fixtures/bad/bad-elim-param.vt"
-    , `FailWith [ "target"; "is a parameter"; "move it past" ] )
-  ; "./fixtures/bad/contains-many-errors.vt", `FailWith [ "is not defined" ]
-  ; "./fixtures/bad/bad-uninferable-implicit.vt", `FailWith [ "cannot infer implicit" ]
-  ]
 ;;
 
 let () =
   let mismatches = ref 0 in
+  let promote = Option.is_some (Sys.getenv_opt "PROMOTE_GOLDENS") in
+  (* src/ and example/ must elaborate Ok (unless overridden to Hung). *)
+  let oks = vt_entries "./fixtures/src" @ vt_entries "../example/src" in
   List.iter
-    (fun (filename, want) ->
-       let got = outcome_of filename in
+    (fun vt ->
+       let got = outcome_of vt in
+       let want = if List.mem vt hung_overrides then `Hung else `Ok in
        match compare_outcome got want with
-       | `Match -> Printf.printf "%s: %s (as expected)\n" filename (outcome_str got)
+       | `Match -> Printf.printf "%s: %s (as expected)\n" vt (outcome_str got)
        | `Mismatch_outcome ->
-         Printf.printf
-           "%s: got %s, expected %s\n"
-           filename
-           (outcome_str got)
-           (want_str want);
-         incr mismatches
-       | `Missing_substring (sub, msg) ->
-         Printf.printf
-           "%s: FAIL but explanation did not contain %S\n  actual: %s\n"
-           filename
-           sub
-           msg;
+         Printf.printf "%s: got %s, expected %s\n" vt (outcome_str got) (want_str want);
          incr mismatches)
-    expected;
+    oks;
+  (* bad/ must FAIL, and the rendered message must match the committed golden. *)
+  let bads = vt_entries "./fixtures/bad" in
+  List.iter
+    (fun vt ->
+       match outcome_of vt with
+       | `Ok ->
+         Printf.printf "%s: got OK, expected FAIL\n" vt;
+         incr mismatches
+       | `Hung ->
+         Printf.printf "%s: got HUNG, expected FAIL\n" vt;
+         incr mismatches
+       | `Fail msg ->
+         let msg = String.trim msg in
+         if promote
+         then begin
+           let oc = open_out (golden_path vt) in
+           output_string oc (msg ^ "\n");
+           close_out oc;
+           Printf.printf "%s: golden written\n" vt
+         end
+         else begin
+           let want =
+             String.trim
+               (try read_file (golden_path vt) with
+                | _ -> "")
+           in
+           if String.equal msg want
+           then Printf.printf "%s: FAIL (golden matches)\n" vt
+           else begin
+             Printf.printf
+               "%s: golden mismatch\n--- want ---\n%s\n--- got ---\n%s\n"
+               vt
+               want
+               msg;
+             incr mismatches
+           end
+         end)
+    bads;
   if !mismatches > 0
   then begin
     Printf.printf "\n%d mismatch(es)\n" !mismatches;

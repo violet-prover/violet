@@ -1,0 +1,1 @@
+elim: cannot determine the 0th index for ctor `nil` — unifier got stuck on `zero` ≟ `f $-2`

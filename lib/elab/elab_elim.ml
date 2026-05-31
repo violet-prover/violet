@@ -491,10 +491,7 @@ let handle_stack_def_have_type
     push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
     push m (GCheck (loc, term, typ_val))
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KTopStackDef_HaveType: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopStackDef_HaveType: bad result %s" (produced_tag other)
 ;;
 
 let handle_elim_def
@@ -613,10 +610,7 @@ let handle_elim_def_have_type
          { loc; name; name_loc; typ_tm; typ_val; func_name = name; target_pos });
     push m (GCheck (loc, term, typ_val))
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KTopElimDef_HaveType: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopElimDef_HaveType: bad result %s" (produced_tag other)
 ;;
 
 (* Walks a Core.term and replaces applications of `Var func_name` where
@@ -709,10 +703,7 @@ let handle_elim_def_have_body
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KTopElimDef_HaveBody: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopElimDef_HaveBody: bad result %s" (produced_tag other)
 ;;
 
 let handle_check_inline_elim

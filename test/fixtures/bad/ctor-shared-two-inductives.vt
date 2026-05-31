@@ -1,0 +1,6 @@
+\universe 𝓤
+\data A : 𝓤
+  | mk : A
+\data B : 𝓤
+  | mk : B
+\let f : A => mk mk

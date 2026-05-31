@@ -1,0 +1,1 @@
+constructor `b` of `Bad` places `Bad` in a negative position: in argument type `Π(_ : Bad) -> Bad`, `Bad` occurs to the left of `->`.

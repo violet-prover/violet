@@ -1,0 +1,1 @@
+constructor `node` of `Rose` places `Rose` under non-positive slot of `Box`: in argument type `(Box (Rose A))`, parameter 1 of `Box` is not strictly positive.

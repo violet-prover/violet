@@ -1,0 +1,5 @@
+\universe 𝓤
+\data Id {A : 𝓤} (x : A) : A -> 𝓤
+  | refl : Id x x
+\operator "\x ∎" => refl
+\let f {A : 𝓤} (a : A) : Id a a => a ∎

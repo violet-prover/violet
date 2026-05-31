@@ -1,0 +1,5 @@
+# Companion module imported by import-export-visible.vt; listed in the harness's
+# companion_modules so it is not run as a standalone entry. It exports foo.
+\universe U
+\export foo
+\let foo (x : U) : U => x

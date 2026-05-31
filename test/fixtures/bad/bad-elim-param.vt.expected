@@ -1,0 +1,1 @@
+`<= \elim xs`: target `xs` is a parameter; move it past the `:` in the signature to make it an argument that can be eliminated

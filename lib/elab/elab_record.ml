@@ -202,7 +202,7 @@ let handle_record_lit_field
          Elab_error
          "internal: KRecordLit_Field: entry/type list length mismatch")
   | other ->
-    Reporter.fatalf Elab_error "KRecordLit_Field: bad result %s" ([%show: produced] other)
+    Reporter.fatalf Elab_error "KRecordLit_Field: bad result %s" (produced_tag other)
 ;;
 
 let handle_infer_record_update (m : machine) (loc : Asai.Range.t) =
@@ -279,7 +279,7 @@ let handle_record_update_have_base
     Reporter.fatalf
       Elab_error
       "KRecordUpdate_HaveBase: bad result %s"
-      ([%show: produced] other)
+      (produced_tag other)
 ;;
 
 let handle_record_update_field
@@ -308,10 +308,7 @@ let handle_record_update_field
       ~fields:remaining_term_fields
       ~eval_env:eval_env'
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KRecordUpdate_Field: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KRecordUpdate_Field: bad result %s" (produced_tag other)
 ;;
 
 let handle_infer_proj
@@ -368,7 +365,7 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
          f
          (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
   | other ->
-    Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" ([%show: produced] other)
+    Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" (produced_tag other)
 ;;
 
 let handle_top_record
@@ -839,8 +836,5 @@ let handle_top_record_have_type
       ~body:elim_body;
     m.result <- Some PUnit
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KTopRecord_HaveType: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopRecord_HaveType: bad result %s" (produced_tag other)
 ;;

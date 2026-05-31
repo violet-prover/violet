@@ -96,10 +96,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             (Pretty.pp_term (view_of_ctx m.ctx) tm)
             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KEnsureUniverse: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KEnsureUniverse: bad result %s" (produced_tag other))
   | GInfer (loc, Pi ({ name; bound = a; implicit }, b)) ->
     push m (KPi_HaveDom (loc, name, implicit, b));
     push m (GInferType (loc, a))
@@ -112,7 +109,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        push m (KPi_HaveCod (loc, name, implicit, a_tm, l_a));
        push m (GInferType (loc, body))
      | other ->
-       Reporter.fatalf Elab_error "KPi_HaveDom: bad result %s" ([%show: produced] other))
+       Reporter.fatalf Elab_error "KPi_HaveDom: bad result %s" (produced_tag other))
   | KPi_HaveCod (_loc, name, implicit, a_tm, l_a) ->
     (match take_result m with
      | PType (b_tm, l_b) ->
@@ -123,7 +120,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
                ( Core.Pi ({ name; bound = a_tm; implicit }, b_tm)
                , Core.Universe (Level.lmax l_a l_b) ))
      | other ->
-       Reporter.fatalf Elab_error "KPi_HaveCod: bad result %s" ([%show: produced] other))
+       Reporter.fatalf Elab_error "KPi_HaveCod: bad result %s" (produced_tag other))
   | GCheck (loc, Lambda { name; bound = body; implicit = lambda_mode }, ty) ->
     (match Evaluation.force_head ty with
      | Core.VPi ({ name = _; bound = a; implicit = pi_mode }, b) ->
@@ -144,8 +141,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | PTerm body_tm ->
        restore_ctx m;
        m.result <- Some (PTerm (Core.Lambda { name; bound = body_tm; implicit }))
-     | other ->
-       Reporter.fatalf Elab_error "KLam_Body: bad result %s" ([%show: produced] other))
+     | other -> Reporter.fatalf Elab_error "KLam_Body: bad result %s" (produced_tag other))
   | GInfer (loc, TypedLambda ({ name; bound = ty; implicit }, body)) ->
     push m (KTypedLam_HaveDom (loc, name, implicit, body));
     push m (GInferType (loc, ty))
@@ -158,10 +154,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        push m (KTypedLam_HaveBody (loc, name, implicit, ty_tm, ty_val));
        push m (GInfer (loc, body))
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KTypedLam_HaveDom: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KTypedLam_HaveDom: bad result %s" (produced_tag other))
   | KTypedLam_HaveBody (_loc, name, implicit, ty_tm, ty_val) ->
     (match take_result m with
      | PTermType (body_tm, body_ty) ->
@@ -172,10 +165,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
                ( Core.TypedLambda ({ name; bound = ty_tm; implicit }, body_tm)
                , Core.VPi ({ name; bound = ty_val; implicit }, fun _ -> body_ty) ))
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KTypedLam_HaveBody: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KTypedLam_HaveBody: bad result %s" (produced_tag other))
   | GInfer (loc, App (is_implicit, f, arg)) ->
     push m (KApp_HaveFn (loc, is_implicit, arg));
     push m (GInfer (loc, f))
@@ -220,14 +210,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
             (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
             ty)
      | other ->
-       Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" ([%show: produced] other))
+       Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" (produced_tag other))
   | KApp_HaveArg (_loc, f_tm, b) ->
     (match take_result m with
      | PTerm arg_tm ->
        let arg_val = Evaluation.eval m.ctx.env arg_tm in
        m.result <- Some (PTermType (Core.App (f_tm, arg_tm), b arg_val))
      | other ->
-       Reporter.fatalf Elab_error "KApp_HaveArg: bad result %s" ([%show: produced] other))
+       Reporter.fatalf Elab_error "KApp_HaveArg: bad result %s" (produced_tag other))
   | GInfer (loc, Op_soup _) | GCheck (loc, Op_soup _, _) ->
     Reporter.fatalf
       ~loc
@@ -322,7 +312,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "operands of `⊔` must be universes, got `%s`"
          (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
-       Reporter.fatalf Elab_error "KMax_HaveLeft: bad result %s" ([%show: produced] other))
+       Reporter.fatalf Elab_error "KMax_HaveLeft: bad result %s" (produced_tag other))
   | KMax_HaveRight (loc, l_a) ->
     (match take_result m with
      | PTermType (Core.Universe l_b, _) ->
@@ -335,10 +325,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          "operands of `⊔` must be universes, got `%s`"
          (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KMax_HaveRight: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KMax_HaveRight: bad result %s" (produced_tag other))
   | GInfer (loc, IdAbsurd p) ->
     push m (KIdAbsurd_HaveArg loc);
     push m (GInfer (loc, p))
@@ -397,10 +384,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             "\\absurd-id: argument is not Id-typed, got `%s`"
             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KIdAbsurd_HaveArg: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KIdAbsurd_HaveArg: bad result %s" (produced_tag other))
   | GCheck (loc, Var [ x ], expected) when Option.is_none (resolve_local m.ctx x) ->
     (* Type-directed resolution: if expected forces to IndType(ind, _) and
        [ind; x] is bound in Context, use the namespaced binding.
@@ -444,10 +428,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           Unification.unify ~loc (view_of_ctx m.ctx) expected infer_ty;
           m.result <- Some (PTerm tm))
      | other ->
-       Reporter.fatalf
-         Elab_error
-         "KCheckBy_Infer: bad result %s"
-         ([%show: produced] other))
+       Reporter.fatalf Elab_error "KCheckBy_Infer: bad result %s" (produced_tag other))
   | GTopUniverseDecl names -> Elab_decl.handle_universe_decl m names
   | GTopLet { loc; name; name_loc; bindings; result_ty; body } ->
     Elab_decl.handle_top_let m ~loc ~name ~name_loc ~bindings ~result_ty ~body
@@ -548,7 +529,7 @@ and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
   push m (GInferType (loc, pretype));
   match drive m with
   | PType (tm, l) -> tm, l
-  | other -> Reporter.fatalf ~loc Elab_error "infer_type: %s" ([%show: produced] other)
+  | other -> Reporter.fatalf ~loc Elab_error "infer_type: %s" (produced_tag other)
 
 and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
   fst (infer_type ~loc ctx pretype)
@@ -568,8 +549,7 @@ and check_term_against ~loc (ctx : local_ctx) (term : Surface.preterm) (ty : Cor
   push m (GCheck (loc, term, ty));
   match drive m with
   | PTerm tm -> tm
-  | other ->
-    Reporter.fatalf ~loc Elab_error "check_term_against: %s" ([%show: produced] other)
+  | other -> Reporter.fatalf ~loc Elab_error "check_term_against: %s" (produced_tag other)
 
 and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Core.value =
   let m =
@@ -584,7 +564,7 @@ and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Cor
   push m (GInfer (loc, term));
   match drive m with
   | PTermType (tm, ty) -> tm, ty
-  | other -> Reporter.fatalf ~loc Elab_error "infer_term: %s" ([%show: produced] other)
+  | other -> Reporter.fatalf ~loc Elab_error "infer_term: %s" (produced_tag other)
 ;;
 
 let with_handlers (k : unit -> 'a) : 'a =
@@ -641,13 +621,16 @@ let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   push m (GInfer (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), p));
   match drive m with
   | PTermType (tm, ty) -> tm, ty
-  | other -> Reporter.fatalf Elab_error "infer_for_test: got %s" ([%show: produced] other)
+  | other -> Reporter.fatalf Elab_error "infer_for_test: got %s" (produced_tag other)
 ;;
 
 let%expect_test "infer Universe" =
   let tm, ty = infer_for_test Surface.Universe in
-  Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty);
-  [%expect {| universe 𝓤₀ : universe (𝓤₀+1) |}]
+  Printf.printf
+    "%s : %s"
+    (Pretty.pp_term Context_view.empty tm)
+    (Pretty.pp_term Context_view.empty (Evaluation.quote 0 ty));
+  [%expect {| universe 𝓤₀ : universe S 0 |}]
 ;;
 
 let%expect_test "infer Var bound locally" =
@@ -670,8 +653,11 @@ let%expect_test "infer Var bound locally" =
       | PTermType (a, b) -> a, b
       | _ -> failwith "wrong shape"
     in
-    Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty));
-  [%expect {| $0 : universe 𝓤₀ |}]
+    Printf.printf
+      "%s : %s"
+      (Pretty.pp_term (view_of_ctx m.ctx) tm)
+      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
+  [%expect {| x : universe 𝓤₀ |}]
 ;;
 
 (* `_` written by the user is an ordinary `Named "_"` binder, fully
@@ -696,8 +682,11 @@ let%expect_test "user `_` binder is a normal name and can be referenced" =
       | PTermType (a, b) -> a, b
       | _ -> failwith "wrong shape"
     in
-    Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty));
-  [%expect {| $0 : universe 𝓤₀ |}]
+    Printf.printf
+      "%s : %s"
+      (Pretty.pp_term (view_of_ctx m.ctx) tm)
+      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
+  [%expect {| _ : universe 𝓤₀ |}]
 ;;
 
 (* `Anon` binders (e.g. fabricated by the parser for arrow types) carry no
@@ -731,8 +720,11 @@ let%expect_test "infer Pi" =
       ({ name = Named "x"; bound = Surface.Universe; implicit = false }, Surface.Universe)
   in
   let tm, ty = infer_for_test p in
-  Printf.printf "%s : %s" ([%show: Core.term] tm) ([%show: Core.value] ty);
-  [%expect {| ∀ (x : universe 𝓤₀) -> universe 𝓤₀ : universe (𝓤₀+1) ⊔ (𝓤₀+1) |}]
+  Printf.printf
+    "%s : %s"
+    (Pretty.pp_term Context_view.empty tm)
+    (Pretty.pp_term Context_view.empty (Evaluation.quote 0 ty));
+  [%expect {| (x : universe 𝓤₀) -> universe 𝓤₀ : universe (S 0) ⊔ (S 0) |}]
 ;;
 
 let%expect_test "check Lambda against Pi" =
@@ -761,8 +753,8 @@ let%expect_test "check Lambda against Pi" =
       | PTerm t -> t
       | _ -> failwith "wrong shape"
     in
-    Printf.printf "%s" ([%show: Core.term] tm));
-  [%expect {| fun x => $0 |}]
+    Printf.printf "%s" (Pretty.pp_term (view_of_ctx m.ctx) tm));
+  [%expect {| (fun x => x) |}]
 ;;
 
 let%expect_test "infer App" =
@@ -787,11 +779,14 @@ let%expect_test "infer App" =
     push m (GInfer (loc, Surface.App (false, Surface.Var [ "f" ], Surface.Var [ "x" ])));
     match drive m with
     | PTermType (tm, ty) ->
-      Printf.printf "tm: %s\nty: %s" ([%show: Core.term] tm) ([%show: Core.value] ty)
+      Printf.printf
+        "tm: %s\nty: %s"
+        (Pretty.pp_term (view_of_ctx m.ctx) tm)
+        (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty))
     | _ -> failwith "wrong shape");
   [%expect
     {|
-    tm: $0 $1
+    tm: f x
     ty: universe 𝓤₀
     |}]
 ;;
@@ -1042,210 +1037,6 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
     {|
     +checking [module] td-test (td-test.vt)
     ok
-    |}]
-;;
-
-let%expect_test "module: \\export-less let stays private from importers" =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let loc top = Asai.Range.locate dummy_loc top in
-  (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
-  let foo_def =
-    Surface.Let
-      { name = "foo"
-      ; name_loc = None
-      ; bindings = []
-      ; result_ty =
-          Surface.Pi
-            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-            , Surface.Universe )
-      ; body =
-          Surface.Lambda
-            { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
-      }
-  in
-  (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
-  let uses_foo_def =
-    Surface.Let
-      { name = "uses_foo"
-      ; name_loc = None
-      ; bindings = []
-      ; result_ty =
-          Surface.Pi
-            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-            , Surface.Universe )
-      ; body = Surface.Var [ "foo" ]
-      }
-  in
-  let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = []; tops = [ loc foo_def ] }
-  in
-  let mod_b : Surface.t =
-    { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
-  in
-  with_handlers_emitting (fun () ->
-    check_module mod_a;
-    check_module mod_b);
-  [%expect
-    {|
-    +checking [module] a (a.vt)
-    +checking [module] b (b.vt)
-    +[Warning] Could not find any data within the subtree at (root).
-    +
-    +[Warning] Could not find any data within the subtree at a.
-    +
-    +[Warning] Could not find any data within the subtree at (root).
-    +
-    +[Warning] Could not find any data within the subtree at a.
-    +
-    [Reporter.Message.NoVar_error] `foo` is not defined
-    |}]
-;;
-
-let%expect_test "constructor used in inferred position reports a helpful message" =
-  let src =
-    "\\universe 𝓤\n\
-     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
-    \  | refl : Id x x\n\
-     \\let f {A : 𝓤} (a : A) : Id a a => refl a\n"
-  in
-  with_handlers_emitting (fun () ->
-    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
-  [%expect
-    {|
-    +checking [module] t (t.vt)
-    [Reporter.Message.NoVar_error] `refl` is a constructor of `Id`; it can only be used where its expected type is known (e.g. checked against `Id …`), not as a function head or in an inferred position
-    |}]
-;;
-
-(* The real-world trigger: a postfix operator whose body is a bare
-   constructor (`∎ => refl`). `lower_body` force-applies the hole-free body to
-   the operand, so `refl` ends up an application head — an inferred position. *)
-let%expect_test "constructor-bodied operator (\\x ∎ => refl) reports helpfully" =
-  let src =
-    "\\universe 𝓤\n\
-     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
-    \  | refl : Id x x\n\
-     \\operator \"\\x ∎\" => refl\n\
-     \\let f {A : 𝓤} (a : A) : Id a a => a ∎\n"
-  in
-  with_handlers_emitting (fun () ->
-    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
-  [%expect
-    {|
-    +checking [module] t (t.vt)
-    [Reporter.Message.NoVar_error] `refl` is a constructor of `Id`; it can only be used where its expected type is known (e.g. checked against `Id …`), not as a function head or in an inferred position
-    |}]
-;;
-
-(* Regression guard: a constructor used correctly (checking position) must
-   still resolve type-directed and NOT trip the new diagnostic. *)
-let%expect_test "constructor in checking position still resolves" =
-  let src =
-    "\\universe 𝓤\n\
-     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
-    \  | refl : Id x x\n\
-     \\let f {A : 𝓤} (a : A) : Id a a => refl\n"
-  in
-  with_handlers_emitting (fun () ->
-    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
-  [%expect {| +checking [module] t (t.vt) |}]
-;;
-
-(* A name that is neither a binding nor a constructor still gets the plain
-   "is not defined" message — the new branch must not swallow that case. *)
-let%expect_test "genuinely unbound name still says is not defined" =
-  let src = "\\universe 𝓤\n\\let f : 𝓤 => bogus\n" in
-  with_handlers_emitting (fun () ->
-    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
-  [%expect
-    {|
-    +checking [module] t (t.vt)
-    [Reporter.Message.NoVar_error] `bogus` is not defined
-    |}]
-;;
-
-(* When several inductives share a constructor name, the message lists them
-   all (and still cannot disambiguate without an expected type). *)
-let%expect_test "constructor shared by two inductives lists both owners" =
-  let src =
-    "\\universe 𝓤\n\
-     \\data A : 𝓤\n\
-    \  | mk : A\n\
-     \\data B : 𝓤\n\
-    \  | mk : B\n\
-     \\let f : A => mk mk\n"
-  in
-  with_handlers_emitting (fun () ->
-    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
-  [%expect
-    {|
-    +checking [module] t (t.vt)
-    [Reporter.Message.NoVar_error] `mk` is a constructor of `A`, `B`; it can only be used where its expected type is known (e.g. checked against `A …`), not as a function head or in an inferred position
-    |}]
-;;
-
-let%expect_test "module: \\export-listed let is visible to importers" =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let loc top = Asai.Range.locate dummy_loc top in
-  (* foo : (x : U) -> U => fun x -> x  — well-typed identity on U *)
-  let foo_def =
-    Surface.Let
-      { name = "foo"
-      ; name_loc = None
-      ; bindings = []
-      ; result_ty =
-          Surface.Pi
-            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-            , Surface.Universe )
-      ; body =
-          Surface.Lambda
-            { Syntax.name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
-      }
-  in
-  (* uses_foo : (x : U) -> U => foo  — alias for foo; typechecks iff foo is visible *)
-  let uses_foo_def =
-    Surface.Let
-      { name = "uses_foo"
-      ; name_loc = None
-      ; bindings = []
-      ; result_ty =
-          Surface.Pi
-            ( { Syntax.name = Named "x"; bound = Surface.Universe; implicit = false }
-            , Surface.Universe )
-      ; body = Surface.Var [ "foo" ]
-      }
-  in
-  let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "foo", None ]; tops = [ loc foo_def ] }
-  in
-  let mod_b : Surface.t =
-    { name = "b.vt"; imports = [ [ "a" ] ]; exports = []; tops = [ loc uses_foo_def ] }
-  in
-  with_handlers (fun () ->
-    check_module mod_a;
-    check_module mod_b);
-  print_endline "ok";
-  [%expect
-    {|
-    +checking [module] a (a.vt)
-    +checking [module] b (b.vt)
-    ok
-    |}]
-;;
-
-let%expect_test "module: \\export of an undefined name fails" =
-  let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "ghost", None ]; tops = [] }
-  in
-  (try
-     with_handlers (fun () -> check_module mod_a);
-     print_endline "UNEXPECTED: undefined export accepted"
-   with
-   | _ -> print_endline "rejected as expected");
-  [%expect
-    {|
-    +checking [module] a (a.vt)
-    rejected as expected
     |}]
 ;;
 
@@ -1554,96 +1345,7 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       p_let);
   (match Violet_kernel.Module.lookup kernel_module "test.p" with
    | Some (Violet_kernel.Module.Let { body; _ }) ->
-     Printf.printf "body: %s\n" ([%show: Core.term] body)
+     Printf.printf "body: %s\n" (Pretty.pp_term Context_view.empty body)
    | _ -> Printf.printf "not found or wrong decl kind\n");
   [%expect {| body: Pair{ fst = Nat/zero, snd = Nat/zero } |}]
-;;
-
-let%expect_test "check-mode record literal with missing field gives error" =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let nat_data : Surface.top =
-    Surface.Data
-      { name = "Nat"
-      ; name_loc = None
-      ; params = []
-      ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
-      ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
-            ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
-            ; implicit = false
-            }
-          ]
-      ; ctor_name_locs = [ None; None ]
-      }
-  in
-  let pair_record : Surface.top =
-    Surface.Record
-      { name = "Pair"
-      ; name_loc = None
-      ; params =
-          [ { name = Named "A"; bound = Surface.Universe; implicit = false }
-          ; { name = Named "B"; bound = Surface.Universe; implicit = false }
-          ]
-      ; ind_ty = Surface.Universe
-      ; fields =
-          [ { name = Named "fst"; bound = Surface.Var [ "A" ]; implicit = false }
-          ; { name = Named "snd"; bound = Surface.Var [ "B" ]; implicit = false }
-          ]
-      }
-  in
-  (* \let p : Pair Nat Nat => { fst = Nat/zero }  -- missing snd *)
-  let p_let : Surface.top =
-    Surface.Let
-      { name = "p"
-      ; name_loc = None
-      ; bindings = []
-      ; result_ty =
-          Surface.App
-            ( false
-            , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
-            , Surface.Var [ "Nat" ] )
-      ; body = Surface.RecordLit [ "fst", Surface.Var [ "Nat"; "zero" ] ]
-      }
-  in
-  let kernel_module = Violet_kernel.Module.create () in
-  let result =
-    try
-      with_handlers (fun () ->
-        let goal_counter = ref 0 in
-        let is_exported _ = false in
-        Context.clear_level_vars ();
-        Context.declare_level_var "U";
-        check_top
-          ~module_name:"test"
-          ~kernel_module
-          ~goal_counter
-          ~is_exported
-          ~loc:dummy_loc
-          nat_data;
-        check_top
-          ~module_name:"test"
-          ~kernel_module
-          ~goal_counter
-          ~is_exported
-          ~loc:dummy_loc
-          pair_record;
-        check_top
-          ~module_name:"test"
-          ~kernel_module
-          ~goal_counter
-          ~is_exported
-          ~loc:dummy_loc
-          p_let);
-      "no error"
-    with
-    | Failure msg -> "error: " ^ msg
-  in
-  Printf.printf "%s\n" result;
-  [%expect {| error: Reporter.Message.Elab_error |}]
 ;;

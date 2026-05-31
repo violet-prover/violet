@@ -265,8 +265,5 @@ let handle_top_data_have_type
       publish_def "no-confusion" nc_typ_tm nc_typ_val nc_body_tm nc_body_val);
     m.result <- Some PUnit
   | other ->
-    Reporter.fatalf
-      Elab_error
-      "KTopData_HaveType: bad result %s"
-      ([%show: produced] other)
+    Reporter.fatalf Elab_error "KTopData_HaveType: bad result %s" (produced_tag other)
 ;;

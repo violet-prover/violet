@@ -211,8 +211,15 @@ end
 
 module Test = Make (NullMeta) (NullEnv)
 
+(* Display a value the way the elaborator does: quote it back to a term at the
+   given de Bruijn level (default 0) and pretty-print that. [lvl] must match the
+   number of binders the value was evaluated under. *)
+let show_value ?(lvl = 0) (v : value) : string =
+  Pretty.pp_term Context_view.empty (Test.quote lvl v)
+;;
+
 let%expect_test "eval Universe" =
-  print_string @@ [%show: value] (Test.eval Emp (Universe Level.LZero));
+  print_string @@ show_value (Test.eval Emp (Universe Level.LZero));
   [%expect {| universe 𝓤₀ |}]
 ;;
 
@@ -234,8 +241,8 @@ let%expect_test "lift unlift cancels" =
                { from_lvl = zero; to_lvl = one; ty = LocalVar 1; tm = LocalVar 0 }
          })
   in
-  print_string @@ [%show: value] v;
-  [%expect {| $0 |}]
+  print_string @@ show_value ~lvl:2 v;
+  [%expect {| $1 |}]
 ;;
 
 let%expect_test "eval RecordType with no params and flat fields" =
@@ -250,7 +257,7 @@ let%expect_test "eval RecordType with no params and flat fields" =
       }
   in
   let v = Test.eval Bwd.Emp ty in
-  print_string @@ [%show: value] v;
+  print_string @@ show_value v;
   [%expect {| (record Point | x : Nat | y : Nat) |}]
 ;;
 
@@ -259,7 +266,7 @@ let%expect_test "eval RecordIntro" =
     RecordIntro { name = "Point"; fields = [ "x", Var "zero"; "y", Var "one" ] }
   in
   let v = Test.eval Bwd.Emp tm in
-  print_string @@ [%show: value] v;
+  print_string @@ show_value v;
   [%expect {| Point{ x = zero, y = one } |}]
 ;;
 
@@ -270,13 +277,13 @@ let%expect_test "RecordProj on RecordIntro reduces" =
       ; field = "x"
       }
   in
-  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
+  print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| universe 𝓤₀ |}]
 ;;
 
 let%expect_test "RecordProj on neutral stays neutral" =
   let tm : term = RecordProj { record = Var "p"; field = "x" } in
-  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
+  print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| p.x |}]
 ;;
 
@@ -286,8 +293,8 @@ let%expect_test "application of projected field on neutral stays neutral" =
   let tm : term =
     App (RecordProj { record = Var "r"; field = "f" }, Universe Level.LZero)
   in
-  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
-  [%expect {| r.f (universe 𝓤₀) |}]
+  print_string @@ show_value (Test.eval Bwd.Emp tm);
+  [%expect {| r.f universe 𝓤₀ |}]
 ;;
 
 let%expect_test "application of projected field reduces when record known" =
@@ -308,7 +315,7 @@ let%expect_test "application of projected field reduces when record known" =
           }
       , Universe Level.LZero )
   in
-  print_string @@ [%show: value] (Test.eval Bwd.Emp tm);
+  print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| universe 𝓤₀ |}]
 ;;
 
@@ -330,6 +337,6 @@ let%expect_test "eval RecordType with dependent fields uses rigid locals" =
       }
   in
   let v = Test.eval Bwd.Emp ty in
-  print_string @@ [%show: value] v;
-  [%expect {| (record Sigma A B | fst : A | snd : B $0) |}]
+  print_string @@ show_value v;
+  [%expect {| (record Sigma A B | fst : A | snd : B fst) |}]
 ;;

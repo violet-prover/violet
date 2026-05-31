@@ -1,0 +1,3 @@
+\import exportlib
+\universe U
+\let uses_foo (x : U) : U => foo x

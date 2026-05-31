@@ -93,9 +93,9 @@ let lookup (x : string) : Core.value_ty =
      | owners ->
        Reporter.fatalf
          NoVar_error
-         "`%s` is a constructor of `%s`; it can only be used where its expected \
-          type is known (e.g. checked against `%s …`), not as a function head or \
-          in an inferred position"
+         "`%s` is a constructor of `%s`; it can only be used where its expected type is \
+          known (e.g. checked against `%s …`), not as a function head or in an inferred \
+          position"
          x
          (String.concat "`, `" owners)
          (List.hd owners))

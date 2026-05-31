@@ -1,0 +1,1 @@
+empty record update `{ _ | }`; use `p` directly instead

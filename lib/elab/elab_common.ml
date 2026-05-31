@@ -90,7 +90,15 @@ type produced =
   | PTermType of Core.term * Core.value_ty
   | PType of Core.term * Level.level
   | PUnit
-[@@deriving show]
+
+(* The constructor tag of a [produced]. Used only in "bad result" invariant
+   panics, where the offending shape (not its contents) is what matters. *)
+let produced_tag : produced -> string = function
+  | PTerm _ -> "PTerm"
+  | PTermType _ -> "PTermType"
+  | PType _ -> "PType"
+  | PUnit -> "PUnit"
+;;
 
 type goal =
   | GCheck of t * Surface.preterm * Core.value_ty

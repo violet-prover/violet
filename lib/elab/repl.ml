@@ -36,7 +36,7 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
   match drive m with
   | PTermType (tm, ty) -> tm, ty
   | other ->
-    Reporter.fatalf ~loc Elab_error "infer_expression: got %s" ([%show: produced] other)
+    Reporter.fatalf ~loc Elab_error "infer_expression: got %s" (Elab.produced_tag other)
 ;;
 
 (* User-facing pretty-printer for REPL output. The empty local context is fine

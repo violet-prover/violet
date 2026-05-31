@@ -19,7 +19,7 @@ type 't binder =
 [@@deriving show]
 
 module Core : sig
-  type metavar = MetaVar of int [@@deriving show]
+  type metavar = MetaVar of int
 
   type term =
     | Universe of Level.level
@@ -62,9 +62,8 @@ module Core : sig
         ; field : string
         }
     | IdAbsurd of term
-  [@@deriving show]
 
-  and typ = term [@@deriving show]
+  and typ = term
 
   type value =
     | Flex of metavar * value Bwd.bwd
@@ -106,7 +105,6 @@ module Core : sig
         }
     | VRecordProj of value * string * value Bwd.bwd
     | VIdAbsurd of value
-  [@@deriving show]
 
   and elim_head =
     { elim_name : string
