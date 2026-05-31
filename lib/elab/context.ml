@@ -62,10 +62,43 @@ let has (x : string) : bool =
   | _ -> false
 ;;
 
+(* When a bare name fails to resolve it may still be a data constructor:
+   constructors live in the scope at [ind; ctor], never at bare [ctor], and
+   are only resolved type-directed in checking position (see Elab's
+   `GCheck (loc, Var [x], expected)` case, which forces `expected` to an
+   `IndType` to find `ind/x`). In an inferred position — e.g. as a function
+   head — that path can't run, so the bare name is genuinely unbound. Collect
+   the inductives declaring a constructor named [x] so `lookup` can say so. *)
+let constructor_owners (x : string) : string list =
+  let owners = ref [] in
+  Trie.iter
+    (fun path (_, tag) ->
+       match tag with
+       | `Constructor ->
+         (match List.rev (Bwd.to_list path) with
+          | ctor :: ind :: _ when String.equal ctor x ->
+            if not (List.mem ind !owners) then owners := ind :: !owners
+          | _ -> ())
+       | _ -> ())
+    (S.get_visible ());
+  List.rev !owners
+;;
+
 let lookup (x : string) : Core.value_ty =
   match S.resolve [ x ] with
   | Some (v, _) -> v
-  | None -> Reporter.fatalf NoVar_error "`%s` is not defined" x
+  | None ->
+    (match constructor_owners x with
+     | [] -> Reporter.fatalf NoVar_error "`%s` is not defined" x
+     | owners ->
+       Reporter.fatalf
+         NoVar_error
+         "`%s` is a constructor of `%s`; it can only be used where its expected \
+          type is known (e.g. checked against `%s …`), not as a function head or \
+          in an inferred position"
+         x
+         (String.concat "`, `" owners)
+         (List.hd owners))
 ;;
 
 let lookup_path (xs : string list) : Core.value_ty =

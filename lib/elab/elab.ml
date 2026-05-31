@@ -1101,6 +1101,89 @@ let%expect_test "module: \\export-less let stays private from importers" =
     |}]
 ;;
 
+let%expect_test "constructor used in inferred position reports a helpful message" =
+  let src =
+    "\\universe 𝓤\n\
+     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
+    \  | refl : Id x x\n\
+     \\let f {A : 𝓤} (a : A) : Id a a => refl a\n"
+  in
+  with_handlers_emitting (fun () ->
+    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
+  [%expect
+    {|
+    +checking [module] t (t.vt)
+    [Reporter.Message.NoVar_error] `refl` is a constructor of `Id`; it can only be used where its expected type is known (e.g. checked against `Id …`), not as a function head or in an inferred position
+    |}]
+;;
+
+(* The real-world trigger: a postfix operator whose body is a bare
+   constructor (`∎ => refl`). `lower_body` force-applies the hole-free body to
+   the operand, so `refl` ends up an application head — an inferred position. *)
+let%expect_test "constructor-bodied operator (\\x ∎ => refl) reports helpfully" =
+  let src =
+    "\\universe 𝓤\n\
+     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
+    \  | refl : Id x x\n\
+     \\operator \"\\x ∎\" => refl\n\
+     \\let f {A : 𝓤} (a : A) : Id a a => a ∎\n"
+  in
+  with_handlers_emitting (fun () ->
+    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
+  [%expect
+    {|
+    +checking [module] t (t.vt)
+    [Reporter.Message.NoVar_error] `refl` is a constructor of `Id`; it can only be used where its expected type is known (e.g. checked against `Id …`), not as a function head or in an inferred position
+    |}]
+;;
+
+(* Regression guard: a constructor used correctly (checking position) must
+   still resolve type-directed and NOT trip the new diagnostic. *)
+let%expect_test "constructor in checking position still resolves" =
+  let src =
+    "\\universe 𝓤\n\
+     \\data Id {A : 𝓤} (x : A) : A -> 𝓤\n\
+    \  | refl : Id x x\n\
+     \\let f {A : 𝓤} (a : A) : Id a a => refl\n"
+  in
+  with_handlers_emitting (fun () ->
+    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
+  [%expect {| +checking [module] t (t.vt) |}]
+;;
+
+(* A name that is neither a binding nor a constructor still gets the plain
+   "is not defined" message — the new branch must not swallow that case. *)
+let%expect_test "genuinely unbound name still says is not defined" =
+  let src = "\\universe 𝓤\n\\let f : 𝓤 => bogus\n" in
+  with_handlers_emitting (fun () ->
+    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
+  [%expect
+    {|
+    +checking [module] t (t.vt)
+    [Reporter.Message.NoVar_error] `bogus` is not defined
+    |}]
+;;
+
+(* When several inductives share a constructor name, the message lists them
+   all (and still cannot disambiguate without an expected type). *)
+let%expect_test "constructor shared by two inductives lists both owners" =
+  let src =
+    "\\universe 𝓤\n\
+     \\data A : 𝓤\n\
+    \  | mk : A\n\
+     \\data B : 𝓤\n\
+    \  | mk : B\n\
+     \\let f : A => mk mk\n"
+  in
+  with_handlers_emitting (fun () ->
+    check_module (Violet_surface.Parser.parse_buffer ~filename:"t.vt" src));
+  [%expect
+    {|
+    +checking [module] t (t.vt)
+    [Reporter.Message.NoVar_error] `mk` is a constructor of `A`, `B`; it can only be used where its expected type is known (e.g. checked against `A …`), not as a function head or in an inferred position
+    |}]
+;;
+
 let%expect_test "module: \\export-listed let is visible to importers" =
   let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
   let loc top = Asai.Range.locate dummy_loc top in
