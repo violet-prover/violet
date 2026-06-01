@@ -1,0 +1,20 @@
+# A field whose type contains an inferred implicit argument (here `id`'s `{A}`)
+# becomes an inserted meta whose level counts the prior-field binders. When the
+# field projector `R/c` is generated, those prior-field binders (a, b) collapse
+# into a single `r`, so the inserted meta must be re-spined accordingly.
+# Regression: projecting `c` used to crash with LocalVarOutOfRange because the
+# meta still claimed the pre-collapse level.
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let id {A : U} (x : A) : A => x
+
+\record R : U
+  | a : Nat
+  | b : Nat
+  | c : id Nat
+
+\let test (x : R) : Nat => x.c

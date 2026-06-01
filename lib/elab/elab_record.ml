@@ -635,7 +635,24 @@ let handle_top_record_have_type
         | Core.Pi ({ name; bound = dom; implicit }, cod) ->
           Core.Pi
             ({ name; bound = go extra_depth dom; implicit }, go (extra_depth + 1) cod)
-        | Core.Meta _ | Core.InsertedMeta _ -> t
+        | Core.Meta _ -> t
+        | Core.InsertedMeta (mv, lvl) ->
+          (* `InsertedMeta (m, lvl)` is sugar for `m` applied to the first `lvl`
+             locals (levels 0..lvl-1).  Collapsing the prior-field binders into
+             the single `r` changes those locals, so we cannot keep it opaque:
+             expand the implicit spine into explicit applications and remap each
+             argument through `go`.  At this node the term's local depth is
+             `n_before + extra_depth`, so level L sits at index depth-1-L. *)
+          let depth = n_before + extra_depth in
+          let rec build acc lv =
+            if lv >= lvl
+            then acc
+            else
+              build
+                (Core.App (acc, go extra_depth (Core.LocalVar (depth - 1 - lv))))
+                (lv + 1)
+          in
+          build (Core.Meta mv) 0
         | Core.Lift { from_lvl; to_lvl; ty } ->
           Core.Lift { from_lvl; to_lvl; ty = go extra_depth ty }
         | Core.LiftTerm { from_lvl; to_lvl; ty; tm } ->

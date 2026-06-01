@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- fix: projecting a record field whose type contains an inserted meta no longer crashes with `LocalVarOutOfRange` (the field projector now re-spines inserted metas when prior-field binders collapse into `r`)
+- elaborator pattern unification with pruning
+
 ## 0.6.0
 
 - allow mixfix operator has associativity (to support reasoning style `x =⟨ p ⟩ y =⟨ q ⟩ z ∎`)

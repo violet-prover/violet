@@ -174,7 +174,12 @@ module PartialRenaming = struct
            | exception Escaping _ -> `Drop)
         args
     in
-    if List.for_all (function `Keep _ -> true | `Drop -> false) classified
+    if
+      List.for_all
+        (function
+          | `Keep _ -> true
+          | `Drop -> false)
+        classified
     then
       List.fold_left
         (fun acc -> function
@@ -212,9 +217,11 @@ module PartialRenaming = struct
       | Escaping (l, cv') ->
         Reporter.fatalf
           Elab_error
-          "local `%s` escapes the solution of %s: it is not one of the meta's \
-           arguments, so the solution may not mention it"
-          (Pretty.pp_term cv' (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
+          "local `%s` escapes the solution of %s: it is not one of the meta's arguments, \
+           so the solution may not mention it"
+          (Pretty.pp_term
+             cv'
+             (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
           (Pretty.pp_metavar m)
     in
     let solution = lams pr.dom rhs_tm in
@@ -568,8 +575,10 @@ let%expect_test "meta solving: flex = rigid solves meta" =
   [%expect {| solved |}]
 ;;
 
-let%expect_test "pruning: escaping var that appears only under another flex meta is \
-                 pruned, so the solve succeeds" =
+let%expect_test
+    "pruning: escaping var that appears only under another flex meta is pruned, so the \
+     solve succeeds"
+  =
   (* context: a (lvl 0), b (lvl 1) *)
   let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
   let m1 = Core.MetaVar 70001 in
@@ -594,8 +603,10 @@ let%expect_test "pruning: escaping var that appears only under another flex meta
   [%expect {| solved |}]
 ;;
 
-let%expect_test "a genuine (un-prunable) escape names the offending variable \
-                 instead of printing a raw de Bruijn level" =
+let%expect_test
+    "a genuine (un-prunable) escape names the offending variable instead of printing a \
+     raw de Bruijn level"
+  =
   (* context: a (lvl 0), b (lvl 1).  Solve `?m a := b`: `b` escapes and there is
      no flex meta to prune it through, so this is a real error.  The message
      must name `b`, not `$1`. *)
