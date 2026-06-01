@@ -83,6 +83,13 @@ module Core = struct
        it as a stuck neutral (never reduces because the underlying Id is
        uninhabited, so this term is never demanded at runtime). *)
     | IdAbsurd of term
+    (* The empty type: a builtin with no constructors. Always available;
+       not defined in any .vt source. *)
+    | Empty
+    (* Ex-falso. [scrut] has type [Empty]; this term inhabits any type. The
+       elaborator places it only in dead `\elim` branches. Kernel treats it
+       as a stuck neutral (Empty is uninhabited, so it never reduces). *)
+    | Absurd of term
 
   and typ = term
 
@@ -150,6 +157,10 @@ module Core = struct
     (* Stuck-neutral value for [Core.IdAbsurd]: the underlying Id is
        uninhabited at type-check time, so this value never reduces. *)
     | VIdAbsurd of value
+    | VEmpty
+    (* Stuck-neutral ex-falso with its spine: when the inhabited type is a
+       function, the value may be applied, so arguments accumulate here. *)
+    | VAbsurd of value * value bwd
 
   and elim_head =
     { elim_name : string

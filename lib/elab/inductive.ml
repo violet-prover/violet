@@ -176,6 +176,7 @@ let mark_recursive_call_implicits
     | Surface.Max (a, b) -> Surface.Max (rw a, rw b)
     | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd _ -> t
+    | Surface.Absurd _ -> t
     | Surface.Op_soup _ -> t
     | Surface.RecordLit entries ->
       Surface.RecordLit (List.map (fun (f, e) -> f, rw e) entries)
@@ -1017,10 +1018,7 @@ let build_elim_body_unify
               orthogonal ctor heads on both sides, so `\absurd-id` derives
               `Empty` and `absurd` casts it to the case body's type. *)
            let absurd_body =
-             Surface.App
-               ( false
-               , Surface.Var [ "absurd" ]
-               , Surface.IdAbsurd (Surface.Var [ p_name k ]) )
+             Surface.Absurd (Surface.IdAbsurd (Surface.Var [ p_name k ]))
            in
            close_ctor_lambdas
              ~check_loc:loc
@@ -1758,11 +1756,7 @@ let build_inline_elim_dispatch
                ctor_name;
            let body =
              if id_reify
-             then
-               Surface.App
-                 ( false
-                 , Surface.Var [ "absurd" ]
-                 , Surface.IdAbsurd (Surface.Var [ p_name k ]) )
+             then Surface.Absurd (Surface.IdAbsurd (Surface.Var [ p_name k ]))
              else Surface.Hole
            in
            close_ctor_lambdas ~check_loc:loc ctor_info_.binder_names (wrap_p_binders body)
@@ -2041,7 +2035,7 @@ let build_inline_elim_dispatch
                                           , Surface.App
                                               ( true
                                               , Surface.App
-                                                  (false, Surface.Var [ "cong" ], extr)
+                                                  (false, Surface.Var [ "ap" ], extr)
                                               , cons_idx_lhs )
                                           , cons_idx_rhs )
                                       , Surface.Var [ p_name spine_idx ] )
@@ -2058,7 +2052,7 @@ let build_inline_elim_dispatch
                                   in
                                   let coerced =
                                     Surface.apply
-                                      (Surface.Var [ "subst" ])
+                                      (Surface.Var [ "transport" ])
                                       [ subst_motive
                                       ; Surface.Var [ dep_user_name ]
                                       ; value_surface

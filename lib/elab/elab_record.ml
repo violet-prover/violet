@@ -660,6 +660,8 @@ let handle_top_record_have_type
         | Core.RecordProj { record; field } ->
           Core.RecordProj { record = go extra_depth record; field }
         | Core.IdAbsurd t -> Core.IdAbsurd (go extra_depth t)
+        | Core.Empty -> Core.Empty
+        | Core.Absurd t -> Core.Absurd (go extra_depth t)
       in
       go 0 tm
     in

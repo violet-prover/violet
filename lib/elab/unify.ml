@@ -106,6 +106,8 @@ module PartialRenaming = struct
     | VRecordProj (v, f, sp) ->
       rename_sp m pr (RecordProj { record = rename m pr v; field = f }) sp
     | VIdAbsurd v -> IdAbsurd (rename m pr v)
+    | VEmpty -> Empty
+    | VAbsurd (s, sp) -> rename_sp m pr (Absurd (rename m pr s)) sp
 
   and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
     match sp with
@@ -217,6 +219,10 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     unify ~loc cv v1 v2;
     unify_spine ~loc cv sp1 sp2
   | VIdAbsurd v1, VIdAbsurd v2 -> unify ~loc cv v1 v2
+  | VEmpty, VEmpty -> ()
+  | VAbsurd (s1, sp1), VAbsurd (s2, sp2) ->
+    unify ~loc cv s1 s2;
+    unify_spine ~loc cv sp1 sp2
   | VLambda { name; bound = b1; _ }, VLambda { bound = b2; _ } ->
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
     unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)

@@ -9,7 +9,6 @@
 \import std/nat
 \import std/vec
 \import std/id
-\import std/empty
 
 \universe U
 

@@ -92,8 +92,6 @@ let handle_top_data (m : machine) loc data =
 
 let handle_top_data_have_type
       ~(check_type : loc:Asai.Range.t -> local_ctx -> Surface.pretype -> Core.term)
-      ~(check_term_against :
-         loc:Asai.Range.t -> local_ctx -> Surface.preterm -> Core.value -> Core.term)
       (m : machine)
       ~loc
       ~name
@@ -228,41 +226,6 @@ let handle_top_data_have_type
       ~name:qelim_name
       ~ty:elim_typ_tm
       ~reducer:elim_head;
-    if
-      false
-      && params = []
-      && deps = []
-      && Context.has "Id"
-      && Context.has "subst"
-      && Context.has "Empty"
-      && Context.has "Sigma"
-    then (
-      let publish_def nc_name nc_typ_tm nc_typ_val nc_body_tm nc_body_val =
-        publish_to_context ~exported [ nc_name ] (nc_typ_val, `Defn);
-        publish_to_context ~exported [ name; nc_name ] (nc_typ_val, `Defn);
-        let nc_flat = name ^ "/" ^ nc_name in
-        publish_to_env ~exported [ nc_flat ] (nc_body_val, `Defn);
-        Env.register_definition nc_flat nc_body_val;
-        let qnc_name = m.module_name ^ "." ^ name ^ "." ^ nc_name in
-        Kernel_accept.accept_let
-          m.kernel_module
-          ~loc
-          ~name:qnc_name
-          ~ty:nc_typ_tm
-          ~body:nc_body_tm
-      in
-      let nct_typ, nct_body = Eliminator_synth.no_confusion_type_def ~name ~ctors in
-      let nct_typ_tm = check_type ~loc m.ctx nct_typ in
-      let nct_typ_val = Evaluation.eval m.ctx.env nct_typ_tm in
-      let nct_body_tm = check_term_against ~loc m.ctx nct_body nct_typ_val in
-      let nct_body_val = Evaluation.eval m.ctx.env nct_body_tm in
-      publish_def "no-confusion-type" nct_typ_tm nct_typ_val nct_body_tm nct_body_val;
-      let nc_typ, nc_body = Eliminator_synth.no_confusion_def ~name ~ctors in
-      let nc_typ_tm = check_type ~loc m.ctx nc_typ in
-      let nc_typ_val = Evaluation.eval m.ctx.env nc_typ_tm in
-      let nc_body_tm = check_term_against ~loc m.ctx nc_body nc_typ_val in
-      let nc_body_val = Evaluation.eval m.ctx.env nc_body_tm in
-      publish_def "no-confusion" nc_typ_tm nc_typ_val nc_body_tm nc_body_val);
     m.result <- Some PUnit
   | other ->
     Reporter.fatalf Elab_error "KTopData_HaveType: bad result %s" (produced_tag other)

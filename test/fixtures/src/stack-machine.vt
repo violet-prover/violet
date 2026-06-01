@@ -1,5 +1,4 @@
 \import std/nat
-\import std/empty
 \import std/id
 
 \universe U V

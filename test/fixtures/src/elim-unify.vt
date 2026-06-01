@@ -1,6 +1,5 @@
 \import std/id
 \import std/nat
-\import std/empty
 
 \universe U
 

@@ -899,6 +899,7 @@ let lower_body
     | Surface.Max (a, b) -> Surface.Max (sub a, sub b)
     | (Surface.Universe | Surface.Hole | Surface.Goal _) as t -> t
     | Surface.IdAbsurd p -> Surface.IdAbsurd (sub p)
+    | Surface.Absurd p -> Surface.Absurd (sub p)
     | Surface.Op_soup _ ->
       Reporter.fatalf
         Elab_error
@@ -933,6 +934,7 @@ let lower_body
         walk b
       | Surface.Universe | Surface.Hole | Surface.Goal _ -> ()
       | Surface.IdAbsurd p -> walk p
+      | Surface.Absurd p -> walk p
       | Surface.Op_soup _ -> ()
       | Surface.RecordLit entries -> List.iter (fun (_, e) -> walk e) entries
       | Surface.RecordUpdate (base, entries) ->
@@ -1404,6 +1406,7 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
   | Surface.Max (a, b) -> Surface.Max (lower_preterm table a, lower_preterm table b)
   | Surface.Universe | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
   | Surface.IdAbsurd p -> Surface.IdAbsurd (lower_preterm table p)
+  | Surface.Absurd p -> Surface.Absurd (lower_preterm table p)
   | Surface.RecordLit entries ->
     Surface.RecordLit (List.map (fun (f, e) -> f, lower_preterm table e) entries)
   | Surface.RecordUpdate (base, entries) ->

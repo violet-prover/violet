@@ -95,6 +95,8 @@ let rec pp_value (cv : Context_view.t) (v : Core.value) : string =
   | Core.VRecordProj (v, f, sp) ->
     pp_neutral cv (Printf.sprintf "%s.%s" (pp_value cv v) f) sp
   | Core.VIdAbsurd v -> Printf.sprintf "id-absurd %s" (pp_value cv v)
+  | Core.VEmpty -> "Empty"
+  | Core.VAbsurd (s, sp) -> pp_neutral cv (Printf.sprintf "absurd %s" (pp_value cv s)) sp
 
 and pp_neutral (cv : Context_view.t) (head : string) (spine : Core.value bwd) : string =
   if Bwd.is_empty spine
@@ -183,6 +185,8 @@ let rec pp_term (cv : Context_view.t) (t : Core.term) : string =
     Printf.sprintf "%s{ %s }" name fs
   | Core.RecordProj { record; field } -> Printf.sprintf "%s.%s" (pp_term cv record) field
   | Core.IdAbsurd t -> Printf.sprintf "id-absurd %s" (pp_term cv t)
+  | Core.Empty -> "Empty"
+  | Core.Absurd t -> Printf.sprintf "absurd %s" (pp_term cv t)
 
 and pp_term_arg (cv : Context_view.t) (t : Core.term) : string =
   match t with

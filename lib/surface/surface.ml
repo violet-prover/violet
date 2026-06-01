@@ -117,6 +117,7 @@ type preterm =
      unreachable cases; no surface syntax. *)
   | IdAbsurd of preterm
   [@printer fun fmt p -> fprintf fmt "(\\absurd-id %s)" (show_preterm p)]
+  | Absurd of preterm [@printer fun fmt p -> fprintf fmt "(absurd %s)" (show_preterm p)]
   | Inline_elim of inline_elim_data
   [@printer fun fmt d -> fprintf fmt "(<= elim %s)" d.target]
 

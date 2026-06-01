@@ -52,6 +52,7 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
          items)
   | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
   | Surface.IdAbsurd _ -> t
+  | Surface.Absurd _ -> t
   | Surface.Inline_elim _ -> t
 ;;
 
@@ -675,6 +676,8 @@ let rewrite_recursive_calls ~loc ~func_name ~target_pos term =
       RecordIntro { r with fields = List.map (fun (f, e) -> f, rw e) r.fields }
     | RecordProj r -> RecordProj { r with record = rw r.record }
     | IdAbsurd t -> IdAbsurd (rw t)
+    | Empty -> Empty
+    | Absurd t -> Absurd (rw t)
     | LocalVar _ | Var _ | Universe _ | Meta _ | InsertedMeta _ -> t
   in
   rw term

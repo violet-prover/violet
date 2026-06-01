@@ -116,6 +116,7 @@ type goal =
   | KMax_HaveRight of t * Level.level
   | KEnsureUniverse of t
   | KIdAbsurd_HaveArg of t
+  | KAbsurd_HaveArg of t
   | GTopLet of
       { loc : t
       ; name : string
@@ -426,4 +427,6 @@ let rec shift_term ?(cutoff = 0) (n : int) (t : Core.term) : Core.term =
   | Core.RecordProj { record; field } ->
     Core.RecordProj { record = shift_term ~cutoff n record; field }
   | Core.IdAbsurd t -> Core.IdAbsurd (shift_term ~cutoff n t)
+  | Core.Empty -> Core.Empty
+  | Core.Absurd t -> Core.Absurd (shift_term ~cutoff n t)
 ;;

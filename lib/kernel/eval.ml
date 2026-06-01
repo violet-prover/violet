@@ -13,6 +13,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | IndType (h, sp) -> IndType (h, sp <: u)
     | Elim (h, sp) -> Elim (h, sp <: u)
     | VRecordProj (r, f, sp) -> VRecordProj (r, f, sp <: u)
+    | VAbsurd (s, sp) -> VAbsurd (s, sp <: u)
     | v -> raise (Error.Kernel_error (Error.BadApplication v))
 
   and vapp_spine (t : value) : value bwd -> value = function
@@ -131,6 +132,8 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
       let v = eval env record in
       vrecord_proj v field
     | IdAbsurd t -> VIdAbsurd (eval env t)
+    | Empty -> VEmpty
+    | Absurd t -> VAbsurd (eval env t, Emp)
 
   (* 把 v 套上 env 的 outermost n 個 local。env 從外往內，
      所以 outermost 是 env 從左數起的 n 個元素。 *)
@@ -190,6 +193,8 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | VRecordProj (v, f, sp) ->
       quote_spine lvl (RecordProj { record = quote lvl v; field = f }) sp
     | VIdAbsurd v -> IdAbsurd (quote lvl v)
+    | VEmpty -> Empty
+    | VAbsurd (s, sp) -> quote_spine lvl (Absurd (quote lvl s)) sp
 
   and quote_spine (lvl : int) (head : term) (sp : value bwd) : term =
     List.fold_left (fun acc v -> App (acc, quote lvl v)) head (Bwd.to_list sp)
@@ -317,6 +322,30 @@ let%expect_test "application of projected field reduces when record known" =
   in
   print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| universe 𝓤₀ |}]
+;;
+
+let%expect_test "Empty/Absurd eval-quote round-trip (incl. spine)" =
+  (* Empty evaluates to VEmpty. *)
+  let e = Test.eval Bwd.Emp Empty in
+  print_string
+    (match e with
+     | VEmpty -> "VEmpty"
+     | _ -> "other");
+  [%expect {| VEmpty |}];
+  (* Absurd Empty round-trips through eval/quote. *)
+  let a = Test.eval Bwd.Emp (Absurd Empty) in
+  print_string
+    (match Test.quote 0 a with
+     | Absurd Empty -> "ok"
+     | _ -> "bad");
+  [%expect {| ok |}];
+  (* An applied Absurd accumulates a spine and quotes back with the App. *)
+  let applied = Test.eval Bwd.Emp (App (Absurd Empty, Universe Level.LZero)) in
+  print_string
+    (match Test.quote 0 applied with
+     | App (Absurd Empty, Universe _) -> "spine-ok"
+     | _ -> "spine-bad");
+  [%expect {| spine-ok |}]
 ;;
 
 let%expect_test "eval RecordType with dependent fields uses rigid locals" =

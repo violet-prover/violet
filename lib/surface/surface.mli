@@ -28,6 +28,7 @@ type preterm =
   | RecordUpdate of preterm * (string * preterm) list
   | Proj of preterm * string
   | IdAbsurd of preterm
+  | Absurd of preterm
   | Inline_elim of inline_elim_data
 [@@deriving show]
 

@@ -59,6 +59,7 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
     | Surface.Max (a, b) -> go a || go b
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> false
     | Surface.IdAbsurd _ -> false
+    | Surface.Absurd _ -> false
     | Surface.Op_soup _ ->
       Reporter.fatalf
         Elab_error
@@ -112,6 +113,7 @@ let map_free_vars
     | Surface.Max (a, b) -> Surface.Max (go scope a, go scope b)
     | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd p -> Surface.IdAbsurd (go scope p)
+    | Surface.Absurd p -> Surface.Absurd (go scope p)
     | Surface.Op_soup _ ->
       Reporter.fatalf
         Elab_error

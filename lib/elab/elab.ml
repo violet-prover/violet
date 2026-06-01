@@ -329,6 +329,18 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | GInfer (loc, IdAbsurd p) ->
     push m (KIdAbsurd_HaveArg loc);
     push m (GInfer (loc, p))
+  | GInfer (loc, Absurd p) ->
+    push m (KAbsurd_HaveArg loc);
+    push m (GCheck (loc, p, Core.VEmpty))
+  | KAbsurd_HaveArg loc ->
+    (match take_result m with
+     | PTermType (p_tm, _) | PTerm p_tm ->
+       let ret_ty =
+         Meta.fresh_meta_value_with m.ctx.lvl ~origin:{ loc; display = "absurd" }
+       in
+       m.result <- Some (PTermType (Core.Absurd p_tm, ret_ty))
+     | other ->
+       Reporter.fatalf Elab_error "KAbsurd_HaveArg: bad result %s" (produced_tag other))
   | KIdAbsurd_HaveArg loc ->
     (match take_result m with
      | PTermType (p_tm, p_ty) ->
@@ -368,7 +380,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           in
           (match Evaluation.force_head lhs, Evaluation.force_head rhs with
            | Core.Label (c1, _), Core.Label (c2, _) when not (String.equal c1 c2) ->
-             let empty_ty = Core.IndType ("Empty", Bwd.Emp) in
+             let empty_ty = Core.VEmpty in
              m.result <- Some (PTermType (Core.IdAbsurd p_tm, empty_ty))
            | l, r ->
              Reporter.fatalf
@@ -490,7 +502,6 @@ let rec dispatch (m : machine) (g : goal) : unit =
     ->
     Elab_data.handle_top_data_have_type
       ~check_type
-      ~check_term_against
       m
       ~loc
       ~name
@@ -533,23 +544,6 @@ and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
 
 and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
   fst (infer_type ~loc ctx pretype)
-
-and check_term_against ~loc (ctx : local_ctx) (term : Surface.preterm) (ty : Core.value)
-  : Core.term
-  =
-  let m =
-    make_machine
-      ~module_name:"_internal"
-      ~kernel_module:(Violet_kernel.Module.create ())
-      ~goal_counter:(ref 0)
-      ~is_exported:(fun _ -> false)
-      ()
-  in
-  m.ctx <- ctx;
-  push m (GCheck (loc, term, ty));
-  match drive m with
-  | PTerm tm -> tm
-  | other -> Reporter.fatalf ~loc Elab_error "check_term_against: %s" (produced_tag other)
 
 and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Core.value =
   let m =

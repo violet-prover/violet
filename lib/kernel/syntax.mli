@@ -62,6 +62,8 @@ module Core : sig
         ; field : string
         }
     | IdAbsurd of term
+    | Empty
+    | Absurd of term
 
   and typ = term
 
@@ -105,6 +107,8 @@ module Core : sig
         }
     | VRecordProj of value * string * value Bwd.bwd
     | VIdAbsurd of value
+    | VEmpty
+    | VAbsurd of value * value Bwd.bwd
 
   and elim_head =
     { elim_name : string

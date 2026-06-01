@@ -183,6 +183,8 @@ let rec core_term_to_surface
     Surface.RecordLit (List.map (fun (f, e) -> f, rb e) fields)
   | Core.RecordProj { record; field } -> Surface.Proj (rb record, field)
   | Core.IdAbsurd t -> Surface.IdAbsurd (rb t)
+  | Core.Empty -> Surface.Var [ "Empty" ]
+  | Core.Absurd t -> Surface.Absurd (rb t)
 ;;
 
 let%expect_test "core_term_to_surface: Universe" =
