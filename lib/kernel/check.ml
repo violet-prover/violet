@@ -11,7 +11,7 @@ module Make (M : Views.META_VIEW) = struct
     | Core.LocalVar ix ->
       if ix < 0 || ix >= lvl then raise (Kernel_error (UnboundLocal ix))
     | Core.Var _ -> ()
-    | Core.App (a, b) ->
+    | Core.App (a, b, _) ->
       check_term lvl a;
       check_term lvl b
     | Core.Lambda { bound; _ } -> check_term (lvl + 1) bound

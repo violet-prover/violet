@@ -522,10 +522,14 @@ let handle_top_record_have_type
        Applied left-to-right: (((R P₁) P₂) ... Pₖ). *)
     let rec_applied_under (depth_extra : int) : Core.term =
       let base : Core.term = Core.Var name in
-      List.fold_left
-        (fun f i -> Core.App (f, Core.LocalVar (depth_extra + n_params - 1 - i)))
-        base
-        (List.init n_params (fun i -> i))
+      let applied, _ =
+        List.fold_left
+          (fun (f, i) (_, impl, _qty_tm) ->
+             Core.App (f, Core.LocalVar (depth_extra + n_params - 1 - i), impl), i + 1)
+          (base, 0)
+          param_binder_core_terms
+      in
+      applied
     in
     (* field_core_tys.(i) = Core.term for Tᵢ, valid under
        (params + f₁…fᵢ₋₁) binders *)
@@ -626,7 +630,8 @@ let handle_top_record_have_type
             Core.LocalVar (ix - n_before + 1)
         | Core.Universe _ -> t
         | Core.Var _ -> t
-        | Core.App (a, b) -> Core.App (go extra_depth a, go extra_depth b)
+        | Core.App (a, b, implicit) ->
+          Core.App (go extra_depth a, go extra_depth b, implicit)
         | Core.Lambda { name; bound; implicit } ->
           Core.Lambda { name; bound = go (extra_depth + 1) bound; implicit }
         | Core.TypedLambda ({ name; bound = dom; implicit }, body) ->
@@ -649,7 +654,7 @@ let handle_top_record_have_type
             then acc
             else
               build
-                (Core.App (acc, go extra_depth (Core.LocalVar (depth - 1 - lv))))
+                (Core.App (acc, go extra_depth (Core.LocalVar (depth - 1 - lv)), false))
                 (lv + 1)
           in
           build (Core.Meta mv) 0
@@ -780,18 +785,18 @@ let handle_top_record_have_type
           List.fold_left
             (fun f i ->
                (* Pᵢ (0-indexed from P₁) = ix(n_params+n_fields+1-i) under n_params+2+n_fields binders *)
-               Core.App (f, Core.LocalVar (n_params + n_fields + 1 - i)))
+               Core.App (f, Core.LocalVar (n_params + n_fields + 1 - i), true))
             (Core.Var mk_name)
             (List.init n_params (fun i -> i))
         in
         List.fold_left
           (fun f i ->
              (* fᵢ (0-indexed, f₁ first) = ix(n_fields-1-i) under k+2+n binders *)
-             Core.App (f, Core.LocalVar (n_fields - 1 - i)))
+             Core.App (f, Core.LocalVar (n_fields - 1 - i), false))
           with_params
           (List.init n_fields (fun i -> i))
       in
-      let m_applied = Core.App (Core.LocalVar n_fields, mk_full_applied) in
+      let m_applied = Core.App (Core.LocalVar n_fields, mk_full_applied, false) in
       (* Wrap in field Pi-binders (fold_right: last field first) *)
       fst
       @@ List.fold_right
@@ -806,7 +811,7 @@ let handle_top_record_have_type
     in
     let elim_ty : Core.term =
       (* Under params + r + M + case binders: M=ix 1, r=ix 2. *)
-      let m_r = Core.App (Core.LocalVar 1, Core.LocalVar 2) in
+      let m_r = Core.App (Core.LocalVar 1, Core.LocalVar 2, false) in
       let case_pi =
         Core.Pi ({ name = Named "case"; bound = case_ty_tm; implicit = false }, m_r)
       in
@@ -827,7 +832,10 @@ let handle_top_record_have_type
           field_names
       in
       let inner =
-        List.fold_left (fun f arg -> Core.App (f, arg)) (Core.LocalVar 0) projections
+        List.fold_left
+          (fun f arg -> Core.App (f, arg, false))
+          (Core.LocalVar 0)
+          projections
       in
       let with_case =
         Core.Lambda { name = Named "case"; bound = inner; implicit = false }

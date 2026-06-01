@@ -25,7 +25,7 @@ module Core : sig
     | Universe of Level.level
     | LocalVar of int
     | Var of string
-    | App of term * term
+    | App of term * term * bool
     | Lambda of term binder
     | TypedLambda of typ binder * term
     | Pi of typ binder * typ
@@ -68,12 +68,12 @@ module Core : sig
   and typ = term
 
   type value =
-    | Flex of metavar * value Bwd.bwd
-    | RigidLocal of int * value Bwd.bwd
-    | Var of string * value Bwd.bwd
-    | IndType of string * value Bwd.bwd
-    | Label of string * value Bwd.bwd
-    | Elim of elim_head * value Bwd.bwd
+    | Flex of metavar * spine
+    | RigidLocal of int * spine
+    | Var of string * spine
+    | IndType of string * spine
+    | Label of string * spine
+    | Elim of elim_head * spine
     | VLambda of (value -> value) binder
     | VPi of value_ty binder * (value -> value)
     | Universe of Level.level
@@ -105,18 +105,28 @@ module Core : sig
         { name : string
         ; fields : (string * value) list
         }
-    | VRecordProj of value * string * value Bwd.bwd
+    | VRecordProj of value * string * spine
     | VIdAbsurd of value
     | VEmpty
-    | VAbsurd of value * value Bwd.bwd
+    | VAbsurd of value * spine
 
   and elim_head =
     { elim_name : string
-    ; reducer : value Bwd.bwd -> value option
+    ; reducer : spine -> value option
     }
 
   and value_ty = value
 
+  and arg =
+    { tm : value
+    ; implicit : bool
+    }
+
+  and spine = arg Bwd.bwd
+
   val rigid_local : int -> value
   val lvl_to_ix : env_size:int -> int -> int
+  val explicit_arg : value -> arg
+  val implicit_arg : value -> arg
+  val spine_values : spine -> value Bwd.bwd
 end

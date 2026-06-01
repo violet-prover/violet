@@ -106,7 +106,7 @@ type goal =
   | GInferType of t * Surface.pretype
   | KCheckBy_Infer of t * Core.value_ty
   | KApp_HaveFn of t * bool * Surface.preterm
-  | KApp_HaveArg of t * Core.term * (Core.value -> Core.value)
+  | KApp_HaveArg of t * Core.term * (Core.value -> Core.value) * bool
   | KPi_HaveDom of t * Syntax.binder_name * bool * Surface.pretype
   | KPi_HaveCod of t * Syntax.binder_name * bool * Core.term * Level.level
   | KLam_Body of t * Syntax.binder_name * bool
@@ -264,11 +264,19 @@ type goal =
       * Core.typ Syntax.binder list
       * Core.value bwd
 
+type deferred_goal =
+  { dg_loc : Asai.Range.t
+  ; dg_name : string
+  ; dg_ctx : local_ctx
+  ; dg_target : Core.value
+  }
+
 type machine =
   { mutable goals : goal list
   ; mutable result : produced option
   ; mutable ctx : local_ctx
   ; mutable saved_ctx : local_ctx list
+  ; mutable deferred_goal_reports : deferred_goal list
   ; module_name : string
   ; kernel_module : Violet_kernel.Module.t
   ; goal_counter : int ref
@@ -288,6 +296,7 @@ let make_machine
   ; result = None
   ; ctx = empty_ctx
   ; saved_ctx = []
+  ; deferred_goal_reports = []
   ; module_name
   ; kernel_module
   ; goal_counter
@@ -332,16 +341,23 @@ let emit_goal_report
       ~(target : Core.value)
   : unit
   =
+  m.deferred_goal_reports
+  <- { dg_loc = loc; dg_name = name; dg_ctx = m.ctx; dg_target = target }
+     :: m.deferred_goal_reports
+;;
+
+let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
+  let { dg_loc = loc; dg_name = name; dg_ctx = ctx; dg_target = target } = g in
   let buf = Buffer.create 128 in
-  Buffer.add_string buf (Printf.sprintf "%s/?%s\n" m.module_name name);
+  Buffer.add_string buf (Printf.sprintf "%s/?%s\n" module_name name);
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
-  let names = List.map Syntax.Name.to_string (Bwd.to_list m.ctx.names) in
-  let types = Bwd.to_list m.ctx.types in
+  let names = List.map Syntax.Name.to_string (Bwd.to_list ctx.names) in
+  let types = Bwd.to_list ctx.types in
   let pp_ctx =
     List.map2
       (fun n ty ->
-         let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+         let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ty) in
          n, pp_ty)
       names
       types
@@ -349,13 +365,18 @@ let emit_goal_report
   List.iter
     (fun (n, pp_ty) -> Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n pp_ty))
     pp_ctx;
-  let pp_target =
-    Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target)
-  in
+  let pp_target = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target) in
   Observer.emit (Goal { path = [ name ]; loc; ty = target; ctx = pp_ctx; pp_target });
   Buffer.add_string buf "  --- target ---\n";
   Buffer.add_string buf (Printf.sprintf "  %s" pp_target);
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
+;;
+
+let flush_goal_reports (m : machine) : unit =
+  List.iter
+    (render_goal_report ~module_name:m.module_name)
+    (List.rev m.deferred_goal_reports);
+  m.deferred_goal_reports <- []
 ;;
 
 let name_of_top : Surface.top -> string = function
@@ -392,7 +413,8 @@ let rec shift_term ?(cutoff = 0) (n : int) (t : Core.term) : Core.term =
   match t with
   | Core.LocalVar ix -> if ix >= cutoff then Core.LocalVar (ix + n) else t
   | Core.Universe _ | Core.Var _ | Core.Meta _ | Core.InsertedMeta _ -> t
-  | Core.App (a, b) -> Core.App (shift_term ~cutoff n a, shift_term ~cutoff n b)
+  | Core.App (a, b, implicit) ->
+    Core.App (shift_term ~cutoff n a, shift_term ~cutoff n b, implicit)
   | Core.Lambda { name; bound; implicit } ->
     Core.Lambda { name; bound = shift_term ~cutoff:(cutoff + 1) n bound; implicit }
   | Core.TypedLambda ({ name; bound = dom; implicit }, body) ->

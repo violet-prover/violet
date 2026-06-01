@@ -93,7 +93,7 @@ let rec core_term_to_surface
      | None -> Surface.Var [ n ])
   | Core.App _ ->
     let rec collect_spine acc = function
-      | Core.App (f, a) -> collect_spine (a :: acc) f
+      | Core.App (f, a, _) -> collect_spine (a :: acc) f
       | head -> head, acc
     in
     let head, spine = collect_spine [] t in

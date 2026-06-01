@@ -98,12 +98,13 @@ let rec pp_value (cv : Context_view.t) (v : Core.value) : string =
   | Core.VEmpty -> "Empty"
   | Core.VAbsurd (s, sp) -> pp_neutral cv (Printf.sprintf "absurd %s" (pp_value cv s)) sp
 
-and pp_neutral (cv : Context_view.t) (head : string) (spine : Core.value bwd) : string =
-  if Bwd.is_empty spine
-  then head
-  else (
-    let args = List.map (pp_arg cv) (Bwd.to_list spine) in
-    head ^ " " ^ String.concat " " args)
+and pp_neutral (cv : Context_view.t) (head : string) (spine : Core.spine) : string =
+  (* implicit arguments 隱藏的目的是讓 goal target 可閱讀 *)
+  let explicit = List.filter (fun (a : Core.arg) -> not a.implicit) (Bwd.to_list spine) in
+  match explicit with
+  | [] -> head
+  | args ->
+    head ^ " " ^ String.concat " " (List.map (fun (a : Core.arg) -> pp_arg cv a.tm) args)
 
 and pp_arg (cv : Context_view.t) (v : Core.value) : string =
   match v with
@@ -125,7 +126,21 @@ let rec pp_term (cv : Context_view.t) (t : Core.term) : string =
      | Some n -> n
      | None -> Printf.sprintf "$%d" ix)
   | Core.Var n -> n
-  | Core.App (a, b) -> pp_term cv a ^ " " ^ pp_term_arg cv b
+  | Core.App _ ->
+    let rec collect t acc =
+      match t with
+      | Core.App (f, a, implicit) -> collect f ((a, implicit) :: acc)
+      | _ -> t, acc
+    in
+    let head, args = collect t [] in
+    (* implicit arguments 隱藏的目的是讓 goal target 可閱讀 *)
+    let explicit = List.filter (fun (_, implicit) -> not implicit) args in
+    (match explicit with
+     | [] -> pp_term cv head
+     | _ ->
+       pp_term cv head
+       ^ " "
+       ^ String.concat " " (List.map (fun (a, _) -> pp_term_arg cv a) explicit))
   | Core.Lambda { name; bound; implicit } ->
     let ns = Name.to_string name in
     let cv' = Context_view.extend cv ns in

@@ -38,7 +38,7 @@ module Core = struct
     | LocalVar of int
     (* global name: top-level let / data / constructor *)
     | Var of string
-    | App of term * term
+    | App of term * term * (* implicit 的指標，這個完全不影響 kernel 計算 *) bool
     | Lambda of term binder
     | TypedLambda of typ binder * term
     | Pi of typ binder * typ
@@ -94,20 +94,20 @@ module Core = struct
   and typ = term
 
   type value =
-    | Flex of metavar * value bwd
+    | Flex of metavar * spine
     (* local-bound free variable: de Bruijn LEVEL (counted from the outside in)。
        Lambda/Pi 開新 binder 時直接拿當下的 lvl 來生這個 head。 *)
-    | RigidLocal of int * value bwd
+    | RigidLocal of int * spine
     (* opaque global head：top-level let 還沒展開時的 representation。
        Unfold 由 Unification 視需要呼叫 Env.unfold_def 觸發。 *)
-    | Var of string * value bwd
+    | Var of string * spine
       (* indtype 是 inductive type 在 environment 裡面的表示方式，跟 rigid 要分開 *)
-    | IndType of string * value bwd (* label 是 constructor 的表示方式，跟 rigid 要分開 *)
-    | Label of string * value bwd
+    | IndType of string * spine (* label 是 constructor 的表示方式，跟 rigid 要分開 *)
+    | Label of string * spine
       (* Elim 是 inductive type 的 eliminator；head.reducer 帶 ι-rule。
          Evaluation.force_head 呼叫 reducer 嘗試 ι-reduce，否則 Elim 維持為
          neutral head with spine。 *)
-    | Elim of elim_head * value bwd
+    | Elim of elim_head * spine
     | VLambda of (value -> value) binder
     | VPi of value_ty binder * (value -> value)
     | Universe of Level.level
@@ -153,22 +153,39 @@ module Core = struct
        function type and the projection is blocked on a neutral record, e.g.
        `r.f x` for a free variable `r` — there is no other place to hang the
        arguments since spines otherwise live on the leaf neutral heads. *)
-    | VRecordProj of value * string * value bwd
+    | VRecordProj of value * string * spine
     (* Stuck-neutral value for [Core.IdAbsurd]: the underlying Id is
        uninhabited at type-check time, so this value never reduces. *)
     | VIdAbsurd of value
     | VEmpty
     (* Stuck-neutral ex-falso with its spine: when the inhabited type is a
        function, the value may be applied, so arguments accumulate here. *)
-    | VAbsurd of value * value bwd
+    | VAbsurd of value * spine
 
   and elim_head =
     { elim_name : string
-    ; reducer : value bwd -> value option
+    ; reducer : spine -> value option
     }
 
   and value_ty = value
 
+  (* One applied argument on a neutral spine: the argument value together with
+     whether it was supplied implicitly.  [implicit] is display-only metadata
+     (see [App]); spine equality and reduction look only at [tm]. *)
+  and arg =
+    { tm : value
+    ; implicit : bool
+    }
+
+  and spine = arg bwd
+
   let rigid_local (lvl : int) : value = RigidLocal (lvl, Bwd.Emp)
   let lvl_to_ix ~(env_size : int) (lvl : int) : int = env_size - lvl - 1
+
+  (* Build an explicit / implicit spine argument. *)
+  let explicit_arg (v : value) : arg = { tm = v; implicit = false }
+  let implicit_arg (v : value) : arg = { tm = v; implicit = true }
+
+  (* Drop the implicit flags, recovering the bare argument values. *)
+  let spine_values (sp : spine) : value Bwd.t = Bwd.map (fun a -> a.tm) sp
 end

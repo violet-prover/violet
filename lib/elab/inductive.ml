@@ -645,7 +645,7 @@ let split_target_params_indices
   =
   match Evaluation.force_head target_type_value with
   | Core.IndType (_, sp) ->
-    let xs = Bwd.to_list sp in
+    let xs = Bwd.to_list (Core.spine_values sp) in
     List.filteri (fun i _ -> i < n_total_params) xs, List.drop n_total_params xs
   | other ->
     Reporter.fatalf
@@ -711,7 +711,7 @@ let ctor_spine_and_flex
   let indices =
     match Evaluation.force_head after_fields with
     | Core.IndType (_, sp) ->
-      let xs = Bwd.to_list sp in
+      let xs = Bwd.to_list (Core.spine_values sp) in
       List.drop n_total_params xs
     | other ->
       Reporter.fatalf
@@ -1570,7 +1570,7 @@ let build_inline_elim_dispatch
   let target_pos = position_of_target ~loc ~target_name ~head_view in
   let ind_head, target_full_spine =
     match Evaluation.force_head target_type_value with
-    | Core.IndType (n, sp) -> n, Bwd.to_list sp
+    | Core.IndType (n, sp) -> n, Bwd.to_list (Core.spine_values sp)
     | other ->
       Reporter.fatalf
         ~loc
@@ -2114,7 +2114,7 @@ let build_inline_elim_dispatch
   in
   let target_full_spine_raw =
     match Evaluation.force_head target_type_raw with
-    | Core.IndType (_, sp) -> Bwd.to_list sp
+    | Core.IndType (_, sp) -> Bwd.to_list (Core.spine_values sp)
     | _ -> target_full_spine
   in
   let target_full_spine_surface = List.map readback_v target_full_spine_raw in

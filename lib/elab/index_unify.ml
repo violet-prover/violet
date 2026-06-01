@@ -51,12 +51,12 @@ let rec resolve (subst : subst) (v : Core.value) : Core.value =
 let occurs (subst : subst) (lvl : int) (v : Core.value) : bool =
   let rec go v =
     match resolve subst v with
-    | Core.RigidLocal (l, sp) -> l = lvl || Bwd.exists go sp
-    | Core.Label (_, sp) -> Bwd.exists go sp
-    | Core.IndType (_, sp) -> Bwd.exists go sp
-    | Core.Var (_, sp) -> Bwd.exists go sp
-    | Core.Elim (_, sp) -> Bwd.exists go sp
-    | Core.Flex (_, sp) -> Bwd.exists go sp
+    | Core.RigidLocal (l, sp) -> l = lvl || Bwd.exists go (Core.spine_values sp)
+    | Core.Label (_, sp) -> Bwd.exists go (Core.spine_values sp)
+    | Core.IndType (_, sp) -> Bwd.exists go (Core.spine_values sp)
+    | Core.Var (_, sp) -> Bwd.exists go (Core.spine_values sp)
+    | Core.Elim (_, sp) -> Bwd.exists go (Core.spine_values sp)
+    | Core.Flex (_, sp) -> Bwd.exists go (Core.spine_values sp)
     | Core.Universe _ -> false
     | _ -> true
   in
@@ -94,8 +94,8 @@ let rec unify_one
       ~flex
       ~subst
       position
-      (Bwd.to_list sp1)
-      (Bwd.to_list sp2)
+      (Bwd.to_list (Core.spine_values sp1))
+      (Bwd.to_list (Core.spine_values sp2))
       ~outer_l:l_orig
       ~outer_r:r_orig
   (* Distinct ctor heads: orthogonal, case is unreachable. *)
@@ -106,8 +106,8 @@ let rec unify_one
       ~flex
       ~subst
       position
-      (Bwd.to_list sp1)
-      (Bwd.to_list sp2)
+      (Bwd.to_list (Core.spine_values sp1))
+      (Bwd.to_list (Core.spine_values sp2))
       ~outer_l:l_orig
       ~outer_r:r_orig
   | Core.Universe l1, Core.Universe l2 when Level.equal l1 l2 -> Success subst
@@ -212,8 +212,8 @@ let%expect_test "unify: flex var binds to rigid local" =
 ;;
 
 let%expect_test "unify: same ctor head with single arg — recurses" =
-  let a = Core.Label ("suc", Emp <: Core.RigidLocal (1, Emp)) in
-  let b = Core.Label ("suc", Emp <: Core.RigidLocal (1, Emp)) in
+  let a = Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (1, Emp))) in
+  let b = Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (1, Emp))) in
   let o = unify ~flex:[] ~lhs:[ a ] ~rhs:[ b ] in
   (match o with
    | Success s -> Printf.printf "Success len=%d" (List.length s)
@@ -224,7 +224,7 @@ let%expect_test "unify: same ctor head with single arg — recurses" =
 
 let%expect_test "unify: different ctor heads — Conflict" =
   let a = Core.Label ("zero", Emp) in
-  let b = Core.Label ("suc", Emp <: Core.RigidLocal (1, Emp)) in
+  let b = Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (1, Emp))) in
   let o = unify ~flex:[] ~lhs:[ a ] ~rhs:[ b ] in
   (match o with
    | Success _ -> print_string "Success"
@@ -235,8 +235,10 @@ let%expect_test "unify: different ctor heads — Conflict" =
 
 let%expect_test "unify: flex inside ctor — recurses and binds" =
   let flex_lvl = 9 in
-  let lhs = Core.Label ("suc", Emp <: Core.RigidLocal (flex_lvl, Emp)) in
-  let rhs = Core.Label ("suc", Emp <: Core.RigidLocal (3, Emp)) in
+  let lhs =
+    Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (flex_lvl, Emp)))
+  in
+  let rhs = Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (3, Emp))) in
   let o = unify ~flex:[ flex_lvl ] ~lhs:[ lhs ] ~rhs:[ rhs ] in
   (match o with
    | Success s ->
@@ -256,7 +258,9 @@ let%expect_test "unify: Conflict precedence over Stuck across positions" =
      Walk should report Conflict at position 1. *)
   let lhs = [ Core.RigidLocal (1, Emp); Core.Label ("zero", Emp) ] in
   let rhs =
-    [ Core.RigidLocal (2, Emp); Core.Label ("suc", Emp <: Core.RigidLocal (5, Emp)) ]
+    [ Core.RigidLocal (2, Emp)
+    ; Core.Label ("suc", Emp <: Core.explicit_arg (Core.RigidLocal (5, Emp)))
+    ]
   in
   let o = unify ~flex:[] ~lhs ~rhs in
   (match o with
@@ -283,8 +287,8 @@ let%expect_test "unify: composed subst — m := n binds once, propagates" =
   let flex_lvl = 9 in
   let m = Core.RigidLocal (flex_lvl, Emp) in
   let n = Core.RigidLocal (3, Emp) in
-  let lhs = [ m; Core.Label ("suc", Emp <: m) ] in
-  let rhs = [ n; Core.Label ("suc", Emp <: n) ] in
+  let lhs = [ m; Core.Label ("suc", Emp <: Core.explicit_arg m) ] in
+  let rhs = [ n; Core.Label ("suc", Emp <: Core.explicit_arg n) ] in
   let o = unify ~flex:[ flex_lvl ] ~lhs ~rhs in
   (match o with
    | Success s ->
@@ -301,7 +305,7 @@ let%expect_test "unify: composed subst — m := n binds once, propagates" =
 let%expect_test "unify: occurs check — m := suc m fails Stuck" =
   let flex_lvl = 11 in
   let m = Core.RigidLocal (flex_lvl, Emp) in
-  let suc_m = Core.Label ("suc", Emp <: m) in
+  let suc_m = Core.Label ("suc", Emp <: Core.explicit_arg m) in
   let o = unify ~flex:[ flex_lvl ] ~lhs:[ m ] ~rhs:[ suc_m ] in
   (match o with
    | Success _ -> print_string "Success"

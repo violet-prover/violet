@@ -3,22 +3,23 @@ open Bwd
 open Bwd.Infix
 
 module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
-  let rec vapp (t : value) (u : value) : value =
+  let rec vapp ?(implicit = false) (t : value) (u : value) : value =
+    let arg = { tm = u; implicit } in
     match t with
     | VLambda { bound = f; _ } -> f u
-    | Flex (m, sp) -> Flex (m, sp <: u)
-    | RigidLocal (l, sp) -> RigidLocal (l, sp <: u)
-    | Var (h, sp) -> Var (h, sp <: u)
-    | Label (h, sp) -> Label (h, sp <: u)
-    | IndType (h, sp) -> IndType (h, sp <: u)
-    | Elim (h, sp) -> Elim (h, sp <: u)
-    | VRecordProj (r, f, sp) -> VRecordProj (r, f, sp <: u)
-    | VAbsurd (s, sp) -> VAbsurd (s, sp <: u)
+    | Flex (m, sp) -> Flex (m, sp <: arg)
+    | RigidLocal (l, sp) -> RigidLocal (l, sp <: arg)
+    | Var (h, sp) -> Var (h, sp <: arg)
+    | Label (h, sp) -> Label (h, sp <: arg)
+    | IndType (h, sp) -> IndType (h, sp <: arg)
+    | Elim (h, sp) -> Elim (h, sp <: arg)
+    | VRecordProj (r, f, sp) -> VRecordProj (r, f, sp <: arg)
+    | VAbsurd (s, sp) -> VAbsurd (s, sp <: arg)
     | v -> raise (Error.Kernel_error (Error.BadApplication v))
 
-  and vapp_spine (t : value) : value bwd -> value = function
+  and vapp_spine (t : value) : spine -> value = function
     | Emp -> t
-    | Snoc (sp, u) -> vapp (vapp_spine t sp) u
+    | Snoc (sp, { tm = u; implicit }) -> vapp ~implicit (vapp_spine t sp) u
 
   and vrecord_proj (v : value) (f : string) : value =
     match v with
@@ -83,7 +84,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
       (match E.lookup x with
        | (Label _ | IndType _ | Elim _) as v -> v
        | _ -> Var (x, Emp))
-    | App (t, u) -> vapp (eval env t) (eval env u)
+    | App (t, u, implicit) -> vapp ~implicit (eval env t) (eval env u)
     | Pi ({ name; bound; implicit }, b) ->
       VPi ({ name; bound = eval env bound; implicit }, fun v -> eval (env <: v) b)
     | Lambda { name; bound; implicit } ->
@@ -196,8 +197,11 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | VEmpty -> Empty
     | VAbsurd (s, sp) -> quote_spine lvl (Absurd (quote lvl s)) sp
 
-  and quote_spine (lvl : int) (head : term) (sp : value bwd) : term =
-    List.fold_left (fun acc v -> App (acc, quote lvl v)) head (Bwd.to_list sp)
+  and quote_spine (lvl : int) (head : term) (sp : spine) : term =
+    List.fold_left
+      (fun acc { tm; implicit } -> App (acc, quote lvl tm, implicit))
+      head
+      (Bwd.to_list sp)
   ;;
 end
 
@@ -296,7 +300,7 @@ let%expect_test "application of projected field on neutral stays neutral" =
   (* `r.f X` where `r` is a free variable: the projection is stuck, so applying
      it must stay a neutral value rather than raising BadApplication. *)
   let tm : term =
-    App (RecordProj { record = Var "r"; field = "f" }, Universe Level.LZero)
+    App (RecordProj { record = Var "r"; field = "f" }, Universe Level.LZero, false)
   in
   print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| r.f universe 𝓤₀ |}]
@@ -318,7 +322,8 @@ let%expect_test "application of projected field reduces when record known" =
                 }
           ; field = "f"
           }
-      , Universe Level.LZero )
+      , Universe Level.LZero
+      , false )
   in
   print_string @@ show_value (Test.eval Bwd.Emp tm);
   [%expect {| universe 𝓤₀ |}]
@@ -340,10 +345,10 @@ let%expect_test "Empty/Absurd eval-quote round-trip (incl. spine)" =
      | _ -> "bad");
   [%expect {| ok |}];
   (* An applied Absurd accumulates a spine and quotes back with the App. *)
-  let applied = Test.eval Bwd.Emp (App (Absurd Empty, Universe Level.LZero)) in
+  let applied = Test.eval Bwd.Emp (App (Absurd Empty, Universe Level.LZero, false)) in
   print_string
     (match Test.quote 0 applied with
-     | App (Absurd Empty, Universe _) -> "spine-ok"
+     | App (Absurd Empty, Universe _, _) -> "spine-ok"
      | _ -> "spine-bad");
   [%expect {| spine-ok |}]
 ;;
@@ -361,7 +366,10 @@ let%expect_test "eval RecordType with dependent fields uses rigid locals" =
       ; params = [ Var "A"; Var "B" ]
       ; fields =
           [ { name = Named "fst"; bound = Var "A"; implicit = false }
-          ; { name = Named "snd"; bound = App (Var "B", LocalVar 0); implicit = false }
+          ; { name = Named "snd"
+            ; bound = App (Var "B", LocalVar 0, false)
+            ; implicit = false
+            }
           ]
       }
   in

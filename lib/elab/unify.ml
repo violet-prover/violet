@@ -26,14 +26,14 @@ module PartialRenaming = struct
     ; ren : (int, int) Hashtbl.t
     }
 
-  let invert (cv : Context_view.t) (sp : value bwd) : t =
+  let invert (cv : Context_view.t) (sp : spine) : t =
     let ren = Hashtbl.create ~random:true 16 in
     (* Iterate the spine LEFT-TO-RIGHT (outermost arg first) so the dom-side
        position we assign matches argument-order in the solution.  Bwd.iter
        is right-to-left, so go via to_list / List.iteri here. *)
     let sp_list = Bwd.to_list sp in
     List.iteri
-      (fun pos v ->
+      (fun pos ({ tm = v; _ } : arg) ->
          match force v with
          | RigidLocal (l, Emp) ->
            if Hashtbl.mem ren l
@@ -137,12 +137,13 @@ module PartialRenaming = struct
     | VEmpty -> Empty
     | VAbsurd (s, sp) -> rename_sp m cv pr (Absurd (rename m cv pr s)) sp
 
-  and rename_sp (m : metavar) (cv : Context_view.t) (pr : t) (t : term) (sp : value bwd)
+  and rename_sp (m : metavar) (cv : Context_view.t) (pr : t) (t : term) (sp : spine)
     : term
     =
     match sp with
     | Emp -> t
-    | Snoc (sp, u) -> App (rename_sp m cv pr t sp, rename m cv pr u)
+    | Snoc (sp, { tm = u; implicit }) ->
+      App (rename_sp m cv pr t sp, rename m cv pr u, implicit)
 
   (* Rename an occurrence `m' sp` appearing in the solution of `m`.
 
@@ -156,21 +157,16 @@ module PartialRenaming = struct
      then refer to `m''` here, applied to just the surviving (renamed) args.
      `m''` may stay unsolved; if a pruned position was actually needed, the
      kernel's re-check of the final solution rejects it (no unsoundness). *)
-  and rename_flex
-        (m : metavar)
-        (cv : Context_view.t)
-        (pr : t)
-        (m' : metavar)
-        (sp : value bwd)
+  and rename_flex (m : metavar) (cv : Context_view.t) (pr : t) (m' : metavar) (sp : spine)
     : term
     =
     let args = Bwd.to_list sp in
     let k = List.length args in
     let classified =
       List.map
-        (fun u ->
+        (fun ({ tm = u; implicit } : arg) ->
            match rename m cv pr u with
-           | t -> `Keep t
+           | t -> `Keep (t, implicit)
            | exception Escaping _ -> `Drop)
         args
     in
@@ -183,7 +179,7 @@ module PartialRenaming = struct
     then
       List.fold_left
         (fun acc -> function
-           | `Keep t -> App (acc, t)
+           | `Keep (t, implicit) -> App (acc, t, implicit)
            | `Drop -> assert false (* unreachable: all are Keep here *))
         (Meta m')
         classified
@@ -195,7 +191,7 @@ module PartialRenaming = struct
         List.fold_left
           (fun (acc, j) cl ->
              match cl with
-             | `Keep _ -> App (acc, LocalVar (k - 1 - j)), j + 1
+             | `Keep (_, implicit) -> App (acc, LocalVar (k - 1 - j), implicit), j + 1
              | `Drop -> acc, j + 1)
           (Meta m'', 0)
           classified
@@ -203,14 +199,14 @@ module PartialRenaming = struct
       Meta.insert_meta m' (eval Emp (lams k m'_body));
       List.fold_left
         (fun acc -> function
-           | `Keep t -> App (acc, t)
+           | `Keep (t, implicit) -> App (acc, t, implicit)
            | `Drop -> acc)
         (Meta m'')
         classified
     end
   ;;
 
-  let run (cv : Context_view.t) (m : metavar) (sp : value bwd) (rhs : value) : value =
+  let run (cv : Context_view.t) (m : metavar) (sp : spine) (rhs : value) : value =
     let pr = invert cv sp in
     let rhs_tm =
       try rename m cv pr rhs with
@@ -230,18 +226,14 @@ module PartialRenaming = struct
   ;;
 end
 
-let solve
-      (cv : Context_view.t)
-      (m : Core.metavar)
-      (sp : Core.value bwd)
-      (rhs : Core.value)
+let solve (cv : Context_view.t) (m : Core.metavar) (sp : Core.spine) (rhs : Core.value)
   : unit
   =
   let spine_str =
     String.concat " <: "
     @@ List.map
          (fun v -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v))
-         (Bwd.to_list sp)
+         (Bwd.to_list (Core.spine_values sp))
   in
   Reporter.tracef "spine: %s" spine_str
   @@ fun () ->
@@ -383,12 +375,10 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
       (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
       (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
 
-and unify_spine ~loc (cv : Context_view.t) (xs : Core.value bwd) (ys : Core.value bwd)
-  : unit
-  =
+and unify_spine ~loc (cv : Context_view.t) (xs : Core.spine) (ys : Core.spine) : unit =
   match xs, ys with
   | Emp, Emp -> ()
-  | Snoc (xs, x), Snoc (ys, y) ->
+  | Snoc (xs, { tm = x; _ }), Snoc (ys, { tm = y; _ }) ->
     unify_spine ~loc cv xs ys;
     unify ~loc cv x y
   | _, _ ->
@@ -396,14 +386,16 @@ and unify_spine ~loc (cv : Context_view.t) (xs : Core.value bwd) (ys : Core.valu
       String.concat " <: "
       @@ Bwd.to_list
       @@ Bwd.map
-           (fun x -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) x))
+           (fun (a : Core.arg) ->
+              Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
            xs
     in
     let right =
       String.concat " <: "
       @@ Bwd.to_list
       @@ Bwd.map
-           (fun y -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) y))
+           (fun (a : Core.arg) ->
+              Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
            ys
     in
     Reporter.fatalf
@@ -447,7 +439,7 @@ let%expect_test "lambda eta: (fun x => f x) unifies with f" =
     Core.VLambda
       { name = Named "x"
       ; implicit = false
-      ; bound = (fun x -> Core.RigidLocal (0, Snoc (Emp, x)))
+      ; bound = (fun x -> Core.RigidLocal (0, Snoc (Emp, Core.explicit_arg x)))
       }
   in
   let result =
@@ -486,9 +478,12 @@ let%expect_test "Pi codomain mismatch rejects" =
 let%expect_test "spine mismatch rejects cleanly" =
   let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
   let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
-  let v1 : Core.value = Core.RigidLocal (0, Snoc (Emp, Core.Universe Level.LZero)) in
+  let v1 : Core.value =
+    Core.RigidLocal (0, Snoc (Emp, Core.explicit_arg (Core.Universe Level.LZero)))
+  in
   let v2 : Core.value =
-    Core.RigidLocal (0, Snoc (Emp, Core.Universe (Level.lsuc Level.LZero)))
+    Core.RigidLocal
+      (0, Snoc (Emp, Core.explicit_arg (Core.Universe (Level.lsuc Level.LZero))))
   in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
@@ -504,7 +499,7 @@ let%expect_test "same rigid head with same spine unifies" =
   let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
   let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "f"), "a")) ~lvl:2 in
   let arg : Core.value = Core.RigidLocal (1, Emp) in
-  let v : Core.value = Core.RigidLocal (0, Snoc (Emp, arg)) in
+  let v : Core.value = Core.RigidLocal (0, Snoc (Emp, Core.explicit_arg arg)) in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
     @@ fun () ->
@@ -561,7 +556,7 @@ let%expect_test "meta solving: flex = rigid solves meta" =
   let cv = Context_view.make ~names:(Snoc (Emp, "x")) ~lvl:1 in
   let m = Core.MetaVar 99999 in
   let x : Core.value = Core.RigidLocal (0, Emp) in
-  let flex : Core.value = Core.Flex (m, Snoc (Emp, x)) in
+  let flex : Core.value = Core.Flex (m, Snoc (Emp, Core.explicit_arg x)) in
   let target : Core.value = Core.Universe Level.LZero in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
@@ -589,12 +584,18 @@ let%expect_test
      — but it only occurs as an argument to the other flex meta `?m2`, exactly
      the case pruning resolves (drop `b` from m2). *)
   let rhs : Core.value =
-    Core.Var ("Stack", Snoc (Emp, Core.Flex (m2, Snoc (Snoc (Emp, a), b))))
+    Core.Var
+      ( "Stack"
+      , Snoc
+          ( Emp
+          , Core.explicit_arg
+              (Core.Flex (m2, Snoc (Snoc (Emp, Core.explicit_arg a), Core.explicit_arg b)))
+          ) )
   in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
     @@ fun () ->
-    solve cv m1 (Snoc (Emp, a)) rhs;
+    solve cv m1 (Snoc (Emp, Core.explicit_arg a)) rhs;
     match Meta.lookup_meta m1 with
     | Some _ -> "solved"
     | None -> "unsolved"
@@ -620,7 +621,7 @@ let%expect_test
       ~fatal:(fun (d : Reporter.Message.t Asai.Diagnostic.t) ->
         Format.asprintf "%t" d.explanation.value)
     @@ fun () ->
-    solve cv m (Snoc (Emp, a)) b;
+    solve cv m (Snoc (Emp, Core.explicit_arg a)) b;
     "NO ERROR"
   in
   print_endline result;

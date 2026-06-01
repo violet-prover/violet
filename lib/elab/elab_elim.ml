@@ -625,11 +625,14 @@ let handle_elim_def_have_type
 let rewrite_recursive_calls ~loc ~func_name ~target_pos term =
   let open Violet_kernel.Syntax.Core in
   let rec core_spine_of acc = function
-    | App (f, a) -> core_spine_of (a :: acc) f
+    | App (f, a, impl) -> core_spine_of ((a, impl) :: acc) f
     | head -> head, acc
   in
-  let rebuild_app head args = List.fold_left (fun f a -> App (f, a)) head args in
+  let rebuild_app head args =
+    List.fold_left (fun f (a, impl) -> App (f, a, impl)) head args
+  in
   let rec rw t =
+    let rw_arg (a, impl) = rw a, impl in
     match t with
     | App _ ->
       let head, args = core_spine_of [] t in
@@ -644,19 +647,19 @@ let rewrite_recursive_calls ~loc ~func_name ~target_pos term =
              func_name
              target_pos
              (List.length args);
-         let target_arg = List.nth args target_pos in
+         let target_arg, _ = List.nth args target_pos in
          (match target_arg with
           | LocalVar k ->
             let ih = LocalVar (k - 1) in
             let trailing = List.filteri (fun i _ -> i > target_pos) args in
-            rebuild_app ih (List.map rw trailing)
+            rebuild_app ih (List.map rw_arg trailing)
           | _ ->
             Reporter.fatalf
               ~loc
               Elab_error
               "non-structural recursive call to `%s` in clause body"
               func_name)
-       | _ -> rebuild_app (rw head) (List.map rw args))
+       | _ -> rebuild_app (rw head) (List.map rw_arg args))
     | Lambda b -> Lambda { b with bound = rw b.bound }
     | TypedLambda (b, body) -> TypedLambda ({ b with bound = rw b.bound }, rw body)
     | Pi (b, body) -> Pi ({ b with bound = rw b.bound }, rw body)
@@ -741,15 +744,16 @@ let handle_check_inline_elim
              d.target)
     in
     let rec deep_resolve v =
+      let resolve_arg (a : Core.arg) = { a with Core.tm = deep_resolve a.tm } in
       let v = Evaluation.force_head v in
       match v with
       | Core.RigidLocal (lvl, sp) ->
-        let sp' = Bwd.map deep_resolve sp in
+        let sp' = Bwd.map resolve_arg sp in
         (match List.assoc_opt lvl d.outer_subst with
          | Some bound -> deep_resolve (Evaluation.vapp_spine bound sp')
          | None -> Core.RigidLocal (lvl, sp'))
-      | Core.Label (n, sp) -> Core.Label (n, Bwd.map deep_resolve sp)
-      | Core.IndType (n, sp) -> Core.IndType (n, Bwd.map deep_resolve sp)
+      | Core.Label (n, sp) -> Core.Label (n, Bwd.map resolve_arg sp)
+      | Core.IndType (n, sp) -> Core.IndType (n, Bwd.map resolve_arg sp)
       | other -> other
     in
     let target_type_value = deep_resolve raw_target_ty in

@@ -74,7 +74,7 @@ let fresh_meta_value (lvl : int) : value =
   let m = MetaVar !count in
   incr count;
   let rec build i acc =
-    if i = lvl then acc else build (i + 1) (acc <: RigidLocal (i, Emp))
+    if i = lvl then acc else build (i + 1) (acc <: explicit_arg (RigidLocal (i, Emp)))
   in
   Flex (m, build 0 Emp)
 ;;
@@ -84,7 +84,7 @@ let fresh_meta_value_with (lvl : int) ~(origin : origin) : value =
   register_origin m origin;
   incr count;
   let rec build i acc =
-    if i = lvl then acc else build (i + 1) (acc <: RigidLocal (i, Emp))
+    if i = lvl then acc else build (i + 1) (acc <: explicit_arg (RigidLocal (i, Emp)))
   in
   Flex (m, build 0 Emp)
 ;;

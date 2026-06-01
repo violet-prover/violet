@@ -294,13 +294,14 @@ let analyze_ctor ~ind_name ~params (ctor : Surface.pretype binder) : Context.cto
    case binders post-elaboration) and Var/Label/etc. with spines. Mirrors
    Evaluation.vapp but is kept local to avoid module cycles. *)
 let vapp (t : Core.value) (u : Core.value) : Core.value =
+  let arg = Core.explicit_arg u in
   match t with
   | Core.VLambda { bound = f; _ } -> f u
-  | Core.Var (h, sp) -> Core.Var (h, sp <: u)
-  | Core.Label (h, sp) -> Core.Label (h, sp <: u)
-  | Core.Flex (m, sp) -> Core.Flex (m, sp <: u)
-  | Core.RigidLocal (l, sp) -> Core.RigidLocal (l, sp <: u)
-  | Core.IndType (h, sp) -> Core.IndType (h, sp <: u)
+  | Core.Var (h, sp) -> Core.Var (h, sp <: arg)
+  | Core.Label (h, sp) -> Core.Label (h, sp <: arg)
+  | Core.Flex (m, sp) -> Core.Flex (m, sp <: arg)
+  | Core.RigidLocal (l, sp) -> Core.RigidLocal (l, sp <: arg)
+  | Core.IndType (h, sp) -> Core.IndType (h, sp <: arg)
   | v ->
     Reporter.fatalf
       Elab_error
@@ -316,7 +317,7 @@ let build_elim_reducer
       ~(params : Surface.pretype binder list)
       ~(deps : Surface.pretype binder list)
       (ctors : Surface.pretype binder list)
-  : Core.value bwd -> Core.value option
+  : Core.spine -> Core.value option
   =
   let n_params = List.length params in
   let n_deps = List.length deps in
@@ -337,8 +338,8 @@ let build_elim_reducer
   in
   (* `let rec` so the IH for a recursive ctor position can build another
      `Elim` whose head carries this very reducer. *)
-  let rec reducer (spine : Core.value bwd) : Core.value option =
-    let spine_list = Bwd.to_list spine in
+  let rec reducer (spine : Core.spine) : Core.value option =
+    let spine_list = Bwd.to_list (Core.spine_values spine) in
     (* Need at least the structural part filled to reduce.  Extra args past
        the structural slice are trailing applications to the eliminator's
        result and are applied after reduction. *)
@@ -365,7 +366,7 @@ let build_elim_reducer
                  i
                  (List.length ctor_infos)
            in
-           let label_list = Bwd.to_list label_sp in
+           let label_list = Bwd.to_list (Core.spine_values label_sp) in
            let own_args = List.drop n_data_params label_list in
            let env = List.combine info.binder_names own_args in
            let lookup_dep name =
@@ -408,7 +409,10 @@ let build_elim_reducer
                   | Context.Recursive dep_names ->
                     let ih_deps = List.map lookup_dep dep_names in
                     let ih_spine =
-                      Bwd.of_list (params_sp @ ih_deps @ [ arg; motive ] @ cases_sp)
+                      Bwd.of_list
+                        (List.map
+                           Core.explicit_arg
+                           (params_sp @ ih_deps @ [ arg; motive ] @ cases_sp))
                     in
                     [ arg; Core.Elim ({ elim_name; reducer }, ih_spine) ])
                (List.combine own_args info.binder_kinds)
@@ -439,7 +443,13 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
   let motive = Core.Universe Level.LZero in
   let cz = Core.Var ("cz", Emp) in
   let cs = Core.Var ("cs", Emp) in
-  let spine = Emp <: target <: motive <: cz <: cs in
+  let spine =
+    Emp
+    <: Core.explicit_arg target
+    <: Core.explicit_arg motive
+    <: Core.explicit_arg cz
+    <: Core.explicit_arg cs
+  in
   (print_string
    @@
    match reducer spine with
@@ -453,11 +463,17 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
     build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat/elim" ~params:[] ~deps:[] nat_ctors
   in
   let n = Core.Var ("n", Emp) in
-  let target = Core.Label ("suc", Emp <: n) in
+  let target = Core.Label ("suc", Emp <: Core.explicit_arg n) in
   let motive = Core.Var ("M", Emp) in
   let cz = Core.Var ("cz", Emp) in
   let cs = Core.Var ("cs", Emp) in
-  let spine = Emp <: target <: motive <: cz <: cs in
+  let spine =
+    Emp
+    <: Core.explicit_arg target
+    <: Core.explicit_arg motive
+    <: Core.explicit_arg cz
+    <: Core.explicit_arg cs
+  in
   (print_string
    @@
    match reducer spine with
@@ -510,12 +526,28 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
   let kV = Core.Var ("k", Emp) in
   let xV = Core.Var ("x", Emp) in
   let xsV = Core.Var ("xs", Emp) in
-  let target = Core.Label ("cons", Emp <: aV <: kV <: xV <: xsV) in
+  let target =
+    Core.Label
+      ( "cons"
+      , Emp
+        <: Core.explicit_arg aV
+        <: Core.explicit_arg kV
+        <: Core.explicit_arg xV
+        <: Core.explicit_arg xsV )
+  in
   let depN = Core.Var ("idx", Emp) in
   let motive = Core.Var ("M", Emp) in
   let cnil = Core.Var ("cnil", Emp) in
   let ccons = Core.Var ("ccons", Emp) in
-  let spine = Emp <: aV <: depN <: target <: motive <: cnil <: ccons in
+  let spine =
+    Emp
+    <: Core.explicit_arg aV
+    <: Core.explicit_arg depN
+    <: Core.explicit_arg target
+    <: Core.explicit_arg motive
+    <: Core.explicit_arg cnil
+    <: Core.explicit_arg ccons
+  in
   (print_string
    @@
    match reducer spine with

@@ -176,7 +176,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
         | Core.VPi ({ implicit; name = pi_name; bound = a }, b) ->
           if is_implicit = implicit
           then begin
-            push m (KApp_HaveArg (loc, f_tm, b));
+            push m (KApp_HaveArg (loc, f_tm, b, implicit));
             push m (GCheck (loc, arg, a))
           end
           else if implicit
@@ -190,7 +190,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
             in
             let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
             let meta_val = Evaluation.eval m.ctx.env meta_tm in
-            let new_f_tm = Core.App (f_tm, meta_tm) in
+            let new_f_tm = Core.App (f_tm, meta_tm, true) in
             let new_f_ty = b meta_val in
             m.result <- Some (PTermType (new_f_tm, new_f_ty));
             push m (KApp_HaveFn (loc, is_implicit, arg))
@@ -211,11 +211,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
             ty)
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" (produced_tag other))
-  | KApp_HaveArg (_loc, f_tm, b) ->
+  | KApp_HaveArg (_loc, f_tm, b, implicit) ->
     (match take_result m with
      | PTerm arg_tm ->
        let arg_val = Evaluation.eval m.ctx.env arg_tm in
-       m.result <- Some (PTermType (Core.App (f_tm, arg_tm), b arg_val))
+       m.result <- Some (PTermType (Core.App (f_tm, arg_tm, implicit), b arg_val))
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveArg: bad result %s" (produced_tag other))
   | GInfer (loc, Op_soup _) | GCheck (loc, Op_soup _, _) ->
@@ -350,7 +350,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           2 of the spine for the two Id arguments. *)
        (match Evaluation.force_head p_ty with
         | Core.IndType (ind_name, spine) when String.equal ind_name "Id" ->
-          let xs = Bwd.to_list spine in
+          let xs = Bwd.to_list (Core.spine_values spine) in
           if List.length xs < 3
           then
             Reporter.fatalf
@@ -429,7 +429,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
            in
            let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
            let meta_val = Evaluation.eval m.ctx.env meta_tm in
-           insert_implicit_apps (Core.App (tm, meta_tm)) (b meta_val)
+           insert_implicit_apps (Core.App (tm, meta_tm, true)) (b meta_val)
          | _ -> tm, ty
        in
        let tm, infer_ty = insert_implicit_apps tm infer_ty in
@@ -803,6 +803,7 @@ let%expect_test "report named goal in check mode" =
          , Surface.Goal (Some "here")
          , Core.RigidLocal (0, Bwd.Emp) ));
     ignore (drive m);
+    flush_goal_reports m;
     Printf.printf "pending=%d" !(m.pending_goals));
   [%expect
     {|
@@ -839,6 +840,7 @@ let%expect_test "auto-numbered goals" =
          , Surface.Goal None
          , Core.Universe Level.LZero ));
     ignore (drive m);
+    flush_goal_reports m;
     Printf.printf "pending=%d counter=%d" !(m.pending_goals) !counter);
   [%expect
     {|
@@ -895,6 +897,7 @@ let check_top
   in
   push m g;
   ignore (drive m);
+  flush_goal_reports m;
   if !(m.pending_goals) > 0
   then
     Reporter.emitf
