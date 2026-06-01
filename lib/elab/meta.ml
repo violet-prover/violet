@@ -17,6 +17,13 @@ let eval (mvar : metavar) : value =
 
 let count = ref 0
 
+(* A fresh metavar with no spine/level attached. Used by pruning. *)
+let fresh_metavar () : metavar =
+  let m = MetaVar !count in
+  incr count;
+  m
+;;
+
 (* Metas that stand in for a user-placed `?` goal.  They are intentionally
    unsolved: the kernel's well-formedness check (`Check.check_term`) treats
    them as known, so a declaration containing goals still flows through

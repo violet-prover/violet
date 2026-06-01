@@ -11,6 +11,12 @@ open Evaluation
 module PartialRenaming = struct
   open Core
 
+  (* Raised when renaming hits a local that is not among the meta's arguments.
+     Carries the offending de Bruijn LEVEL plus the context at the point of the
+     escape, so the caller can render the variable by its surface name. Caught
+     locally during pruning; otherwise surfaced as an Elab_error in `run`. *)
+  exception Escaping of int * Context_view.t
+
   (* dom = size of the meta's argument context (LHS, fresh after invert)
      cod = size of the surrounding context the meta lives in (RHS)
      ren = cod-level → dom-level (where each spine element ended up) *)
@@ -42,79 +48,6 @@ module PartialRenaming = struct
     { dom = List.length sp_list; cod = Context_view.lvl cv; ren }
   ;;
 
-  let rec rename (m : metavar) (pr : t) (v : value) : term =
-    match force v with
-    | Universe l -> Universe l
-    | Flex (m', _) when m = m' ->
-      Reporter.fatalf
-        Elab_error
-        "meta variable %s occurs in its own solution"
-        (Pretty.pp_metavar m)
-    | Flex (m', sp) -> rename_sp m pr (Meta m') sp
-    | RigidLocal (l, sp) ->
-      (match Hashtbl.find_opt pr.ren l with
-       | None ->
-         Reporter.fatalf Elab_error "escaping local $%d in meta solution (not in spine)" l
-       | Some l' ->
-         (* l' is a dom-level; convert to term-side de Bruijn INDEX *)
-         rename_sp m pr (LocalVar (pr.dom - l' - 1)) sp)
-    | Var (x, sp) -> rename_sp m pr (Var x) sp
-    | Label (x, sp) -> rename_sp m pr (Var x) sp
-    | IndType (x, sp) -> rename_sp m pr (Var x) sp
-    | Elim ({ elim_name; _ }, sp) -> rename_sp m pr (Var elim_name) sp
-    | VLambda { name; bound = clos; implicit } ->
-      Hashtbl.add pr.ren pr.cod pr.dom;
-      let body =
-        rename
-          m
-          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
-          (clos (RigidLocal (pr.cod, Emp)))
-      in
-      Hashtbl.remove pr.ren pr.cod;
-      Lambda { name; implicit; bound = body }
-    | VPi ({ name; bound = a; implicit }, b) ->
-      let a' = rename m pr a in
-      Hashtbl.add pr.ren pr.cod pr.dom;
-      let b' =
-        rename
-          m
-          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
-          (b (RigidLocal (pr.cod, Emp)))
-      in
-      Hashtbl.remove pr.ren pr.cod;
-      Pi ({ name; bound = a'; implicit }, b')
-    | VLift { from_lvl; to_lvl; ty } -> Lift { from_lvl; to_lvl; ty = rename m pr ty }
-    | VLiftTerm { from_lvl; to_lvl; ty; tm } ->
-      LiftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
-    | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
-      UnliftTerm { from_lvl; to_lvl; ty = rename m pr ty; tm = rename m pr tm }
-    | VRecordType { name; params; fields; field_env = _; field_terms = _ } ->
-      let t_params = List.map (rename m pr) params in
-      let rec walk pr = function
-        | [] -> []
-        | (b : value Syntax.binder) :: rest ->
-          let t_bound = rename m pr b.bound in
-          Hashtbl.add pr.ren pr.cod pr.dom;
-          let pr' = { pr with cod = pr.cod + 1; dom = pr.dom + 1 } in
-          let t_rest = walk pr' rest in
-          Hashtbl.remove pr.ren pr.cod;
-          { Syntax.name = b.name; bound = t_bound; implicit = b.implicit } :: t_rest
-      in
-      RecordType { name; params = t_params; fields = walk pr fields }
-    | VRecordIntro { name; fields } ->
-      RecordIntro { name; fields = List.map (fun (f, v) -> f, rename m pr v) fields }
-    | VRecordProj (v, f, sp) ->
-      rename_sp m pr (RecordProj { record = rename m pr v; field = f }) sp
-    | VIdAbsurd v -> IdAbsurd (rename m pr v)
-    | VEmpty -> Empty
-    | VAbsurd (s, sp) -> rename_sp m pr (Absurd (rename m pr s)) sp
-
-  and rename_sp (m : metavar) (pr : t) (t : term) (sp : value bwd) : term =
-    match sp with
-    | Emp -> t
-    | Snoc (sp, u) -> App (rename_sp m pr t sp, rename m pr u)
-  ;;
-
   (* Wrap a term in `dom` outer Lambdas so the solution can stand alone.
      Names are placeholders for pretty printing only. *)
   let lams (dom : int) (tm : term) : term =
@@ -133,9 +66,157 @@ module PartialRenaming = struct
     go 0 tm
   ;;
 
+  let rec rename (m : metavar) (cv : Context_view.t) (pr : t) (v : value) : term =
+    match force v with
+    | Universe l -> Universe l
+    | Flex (m', _) when m = m' ->
+      Reporter.fatalf
+        Elab_error
+        "meta variable %s occurs in its own solution"
+        (Pretty.pp_metavar m)
+    | Flex (m', sp) -> rename_flex m cv pr m' sp
+    | RigidLocal (l, sp) ->
+      (match Hashtbl.find_opt pr.ren l with
+       | None -> raise (Escaping (l, cv))
+       | Some l' ->
+         (* l' is a dom-level; convert to term-side de Bruijn INDEX *)
+         rename_sp m cv pr (LocalVar (pr.dom - l' - 1)) sp)
+    | Var (x, sp) -> rename_sp m cv pr (Var x) sp
+    | Label (x, sp) -> rename_sp m cv pr (Var x) sp
+    | IndType (x, sp) -> rename_sp m cv pr (Var x) sp
+    | Elim ({ elim_name; _ }, sp) -> rename_sp m cv pr (Var elim_name) sp
+    | VLambda { name; bound = clos; implicit } ->
+      let cv' = Context_view.extend cv (Syntax.Name.to_string name) in
+      Hashtbl.add pr.ren pr.cod pr.dom;
+      let body =
+        rename
+          m
+          cv'
+          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
+          (clos (RigidLocal (pr.cod, Emp)))
+      in
+      Hashtbl.remove pr.ren pr.cod;
+      Lambda { name; implicit; bound = body }
+    | VPi ({ name; bound = a; implicit }, b) ->
+      let a' = rename m cv pr a in
+      let cv' = Context_view.extend cv (Syntax.Name.to_string name) in
+      Hashtbl.add pr.ren pr.cod pr.dom;
+      let b' =
+        rename
+          m
+          cv'
+          { pr with cod = pr.cod + 1; dom = pr.dom + 1 }
+          (b (RigidLocal (pr.cod, Emp)))
+      in
+      Hashtbl.remove pr.ren pr.cod;
+      Pi ({ name; bound = a'; implicit }, b')
+    | VLift { from_lvl; to_lvl; ty } -> Lift { from_lvl; to_lvl; ty = rename m cv pr ty }
+    | VLiftTerm { from_lvl; to_lvl; ty; tm } ->
+      LiftTerm { from_lvl; to_lvl; ty = rename m cv pr ty; tm = rename m cv pr tm }
+    | VUnliftTerm { from_lvl; to_lvl; ty; tm } ->
+      UnliftTerm { from_lvl; to_lvl; ty = rename m cv pr ty; tm = rename m cv pr tm }
+    | VRecordType { name; params; fields; field_env = _; field_terms = _ } ->
+      let t_params = List.map (rename m cv pr) params in
+      let rec walk cv pr = function
+        | [] -> []
+        | (b : value Syntax.binder) :: rest ->
+          let t_bound = rename m cv pr b.bound in
+          let cv' = Context_view.extend cv (Syntax.Name.to_string b.name) in
+          Hashtbl.add pr.ren pr.cod pr.dom;
+          let pr' = { pr with cod = pr.cod + 1; dom = pr.dom + 1 } in
+          let t_rest = walk cv' pr' rest in
+          Hashtbl.remove pr.ren pr.cod;
+          { Syntax.name = b.name; bound = t_bound; implicit = b.implicit } :: t_rest
+      in
+      RecordType { name; params = t_params; fields = walk cv pr fields }
+    | VRecordIntro { name; fields } ->
+      RecordIntro { name; fields = List.map (fun (f, v) -> f, rename m cv pr v) fields }
+    | VRecordProj (v, f, sp) ->
+      rename_sp m cv pr (RecordProj { record = rename m cv pr v; field = f }) sp
+    | VIdAbsurd v -> IdAbsurd (rename m cv pr v)
+    | VEmpty -> Empty
+    | VAbsurd (s, sp) -> rename_sp m cv pr (Absurd (rename m cv pr s)) sp
+
+  and rename_sp (m : metavar) (cv : Context_view.t) (pr : t) (t : term) (sp : value bwd)
+    : term
+    =
+    match sp with
+    | Emp -> t
+    | Snoc (sp, u) -> App (rename_sp m cv pr t sp, rename m cv pr u)
+
+  (* Rename an occurrence `m' sp` appearing in the solution of `m`.
+
+     If every argument renames, this is just `rename_sp` over `Meta m'`.
+     Otherwise some argument references a local outside `m`'s spine — but it
+     does so only as an ARGUMENT to the flex meta `m'`, so we PRUNE those
+     positions: mint a fresh `m''` and solve
+
+         m' := λ x0 … x_{k-1}. m'' (x_j for each surviving position j)
+
+     then refer to `m''` here, applied to just the surviving (renamed) args.
+     `m''` may stay unsolved; if a pruned position was actually needed, the
+     kernel's re-check of the final solution rejects it (no unsoundness). *)
+  and rename_flex
+        (m : metavar)
+        (cv : Context_view.t)
+        (pr : t)
+        (m' : metavar)
+        (sp : value bwd)
+    : term
+    =
+    let args = Bwd.to_list sp in
+    let k = List.length args in
+    let classified =
+      List.map
+        (fun u ->
+           match rename m cv pr u with
+           | t -> `Keep t
+           | exception Escaping _ -> `Drop)
+        args
+    in
+    if List.for_all (function `Keep _ -> true | `Drop -> false) classified
+    then
+      List.fold_left
+        (fun acc -> function
+           | `Keep t -> App (acc, t)
+           | `Drop -> assert false (* unreachable: all are Keep here *))
+        (Meta m')
+        classified
+    else begin
+      let m'' = Meta.fresh_metavar () in
+      (* Build m''s arguments inside the k binders of m's new solution.
+         Spine position j is bound to de Bruijn INDEX k-1-j. *)
+      let m'_body, _ =
+        List.fold_left
+          (fun (acc, j) cl ->
+             match cl with
+             | `Keep _ -> App (acc, LocalVar (k - 1 - j)), j + 1
+             | `Drop -> acc, j + 1)
+          (Meta m'', 0)
+          classified
+      in
+      Meta.insert_meta m' (eval Emp (lams k m'_body));
+      List.fold_left
+        (fun acc -> function
+           | `Keep t -> App (acc, t)
+           | `Drop -> acc)
+        (Meta m'')
+        classified
+    end
+  ;;
+
   let run (cv : Context_view.t) (m : metavar) (sp : value bwd) (rhs : value) : value =
     let pr = invert cv sp in
-    let rhs_tm = rename m pr rhs in
+    let rhs_tm =
+      try rename m cv pr rhs with
+      | Escaping (l, cv') ->
+        Reporter.fatalf
+          Elab_error
+          "local `%s` escapes the solution of %s: it is not one of the meta's \
+           arguments, so the solution may not mention it"
+          (Pretty.pp_term cv' (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
+          (Pretty.pp_metavar m)
+    in
     let solution = lams pr.dom rhs_tm in
     Reporter.tracef "solution is: %s" (Pretty.pp_term Context_view.empty solution)
     @@ fun () -> eval Emp solution
@@ -485,6 +566,55 @@ let%expect_test "meta solving: flex = rigid solves meta" =
   in
   print_endline result;
   [%expect {| solved |}]
+;;
+
+let%expect_test "pruning: escaping var that appears only under another flex meta is \
+                 pruned, so the solve succeeds" =
+  (* context: a (lvl 0), b (lvl 1) *)
+  let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
+  let m1 = Core.MetaVar 70001 in
+  let m2 = Core.MetaVar 70002 in
+  let a : Core.value = Core.RigidLocal (0, Emp) in
+  let b : Core.value = Core.RigidLocal (1, Emp) in
+  (* Solve `?m1 a := Stack (?m2 a b)`.  `b` is NOT in m1's spine, so it escapes
+     — but it only occurs as an argument to the other flex meta `?m2`, exactly
+     the case pruning resolves (drop `b` from m2). *)
+  let rhs : Core.value =
+    Core.Var ("Stack", Snoc (Emp, Core.Flex (m2, Snoc (Snoc (Emp, a), b))))
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    solve cv m1 (Snoc (Emp, a)) rhs;
+    match Meta.lookup_meta m1 with
+    | Some _ -> "solved"
+    | None -> "unsolved"
+  in
+  print_endline result;
+  [%expect {| solved |}]
+;;
+
+let%expect_test "a genuine (un-prunable) escape names the offending variable \
+                 instead of printing a raw de Bruijn level" =
+  (* context: a (lvl 0), b (lvl 1).  Solve `?m a := b`: `b` escapes and there is
+     no flex meta to prune it through, so this is a real error.  The message
+     must name `b`, not `$1`. *)
+  let cv = Context_view.make ~names:(Snoc (Snoc (Emp, "a"), "b")) ~lvl:2 in
+  let m = Core.MetaVar 70003 in
+  let a : Core.value = Core.RigidLocal (0, Emp) in
+  let b : Core.value = Core.RigidLocal (1, Emp) in
+  let result =
+    Reporter.run
+      ~emit:(fun _ -> ())
+      ~fatal:(fun (d : Reporter.Message.t Asai.Diagnostic.t) ->
+        Format.asprintf "%t" d.explanation.value)
+    @@ fun () ->
+    solve cv m (Snoc (Emp, a)) b;
+    "NO ERROR"
+  in
+  print_endline result;
+  [%expect
+    {| local `b` escapes the solution of ?70003: it is not one of the meta's arguments, so the solution may not mention it |}]
 ;;
 
 let%expect_test "quote renders a local by binder name in a unify context" =
