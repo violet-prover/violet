@@ -8,7 +8,7 @@
 
 \import std/nat
 \import std/vec
-\import std/equality
+\import std/id
 \import std/empty
 
 \universe U

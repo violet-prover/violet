@@ -1,5 +1,5 @@
 \import std/nat
-\import std/equality
+\import std/id
 
 \universe U
 

@@ -2,7 +2,7 @@
 # The eliminator rejects matching on `refl : Id a a` because the two
 # indices cannot be independently generalized.
 
-\import std/equality
+\import std/id
 
 \universe U
 

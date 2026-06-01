@@ -1,6 +1,6 @@
 \import std/nat
 \import std/empty
-\import std/equality
+\import std/id
 
 \universe U V
 

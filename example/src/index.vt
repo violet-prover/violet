@@ -2,7 +2,7 @@
 \import std/nat/properties
 \import std/list
 \import std/vec
-\import std/equality
+\import std/id
 \import std/sigma
 \import std/sigma-multi
 \import pterodactyl
