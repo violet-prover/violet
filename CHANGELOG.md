@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.1
+
 - fix: projecting a record field whose type contains an inserted meta no longer crashes with `LocalVarOutOfRange` (the field projector now re-spines inserted metas when prior-field binders collapse into `r`)
 - elaborator pattern unification with pruning
 

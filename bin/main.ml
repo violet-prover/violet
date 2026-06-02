@@ -1,7 +1,7 @@
 open Cmdliner
 module Tty = Asai.Tty.Make (Violet_surface.Reporter.Message)
 
-let version = "0.6.0"
+let version = "0.6.1"
 
 let load_cmd ~env =
   let _ = env in
