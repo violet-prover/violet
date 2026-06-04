@@ -15,48 +15,50 @@ open Bwd
    declared fields. Always rejects duplicates within [provided] and unknown
    names not in [expected_fields]; when [check_missing] is set, also rejects
    any expected field that isn't in [provided]. [ctx_label] is interpolated
-   into error messages as "record <ctx_label>" (e.g. "literal", "update"). *)
+   into error messages as "record <ctx_label>" (e.g. "literal", "update").
+   [loc] is used only for missing-field errors (no token to point at). *)
 let validate_record_fields
       ~(loc : Asai.Range.t)
       ~(ctx_label : string)
       ~(record_name : string)
       ~(expected_fields : string list)
-      ~(provided : string list)
+      ~(provided : string Surface.spanned list)
       ~(check_missing : bool)
   : unit
   =
   let _ : string list =
     List.fold_left
-      (fun seen fname ->
-         if List.mem fname seen
+      (fun seen (f : string Surface.spanned) ->
+         if List.mem f.Surface.value seen
          then
            Reporter.fatalf
-             ~loc
+             ~loc:f.Surface.loc
              Elab_error
              "duplicate field `%s` in record %s"
-             fname
+             f.Surface.value
              ctx_label
-         else fname :: seen)
+         else f.Surface.value :: seen)
       []
       provided
   in
   List.iter
-    (fun fname ->
-       if not (List.mem fname expected_fields)
+    (fun (f : string Surface.spanned) ->
+       if not (List.mem f.Surface.value expected_fields)
        then
          Reporter.fatalf
-           ~loc
+           ~loc:f.Surface.loc
            Elab_error
            "unknown field `%s` in record %s for `%s`"
-           fname
+           f.Surface.value
            ctx_label
            record_name)
     provided;
+  let provided_names = List.map (fun (f : string Surface.spanned) -> f.Surface.value) provided in
   if check_missing
   then
     List.iter
       (fun fname ->
-         if not (List.mem fname provided)
+         if not (List.mem fname provided_names)
          then
            Reporter.fatalf
              ~loc
@@ -72,13 +74,20 @@ let walk_record_update_fields
       (m : machine)
       ~(loc : Asai.Range.t)
       ~(r_name : string)
-      ~(overrides : (string * Surface.preterm) list)
+      ~(overrides : (string Surface.spanned * Surface.preterm) list)
       ~(base_core : Core.term)
       ~(done_rev : (string * Core.term) list)
       ~(fields : Core.typ Syntax.binder list)
       ~(eval_env : Core.value bwd)
   : unit
   =
+  let find_override fname =
+    List.find_opt
+      (fun ((f, _) : string Surface.spanned * Surface.preterm) ->
+         String.equal f.Surface.value fname)
+      overrides
+    |> Option.map snd
+  in
   let rec go done_rev fields eval_env =
     match fields with
     | [] ->
@@ -87,14 +96,14 @@ let walk_record_update_fields
       <- Some (PTerm (Core.RecordIntro { name = r_name; fields = result_fields }))
     | (b : Core.typ Syntax.binder) :: rest_fields ->
       let fname = Syntax.Name.to_string b.name in
-      (match List.assoc_opt fname overrides with
+      (match find_override fname with
        | Some expr ->
          let ty = Evaluation.eval eval_env b.Syntax.bound in
          push
            m
            (KRecordUpdate_Field
               (loc, r_name, base_core, overrides, done_rev, fname, rest_fields, eval_env));
-         push m (GCheck (loc, expr, ty))
+         push m (GCheck (expr, ty))
        | None ->
          let proj_core = Core.RecordProj { record = base_core; field = fname } in
          let proj_val = Evaluation.eval m.ctx.env proj_core in
@@ -116,12 +125,14 @@ let handle_infer_record_lit (m : machine) (loc : Asai.Range.t) =
 let handle_check_record_lit
       (m : machine)
       (loc : Asai.Range.t)
-      (entries : (string * Surface.preterm) list)
+      (entries : (string Surface.spanned * Surface.preterm) list)
       (expected_ty : Core.value_ty)
   =
   match Evaluation.force_head expected_ty with
   | Core.VRecordType { name = r_name; fields = type_fields; field_env; field_terms; _ } ->
-    let entry_names = List.map fst entries in
+    let entry_spanned_names =
+      List.map (fun ((f, _) : string Surface.spanned * _) -> f) entries
+    in
     let field_names =
       List.map
         (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
@@ -132,13 +143,16 @@ let handle_check_record_lit
       ~ctx_label:"literal"
       ~record_name:r_name
       ~expected_fields:field_names
-      ~provided:entry_names
+      ~provided:entry_spanned_names
       ~check_missing:true;
+    let lookup_entry fname =
+      List.find
+        (fun ((f, _) : string Surface.spanned * _) -> String.equal f.Surface.value fname)
+        entries
+    in
     (* Canonicalize entries to declaration order. `field_terms` is already
        in declaration order (eval.ml preserves order), parallel to `type_fields`. *)
-    let canonical_entries =
-      List.map (fun fname -> fname, List.assoc fname entries) field_names
-    in
+    let canonical_entries = List.map lookup_entry field_names in
     (* The first field has no prior values to substitute, so
        `eval field_env t0.bound` reduces to the same value as
        `type_fields[0].bound`. *)
@@ -150,8 +164,8 @@ let handle_check_record_lit
        push
          m
          (KRecordLit_Field
-            (loc, r_name, [], fname0, rest_entries, rest_term_types, field_env));
-       push m (GCheck (loc, expr0, ty0))
+            (loc, r_name, [], fname0.Surface.value, rest_entries, rest_term_types, field_env));
+       push m (GCheck (expr0, ty0))
      | _ ->
        Reporter.fatalf ~loc Elab_error "internal: record literal field count mismatch")
   | Core.Flex _ ->
@@ -190,13 +204,20 @@ let handle_record_lit_field
      | [], [] ->
        let fields = List.rev done_rev' in
        m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields }))
-     | (fname, expr) :: rest_entries, (t : Core.typ Syntax.binder) :: rest_term_types ->
+     | ((fname : string Surface.spanned), expr) :: rest_entries
+     , (t : Core.typ Syntax.binder) :: rest_term_types ->
        let ty = Evaluation.eval eval_env' t.Syntax.bound in
        push
          m
          (KRecordLit_Field
-            (loc, r_name, done_rev', fname, rest_entries, rest_term_types, eval_env'));
-       push m (GCheck (loc, expr, ty))
+            ( loc
+            , r_name
+            , done_rev'
+            , fname.Surface.value
+            , rest_entries
+            , rest_term_types
+            , eval_env' ));
+       push m (GCheck (expr, ty))
      | _ ->
        Reporter.fatalf
          Elab_error
@@ -217,7 +238,7 @@ let handle_check_record_update
       (m : machine)
       (loc : Asai.Range.t)
       (base : Surface.preterm)
-      (overrides : (string * Surface.preterm) list)
+      (overrides : (string Surface.spanned * Surface.preterm) list)
       (expected_ty : Core.value_ty)
   =
   match Evaluation.force_head expected_ty with
@@ -239,10 +260,11 @@ let handle_check_record_update
       ~ctx_label:"update"
       ~record_name:r_name
       ~expected_fields:field_names
-      ~provided:(List.map fst overrides)
+      ~provided:
+        (List.map (fun ((f, _) : string Surface.spanned * _) -> f) overrides)
       ~check_missing:false;
     push m (KRecordUpdate_HaveBase (loc, r_name, overrides, field_terms, field_env));
-    push m (GCheck (loc, base, expected_ty))
+    push m (GCheck (base, expected_ty))
   | Core.Flex _ ->
     Reporter.fatalf
       ~loc
@@ -313,12 +335,12 @@ let handle_record_update_field
 
 let handle_infer_proj
       (m : machine)
-      (loc : Asai.Range.t)
+      (_loc : Asai.Range.t)
       (e : Surface.preterm)
-      (f : string)
+      (f : string Surface.spanned)
   =
-  push m (KProj_HaveRec (loc, f));
-  push m (GInfer (loc, e))
+  push m (KProj_HaveRec (f.Surface.loc, f.Surface.value));
+  push m (GInfer e)
 ;;
 
 let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
@@ -371,32 +393,34 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
 let handle_top_record
       (m : machine)
       (loc : Asai.Range.t)
-      (name : string)
-      (params : Surface.pretype binder list)
+      (name : string Surface.spanned)
+      (params : Surface.pretype Surface.sbinder list)
       (ind_ty : Surface.pretype)
-      (fields : Surface.pretype binder list)
+      (fields : Surface.pretype Surface.sbinder list)
   =
+  let name = name.Surface.value in
   (* Defensive check: implicit field binders are not supported.
      The parser does not emit them, but hand-constructed ASTs could. *)
   List.iter
-    (fun (b : Surface.pretype binder) ->
+    (fun (b : Surface.pretype Surface.sbinder) ->
        if b.implicit
        then
          Reporter.fatalf
-           ~loc
+           ~loc:b.name.Surface.loc
            Elab_error
            "record `%s`: implicit field binders are not supported (`%s`)"
            name
-           (Syntax.Name.to_string b.name))
+           (Syntax.Name.to_string b.name.Surface.value))
     fields;
   let typ : Surface.pretype =
     List.fold_right
-      (fun binding return_ty -> Surface.Pi (binding, return_ty))
+      (fun binding return_ty ->
+         { Surface.loc = return_ty.Surface.loc; node = Surface.Pi (binding, return_ty) })
       params
       ind_ty
   in
   push m (KTopRecord_HaveType (loc, name, params, ind_ty, fields));
-  push m (GInferType (loc, typ))
+  push m (GInferType typ)
 ;;
 
 let handle_top_record_error (_m : machine) =
@@ -404,13 +428,13 @@ let handle_top_record_error (_m : machine) =
 ;;
 
 let handle_top_record_have_type
-      ~(check_type : loc:Asai.Range.t -> local_ctx -> Surface.pretype -> Core.term)
+      ~(check_type : local_ctx -> Surface.pretype -> Core.term)
       (m : machine)
       (loc : Asai.Range.t)
       (name : string)
-      (params : Surface.pretype binder list)
+      (params : Surface.pretype Surface.sbinder list)
       (ind_ty : Surface.pretype)
-      (fields : Surface.pretype binder list)
+      (fields : Surface.pretype Surface.sbinder list)
   =
   match take_result m with
   | PType (typ_tm, _inferred_sort) ->
@@ -419,10 +443,10 @@ let handle_top_record_have_type
       (* Params extend ctx as rigid locals so field types can refer to them. *)
       let rec extend_params ctx = function
         | [] -> ctx
-        | (b : Surface.pretype binder) :: rest ->
-          let qty_tm = check_type ~loc ctx b.bound in
+        | (b : Surface.pretype Surface.sbinder) :: rest ->
+          let qty_tm = check_type ctx b.bound in
           let qty_val = Evaluation.eval ctx.env qty_tm in
-          extend_params (bind ctx b.name qty_val) rest
+          extend_params (bind ctx b.name.Surface.value qty_val) rest
       in
       extend_params m.ctx params
     in
@@ -432,17 +456,19 @@ let handle_top_record_have_type
        indices they will have under the k param-lambdas in head_body. *)
     let field_ty_terms, _ctx_after_fields =
       List.fold_left
-        (fun (acc, ctx_acc) (b : Surface.pretype binder) ->
-           let fty_tm = check_type ~loc ctx_acc b.bound in
+        (fun (acc, ctx_acc) (b : Surface.pretype Surface.sbinder) ->
+           let fty_tm = check_type ctx_acc b.bound in
            let fty_val = Evaluation.eval ctx_acc.env fty_tm in
-           let ctx_acc' = bind ctx_acc b.name fty_val in
-           acc @ [ b.name, fty_tm ], ctx_acc')
+           let ctx_acc' = bind ctx_acc b.name.Surface.value fty_val in
+           acc @ [ b.name.Surface.value, fty_tm ], ctx_acc')
         ([], ctx_with_params)
         fields
     in
     let n_params = List.length params in
     let n_fields = List.length fields in
-    let field_names = List.map (fun (b : Surface.pretype binder) -> b.name) fields in
+    let field_names =
+      List.map (fun (b : Surface.pretype Surface.sbinder) -> b.name.Surface.value) fields
+    in
     (* Field telescope built under k param-lambdas. The Core terms produced
        above were checked in ctx_with_params (depth k, m.ctx.lvl=0), so
        their LocalVar indices already match what RecordType needs under
@@ -460,8 +486,8 @@ let handle_top_record_have_type
         Core.RecordType { name; params = param_vars; fields = core_fields }
       in
       List.fold_right
-        (fun (b : Surface.pretype binder) body ->
-           Core.Lambda { name = b.name; bound = body; implicit = b.implicit })
+        (fun (b : Surface.pretype Surface.sbinder) body ->
+           Core.Lambda { name = b.name.Surface.value; bound = body; implicit = b.implicit })
         params
         record_ty_tm
     in
@@ -475,11 +501,11 @@ let handle_top_record_have_type
     let param_binder_core_terms =
       let _, terms =
         List.fold_left
-          (fun (ctx_acc, acc) (b : Surface.pretype binder) ->
-             let qty_tm = check_type ~loc ctx_acc b.bound in
+          (fun (ctx_acc, acc) (b : Surface.pretype Surface.sbinder) ->
+             let qty_tm = check_type ctx_acc b.bound in
              let qty_val = Evaluation.eval ctx_acc.env qty_tm in
-             let ctx_acc' = bind ctx_acc b.name qty_val in
-             ctx_acc', acc @ [ b.name, b.implicit, qty_tm ])
+             let ctx_acc' = bind ctx_acc b.name.Surface.value qty_val in
+             ctx_acc', acc @ [ b.name.Surface.value, b.implicit, qty_tm ])
           (m.ctx, [])
           params
       in
@@ -536,10 +562,10 @@ let handle_top_record_have_type
     let field_core_tys =
       let _, tys =
         List.fold_left
-          (fun (ctx_acc, acc) (b : Surface.pretype binder) ->
-             let fty_tm = check_type ~loc ctx_acc b.bound in
+          (fun (ctx_acc, acc) (b : Surface.pretype Surface.sbinder) ->
+             let fty_tm = check_type ctx_acc b.bound in
              let fty_val = Evaluation.eval ctx_acc.env fty_tm in
-             let ctx_acc' = bind ctx_acc b.name fty_val in
+             let ctx_acc' = bind ctx_acc b.name.Surface.value fty_val in
              ctx_acc', acc @ [ fty_tm ])
           (ctx_with_params, [])
           fields
@@ -559,11 +585,13 @@ let handle_top_record_have_type
         let n = n_fields in
         fst
         @@ List.fold_right
-             (fun (b : Surface.pretype binder) (acc_body, i) ->
+             (fun (b : Surface.pretype Surface.sbinder) (acc_body, i) ->
                 (* i counts from 0 = last field; field index from start = n-1-i *)
                 let field_idx = n - 1 - i in
                 let fty = field_core_tys.(field_idx) in
-                ( Core.Pi ({ name = b.name; bound = fty; implicit = false }, acc_body)
+                ( Core.Pi
+                    ( { name = b.name.Surface.value; bound = fty; implicit = false }
+                    , acc_body )
                 , i + 1 ))
              fields
              (inner_result, 0)
@@ -580,8 +608,8 @@ let handle_top_record_have_type
       let intro = Core.RecordIntro { name; fields = intro_fields } in
       let with_field_lambdas =
         List.fold_right
-          (fun (b : Surface.pretype binder) body ->
-             Core.Lambda { name = b.name; bound = body; implicit = false })
+          (fun (b : Surface.pretype Surface.sbinder) body ->
+             Core.Lambda { name = b.name.Surface.value; bound = body; implicit = false })
           fields
           intro
       in
@@ -688,8 +716,8 @@ let handle_top_record_have_type
       go 0 tm
     in
     List.iteri
-      (fun i (b : Surface.pretype binder) ->
-         let field_name = Syntax.Name.to_string b.name in
+      (fun i (b : Surface.pretype Surface.sbinder) ->
+         let field_name = Syntax.Name.to_string b.name.Surface.value in
          let proj_name = name ^ "/" ^ field_name in
          (* prev_field_names: in context, last field bound = innermost.
             field_core_tys.(i) has LocalVar 0 = field_(i-1), ..., LocalVar (i-1) = field_0.
@@ -736,7 +764,7 @@ let handle_top_record_have_type
            ~ty:proj_ty
            ~body:proj_body)
       fields;
-    let ind_ty_tm = check_type ~loc m.ctx ind_ty in
+    let ind_ty_tm = check_type m.ctx ind_ty in
     let elim_name = name ^ "/elim" in
     (* R/elim. M's type: R_applied → ind_ty, under k+1 binders (params+r).
        ind_ty_tm was checked in m.ctx (depth 0), so it has no local vars;
@@ -800,11 +828,12 @@ let handle_top_record_have_type
       (* Wrap in field Pi-binders (fold_right: last field first) *)
       fst
       @@ List.fold_right
-           (fun (b : Surface.pretype binder) (acc_body, i_rev) ->
+           (fun (b : Surface.pretype Surface.sbinder) (acc_body, i_rev) ->
               (* i_rev = 0 means last field, i = n_fields-1-i_rev *)
               let i = n_fields - 1 - i_rev in
               let fty = shift_term 2 field_core_tys.(i) in
-              ( Core.Pi ({ name = b.name; bound = fty; implicit = false }, acc_body)
+              ( Core.Pi
+                  ({ name = b.name.Surface.value; bound = fty; implicit = false }, acc_body)
               , i_rev + 1 ))
            fields
            (m_applied, 0)

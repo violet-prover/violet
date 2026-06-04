@@ -81,7 +81,7 @@ let pick_binder_name (clauses : Surface.clause list) (position : int) : string =
   | [] -> Printf.sprintf "__x%d" position
   | { patterns; _ } :: _ ->
     (match List.nth_opt patterns position with
-     | Some (Surface.PVar v) -> v
+     | Some { Surface.pnode = Surface.PVar v; _ } -> v
      | _ -> Printf.sprintf "__x%d" position)
 ;;
 
@@ -101,9 +101,9 @@ let produced_tag : produced -> string = function
 ;;
 
 type goal =
-  | GCheck of t * Surface.preterm * Core.value_ty
-  | GInfer of t * Surface.preterm
-  | GInferType of t * Surface.pretype
+  | GCheck of Surface.preterm * Core.value_ty
+  | GInfer of Surface.preterm
+  | GInferType of Surface.pretype
   | KCheckBy_Infer of t * Core.value_ty
   | KApp_HaveFn of t * bool * Surface.preterm
   | KApp_HaveArg of t * Core.term * (Core.value -> Core.value) * bool
@@ -119,41 +119,36 @@ type goal =
   | KAbsurd_HaveArg of t
   | GTopLet of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
       ; result_ty : Surface.pretype
       ; body : Surface.preterm
       }
   | GTopData of t * Surface.top
-  | GTopUniverseDecl of (string * Asai.Range.t option) list
+  | GTopUniverseDecl of string Surface.spanned list
   | GTopStackDef of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
       ; result_ty : Surface.pretype
       ; moves : Surface.stack_move list
       ; clauses : Surface.clause list
       }
   | KTopLet_HaveType of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
+      ; name : string Surface.spanned
       ; body : Surface.preterm
-      ; bindings : Surface.pretype binder list
+      ; bindings : Surface.pretype Surface.sbinder list
       }
   | KTopLet_HaveBody of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
+      ; name : string Surface.spanned
       ; typ_tm : Core.term
       ; typ_val : Core.value_ty
       }
   | KTopElimDef_HaveBody of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
+      ; name : string Surface.spanned
       ; typ_tm : Core.term
       ; typ_val : Core.value_ty
       ; func_name : string
@@ -161,28 +156,24 @@ type goal =
       }
   | KTopData_HaveType of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; params : Surface.pretype binder list
-      ; deps : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; params : Surface.pretype Surface.sbinder list
+      ; deps : Surface.pretype Surface.sbinder list
       ; ind_ty : Surface.pretype
-      ; ctors : Surface.pretype binder list
-      ; ctor_name_locs : Asai.Range.t option list
+      ; ctors : Surface.pretype Surface.sbinder list
       }
   | KTopStackDef_HaveType of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
       ; signature : Surface.pretype
       ; moves : Surface.stack_move list
       ; clauses : Surface.clause list
       }
   | GTopElimDef of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
       ; result_ty : Surface.pretype
       ; opens : string list
       ; intros : (string * bool) list
@@ -191,9 +182,8 @@ type goal =
       }
   | KTopElimDef_HaveType of
       { loc : t
-      ; name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : Surface.pretype binder list
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
       ; signature : Surface.pretype
       ; opens : string list
       ; intros : (string * bool) list
@@ -204,9 +194,9 @@ type goal =
   | KTopRecord_HaveType of
       t
       * string
-      * Surface.pretype binder list
+      * Surface.pretype Surface.sbinder list
       * Surface.pretype
-      * Surface.pretype binder list
+      * Surface.pretype Surface.sbinder list
   (* Continuation frame for check-mode record literal elaboration.
      Fired after each field's GCheck completes.
      - r_name:            bare record name (for RecordIntro)
@@ -224,7 +214,7 @@ type goal =
       * string
       * (string * Core.term) list
       * string
-      * (string * Surface.preterm) list
+      * (string Surface.spanned * Surface.preterm) list
       * Core.typ Syntax.binder list
       * Core.value bwd
   (* Continuation for GInfer (Proj (e, f)): holds (loc, field_name) after e is inferred. *)
@@ -240,7 +230,7 @@ type goal =
   | KRecordUpdate_HaveBase of
       t
       * string
-      * (string * Surface.preterm) list
+      * (string Surface.spanned * Surface.preterm) list
       * Core.typ Syntax.binder list
       * Core.value bwd
   (* Continuation for each override field inside RecordUpdate.
@@ -258,7 +248,7 @@ type goal =
       t
       * string
       * Core.term
-      * (string * Surface.preterm) list
+      * (string Surface.spanned * Surface.preterm) list
       * (string * Core.term) list
       * string
       * Core.typ Syntax.binder list
@@ -380,13 +370,13 @@ let flush_goal_reports (m : machine) : unit =
 ;;
 
 let name_of_top : Surface.top -> string = function
-  | Surface.Let { name; _ } -> name
-  | Surface.Data { name; _ } -> name
-  | Surface.Stack_def { name; _ } -> name
-  | Surface.Elim_def { name; _ } -> name
+  | Surface.Let { name; _ } -> name.Surface.value
+  | Surface.Data { name; _ } -> name.Surface.value
+  | Surface.Stack_def { name; _ } -> name.Surface.value
+  | Surface.Elim_def { name; _ } -> name.Surface.value
   | Surface.Universe_decl _ -> "<universe_decl>"
   | Surface.Operator_decl _ -> "<operator_decl>"
-  | Surface.Record { name; _ } -> name
+  | Surface.Record { name; _ } -> name.Surface.value
 ;;
 
 let publish_to_context ~exported path datum =

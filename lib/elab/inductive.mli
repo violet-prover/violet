@@ -2,13 +2,12 @@
    eliminator call terms from elim-def clauses. *)
 
 open Violet_surface
-open Violet_kernel.Syntax
 
 (* Walk the function's full Pi tower in parallel with the user's intros to
    produce one entry per Pi-binder: `(name, implicit)`. *)
 val compute_effective_intros
   :  loc:Asai.Range.t
-  -> bindings:Surface.pretype binder list
+  -> bindings:Surface.pretype Surface.sbinder list
   -> signature:Surface.pretype
   -> intros:(string * bool) list
   -> (string * bool) list
@@ -28,7 +27,7 @@ val compute_effective_intros
 val build_elim_body
   :  loc:Asai.Range.t
   -> func_name:string
-  -> params:Surface.pretype binder list
+  -> params:Surface.pretype Surface.sbinder list
   -> signature:Surface.pretype
   -> opens:string list
   -> intros:(string * bool) list

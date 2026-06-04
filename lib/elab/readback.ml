@@ -46,8 +46,8 @@ let build_owner_map ~(ind_head : string) (info : Context.ind_info)
   in
   let from_deps =
     List.concat_map
-      (fun (d : Surface.pretype binder) ->
-         match head_of_surface d.bound with
+      (fun (d : Surface.pretype Surface.sbinder) ->
+         match (head_of_surface d.bound).Surface.node with
          | Surface.Var [ h ] -> ctors_of h
          | _ -> [])
       info.deps
@@ -74,13 +74,14 @@ let rec core_term_to_surface
           (t : Core.term)
   : Surface.preterm
   =
+  let at node : Surface.preterm = Surface.Mk.at loc node in
   let rb t = core_term_to_surface ~loc ~cv ~owner_map t in
   match t with
-  | Core.Universe _ -> Surface.Universe
+  | Core.Universe _ -> at Surface.Universe
   | Core.LocalVar ix ->
     let lvl = Context_view.lvl cv - 1 - ix in
     (match Context_view.nth_name_from_lvl cv lvl with
-     | Some name -> Surface.Var [ name ]
+     | Some name -> at (Surface.Var [ name ])
      | None ->
        Reporter.fatalf
          ~loc
@@ -89,8 +90,8 @@ let rec core_term_to_surface
          ix)
   | Core.Var n ->
     (match List.assoc_opt n owner_map with
-     | Some owner -> Surface.Var [ owner; n ]
-     | None -> Surface.Var [ n ])
+     | Some owner -> at (Surface.Var [ owner; n ])
+     | None -> at (Surface.Var [ n ]))
   | Core.App _ ->
     let rec collect_spine acc = function
       | Core.App (f, a, _) -> collect_spine (a :: acc) f
@@ -103,8 +104,10 @@ let rec core_term_to_surface
         let ind_imps =
           match Context.S.resolve [ x ] with
           | Some (_, `Inductive info) ->
-            let pi = List.map (fun (p : _ Syntax.binder) -> p.implicit) info.params in
-            let di = List.map (fun (d : _ Syntax.binder) -> d.implicit) info.deps in
+            let pi =
+              List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params
+            in
+            let di = List.map (fun (d : _ Surface.sbinder) -> d.implicit) info.deps in
             Some (pi @ di)
           | _ -> None
         in
@@ -116,14 +119,15 @@ let rec core_term_to_surface
                let data_imps = List.map (fun _ -> true) info.params in
                let ctor_opt =
                  List.find_opt
-                   (fun (c : _ Syntax.binder) -> Syntax.Name.to_string c.name = x)
+                   (fun (c : _ Surface.sbinder) ->
+                      Syntax.Name.to_string c.name.Surface.value = x)
                    info.ctors
                in
                let binder_imps =
                  match ctor_opt with
                  | Some c ->
                    List.map
-                     (fun (b : _ Syntax.binder) -> b.implicit)
+                     (fun (b : _ Surface.sbinder) -> b.implicit)
                      (Surface.telescope c.bound)
                  | None -> []
                in
@@ -145,28 +149,34 @@ let rec core_term_to_surface
            | Some v -> v
            | None -> false
          in
-         Surface.App (imp, acc, rb arg), i + 1)
+         at (Surface.App (imp, acc, rb arg)), i + 1)
       (head_s, 0)
       spine
     |> fst
   | Core.Lambda { name; bound; implicit } ->
     let ns = Syntax.Name.to_string name in
     let cv' = Context_view.extend cv ns in
-    Surface.Lambda
-      { name; bound = core_term_to_surface ~loc ~cv:cv' ~owner_map bound; implicit }
+    at
+      (Surface.Lambda
+         { name = { Surface.loc; value = name }
+         ; bound = core_term_to_surface ~loc ~cv:cv' ~owner_map bound
+         ; implicit
+         })
   | Core.TypedLambda ({ name; bound; implicit }, body) ->
     let ns = Syntax.Name.to_string name in
     let cv' = Context_view.extend cv ns in
-    Surface.TypedLambda
-      ( { name; bound = rb bound; implicit }
-      , core_term_to_surface ~loc ~cv:cv' ~owner_map body )
+    at
+      (Surface.TypedLambda
+         ( { name = { Surface.loc; value = name }; bound = rb bound; implicit }
+         , core_term_to_surface ~loc ~cv:cv' ~owner_map body ))
   | Core.Pi ({ name; bound; implicit }, body) ->
     let ns = Syntax.Name.to_string name in
     let cv' = Context_view.extend cv ns in
-    Surface.Pi
-      ( { name; bound = rb bound; implicit }
-      , core_term_to_surface ~loc ~cv:cv' ~owner_map body )
-  | Core.Meta _ | Core.InsertedMeta _ -> Surface.Hole
+    at
+      (Surface.Pi
+         ( { name = { Surface.loc; value = name }; bound = rb bound; implicit }
+         , core_term_to_surface ~loc ~cv:cv' ~owner_map body ))
+  | Core.Meta _ | Core.InsertedMeta _ -> at Surface.Hole
   | Core.Lift _ | Core.LiftTerm _ | Core.UnliftTerm _ ->
     Reporter.fatalf
       ~loc
@@ -180,15 +190,16 @@ let rec core_term_to_surface
       "elim: readback can't lower core term `%s` to surface"
       (Pretty.pp_term cv t)
   | Core.RecordIntro { name = _; fields } ->
-    Surface.RecordLit (List.map (fun (f, e) -> f, rb e) fields)
-  | Core.RecordProj { record; field } -> Surface.Proj (rb record, field)
-  | Core.IdAbsurd t -> Surface.IdAbsurd (rb t)
-  | Core.Empty -> Surface.Var [ "Empty" ]
-  | Core.Absurd t -> Surface.Absurd (rb t)
+    at (Surface.RecordLit (List.map (fun (f, e) -> { Surface.loc; value = f }, rb e) fields))
+  | Core.RecordProj { record; field } ->
+    at (Surface.Proj (rb record, { Surface.loc; value = field }))
+  | Core.IdAbsurd t -> at (Surface.IdAbsurd (rb t))
+  | Core.Empty -> at (Surface.Var [ "Empty" ])
+  | Core.Absurd t -> at (Surface.Absurd (rb t))
 ;;
 
 let%expect_test "core_term_to_surface: Universe" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Universe Level.LZero) in
   print_string (Surface.show_preterm result);
@@ -196,7 +207,7 @@ let%expect_test "core_term_to_surface: Universe" =
 ;;
 
 let%expect_test "core_term_to_surface: LocalVar renders binder name" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.extend Context_view.empty "x" in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.LocalVar 0) in
   print_string (Surface.show_preterm result);
@@ -204,7 +215,7 @@ let%expect_test "core_term_to_surface: LocalVar renders binder name" =
 ;;
 
 let%expect_test "core_term_to_surface: Lambda preserves binder name" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let tm = Core.Lambda { name = Named "y"; bound = Core.LocalVar 0; implicit = false } in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in
@@ -213,7 +224,7 @@ let%expect_test "core_term_to_surface: Lambda preserves binder name" =
 ;;
 
 let%expect_test "core_term_to_surface: Meta becomes Hole" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Meta (Core.MetaVar 0)) in
   print_string (Surface.show_preterm result);
@@ -221,7 +232,7 @@ let%expect_test "core_term_to_surface: Meta becomes Hole" =
 ;;
 
 let%expect_test "core_term_to_surface: Var with owner_map qualifies" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let owner_map = [ "zero", "Nat"; "suc", "Nat" ] in
   let result = core_term_to_surface ~loc ~cv ~owner_map (Core.Var "zero") in
@@ -230,7 +241,7 @@ let%expect_test "core_term_to_surface: Var with owner_map qualifies" =
 ;;
 
 let%expect_test "core_term_to_surface: RecordIntro" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let tm =
     Core.RecordIntro
@@ -242,7 +253,7 @@ let%expect_test "core_term_to_surface: RecordIntro" =
 ;;
 
 let%expect_test "core_term_to_surface: RecordProj" =
-  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
   let tm = Core.RecordProj { record = Core.Var "p"; field = "x" } in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in

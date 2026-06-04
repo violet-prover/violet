@@ -1,12 +1,13 @@
-open Asai.Range
 open Yuujinchou
 
-(* binder is shared with kernel *)
+(* binder_name is shared with kernel *)
 type binder_name = Violet_kernel.Syntax.binder_name =
   | Named of string
   | Anon
 [@@deriving show]
 
+(* Kernel binder, re-exported for the elaboration boundary. Surface code
+   uses [sbinder] (located names); [forget_binder] crosses over. *)
 type 't binder = 't Violet_kernel.Syntax.binder =
   { name : binder_name
   ; bound : 't
@@ -16,9 +17,31 @@ type 't binder = 't Violet_kernel.Syntax.binder =
 
 module Name = Violet_kernel.Syntax.Name
 
+(* A value paired with the source range it was written at. Unlike asai's
+   ['a located], the range is MANDATORY: synthesized values must inherit
+   the range of whatever they derive from — a missing position is
+   unrepresentable. *)
+type 'a spanned =
+  { loc : Asai.Range.t
+  ; value : 'a
+  }
+
+(* Hand-written printer (used by [@@deriving show] below by naming
+   convention): a spanned value prints as its payload; ranges stay out of
+   debug output so expect-test goldens keep their current shape. *)
+let pp_spanned pp_v fmt s = pp_v fmt s.value
+let show_spanned show_v s = show_v s.value
+
 type preterm =
-  | Located of preterm located
-  [@printer fun fmt { loc = _; value } -> fprintf fmt "%s" (show_preterm value)]
+  (preterm_record
+  [@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
+
+and preterm_record =
+  { loc : (Asai.Range.t[@opaque])
+  ; node : preterm_node
+  }
+
+and preterm_node =
   | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
   | Hole [@printer fun fmt _ -> fprintf fmt "_"]
   | Goal of string option
@@ -36,17 +59,24 @@ type preterm =
       then fprintf fmt "(%s {%s})" (show_preterm a) (show_preterm b)
       else fprintf fmt "(%s %s)" (show_preterm a) (show_preterm b)]
   (* fun x => M *)
-  (* so we record (x , M) *)
-  | Lambda of preterm binder
+  | Lambda of preterm sbinder
   [@printer
     fun fmt bind ->
       if bind.implicit
       then
-        fprintf fmt "fun {%s} => %s" (Name.to_string bind.name) (show_preterm bind.bound)
-      else fprintf fmt "fun %s => %s" (Name.to_string bind.name) (show_preterm bind.bound)]
+        fprintf
+          fmt
+          "fun {%s} => %s"
+          (Name.to_string bind.name.value)
+          (show_preterm bind.bound)
+      else
+        fprintf
+          fmt
+          "fun %s => %s"
+          (Name.to_string bind.name.value)
+          (show_preterm bind.bound)]
   (* fun (x : T) => M *)
-  (* so we record (x , T , M) *)
-  | TypedLambda of pretype binder * preterm
+  | TypedLambda of pretype sbinder * preterm
   [@printer
     fun fmt (bind, body) ->
       if bind.implicit
@@ -54,17 +84,17 @@ type preterm =
         fprintf
           fmt
           "fun {%s : %s} => %s"
-          (Name.to_string bind.name)
+          (Name.to_string bind.name.value)
           (show_pretype bind.bound)
           (show_preterm body)
       else
         fprintf
           fmt
           "fun (%s : %s) => %s"
-          (Name.to_string bind.name)
+          (Name.to_string bind.name.value)
           (show_pretype bind.bound)
           (show_preterm body)]
-  | Pi of pretype binder * pretype
+  | Pi of pretype sbinder * pretype
   [@printer
     fun fmt (bind, b) ->
       if bind.implicit
@@ -72,14 +102,14 @@ type preterm =
         fprintf
           fmt
           "Π{%s : %s} -> %s"
-          (Name.to_string bind.name)
+          (Name.to_string bind.name.value)
           (show_pretype bind.bound)
           (show_pretype b)
       else
         fprintf
           fmt
           "Π(%s : %s) -> %s"
-          (Name.to_string bind.name)
+          (Name.to_string bind.name.value)
           (show_pretype bind.bound)
           (show_pretype b)]
   | Max of preterm * preterm
@@ -91,7 +121,7 @@ type preterm =
   [@printer
     fun fmt items ->
       fprintf fmt "<soup:[%s]>" (String.concat "; " (List.map show_soup_item items))]
-  | RecordLit of (string * preterm) list
+  | RecordLit of (string spanned * preterm) list
   [@printer
     fun fmt aentries ->
       fprintf
@@ -99,17 +129,19 @@ type preterm =
         "{ %s }"
         (String.concat
            ", "
-           (List.map (fun (f, e) -> f ^ " = " ^ show_preterm e) aentries))]
-  | RecordUpdate of preterm * (string * preterm) list
+           (List.map (fun (f, e) -> f.value ^ " = " ^ show_preterm e) aentries))]
+  | RecordUpdate of preterm * (string spanned * preterm) list
   [@printer
     fun fmt (base, entries) ->
       fprintf
         fmt
         "{ %s | %s }"
         (show_preterm base)
-        (String.concat ", " (List.map (fun (f, e) -> f ^ " = " ^ show_preterm e) entries))]
-  | Proj of preterm * string
-  [@printer fun fmt (e, f) -> fprintf fmt "%s.%s" (show_preterm e) f]
+        (String.concat
+           ", "
+           (List.map (fun (f, e) -> f.value ^ " = " ^ show_preterm e) entries))]
+  | Proj of preterm * string spanned
+  [@printer fun fmt (e, f) -> fprintf fmt "%s.%s" (show_preterm e) f.value]
   (* Builtin disjointness primitive: `\absurd-id <p>` where `p` has type
      `Id (c1 args1) (c2 args2)` for distinct same-inductive constructors
      `c1` and `c2`. Elaborates to `Core.IdAbsurd` with type `Empty`.
@@ -121,6 +153,14 @@ type preterm =
   | Inline_elim of inline_elim_data
   [@printer fun fmt d -> fprintf fmt "(<= elim %s)" d.target]
 
+(* Surface binder: like the kernel binder but the bound name remembers
+   where it was written. *)
+and 't sbinder =
+  { name : binder_name spanned
+  ; bound : 't
+  ; implicit : bool
+  }
+
 and inline_elim_data =
   { target : string
   ; siblings : (clause * pattern list) list
@@ -131,21 +171,29 @@ and inline_elim_data =
 
 and soup_item =
   | SI_Atom of preterm [@printer fun fmt p -> fprintf fmt "A(%s)" (show_preterm p)]
-  | SI_Name of string * (Asai.Range.t[@opaque]) option
-  [@printer fun fmt (s, _) -> fprintf fmt "N(%s)" s]
+  | SI_Name of string spanned [@printer fun fmt s -> fprintf fmt "N(%s)" s.value]
   | SI_Imp_arg of preterm [@printer fun fmt p -> fprintf fmt "I{%s}" (show_preterm p)]
 
 and pretype = preterm
 
 and pattern =
+  (pattern_record
+  [@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
+
+and pattern_record =
+  { ploc : (Asai.Range.t[@opaque])
+  ; pnode : pattern_node
+  }
+
+and pattern_node =
   | PVar of string
   | PWildcard
-  | PCon of string * pattern list
+  | PCon of string spanned * pattern list
   | PImpVar of string
-  | PRecord of (string * pattern) list
+  | PRecord of (string spanned * pattern) list
 
 and clause =
-  { head : string
+  { head : string spanned
   ; patterns : pattern list
   ; body : preterm
   }
@@ -182,25 +230,22 @@ type op_option =
 
 type top =
   | Let of
-      { name : string
-      ; name_loc : (Asai.Range.t[@opaque]) option
-      ; bindings : pretype binder list
+      { name : string spanned
+      ; bindings : pretype sbinder list
       ; result_ty : pretype
       ; body : preterm
       }
-  (* `\data <name> <params> : <deps> -> <ind_ty> | <ctors>` *)
+  (* `\data <name> <params> : <deps> -> <ind_ty> | <ctors>`.
+     Constructor-name locations live in each ctor sbinder's [name.loc]. *)
   | Data of
-      { name : string
-      ; name_loc : (Asai.Range.t[@opaque]) option
-      ; params : pretype binder list
-      ; deps : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
+      ; deps : pretype sbinder list
       ; ind_ty : pretype
-      ; ind_ty_loc : (Asai.Range.t[@opaque]) option
-      ; ctors : pretype binder list
-      ; ctor_name_locs : (Asai.Range.t[@opaque]) option list
+      ; ctors : pretype sbinder list
       }
   (* `\universe U V W` declares per-module level variables. *)
-  | Universe_decl of (string * (Asai.Range.t[@opaque]) option) list
+  | Universe_decl of string spanned list
   (*
      let <name> <params> : <signature> where
        <moves>
@@ -208,9 +253,8 @@ type top =
        | ...
   *)
   | Stack_def of
-      { name : string
-      ; name_loc : (Asai.Range.t[@opaque]) option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; signature : pretype
       ; moves : stack_move list
       ; clauses : clause list
@@ -228,9 +272,8 @@ type top =
      inductive names whose ctors are usable unqualified in clause bodies.
   *)
   | Elim_def of
-      { name : string
-      ; name_loc : (Asai.Range.t[@opaque]) option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; signature : pretype
       ; opens : string list
       ; intros : (string * bool) list
@@ -251,82 +294,140 @@ type top =
       ; options : op_option list
       }
   | Record of
-      { name : string
-      ; name_loc : (Asai.Range.t[@opaque]) option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; ind_ty : pretype
-      ; fields : pretype binder list
+      ; fields : pretype sbinder list
       }
 [@@deriving show]
 
 type t =
   { name : string
   ; imports : Trie.path list (* import libraries *)
-  ; exports : (string * (Asai.Range.t[@opaque]) option) list
-  ; tops : top Asai.Range.located list
+  ; exports : string spanned list
+  ; tops : top spanned list
   }
 
-let rec lambda (names : string list) (body : preterm) : preterm =
+(* The range from [a]'s start to [b]'s end. Locations on synthesized terms
+   are provenance tags, so [a] and [b] may come from different sources or
+   appear in either textual order; joining is only meaningful for
+   same-source ranges with [a] starting no later than [b] ends. Everything
+   else (including EOF views) falls back to [a]. *)
+let join_loc (a : Asai.Range.t) (b : Asai.Range.t) : Asai.Range.t =
+  match Asai.Range.view a, Asai.Range.view b with
+  | `Range (s, _), `Range (_, e) when s.source = e.source && s.offset <= e.offset ->
+    Asai.Range.make (s, e)
+  | _ -> a
+;;
+
+(* For whitebox tests and the REPL, where there is no source file. *)
+let dummy_loc : Asai.Range.t =
+  Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+;;
+
+module Mk = struct
+  let at (loc : Asai.Range.t) (node : preterm_node) : preterm = { loc; node }
+  let re_loc (loc : Asai.Range.t) (t : preterm) : preterm = { t with loc }
+end
+
+(* Cross to the kernel binder, dropping the name's location. *)
+let forget_binder (b : 't sbinder) : 't Violet_kernel.Syntax.binder =
+  { name = b.name.value; bound = b.bound; implicit = b.implicit }
+;;
+
+let rec lambda (names : string spanned list) (body : preterm) : preterm =
   match names with
   | [] -> body
-  | p :: ps -> Lambda { name = Named p; bound = lambda ps body; implicit = false }
+  | p :: ps ->
+    let inner = lambda ps body in
+    { loc = join_loc p.loc inner.loc
+    ; node =
+        Lambda
+          { name = { loc = p.loc; value = Named p.value }
+          ; bound = inner
+          ; implicit = false
+          }
+    }
 ;;
 
-let rec typed_lambda (binds : pretype binder list) (body : preterm) : preterm =
+let rec typed_lambda (binds : pretype sbinder list) (body : preterm) : preterm =
   match binds with
   | [] -> body
-  | b :: bs -> TypedLambda (b, typed_lambda bs body)
+  | b :: bs ->
+    let inner = typed_lambda bs body in
+    { loc = join_loc b.name.loc inner.loc; node = TypedLambda (b, inner) }
 ;;
 
-let rec telescope : pretype -> pretype binder list = function
-  | Located { value = p; _ } -> telescope p
+let rec telescope (t : pretype) : pretype sbinder list =
+  match t.node with
   | Pi (bind, body) -> bind :: telescope body
   | _ -> []
 ;;
 
-let rec codomain : pretype -> pretype = function
-  | Located { value = p; _ } -> codomain p
+let rec codomain (t : pretype) : pretype =
+  match t.node with
   | Pi (_, body) -> codomain body
-  | t -> t
+  | _ -> t
 ;;
 
-let codomain_loc (t : pretype) : Asai.Range.t option =
-  let rec go last_loc = function
-    | Located { value = p; loc } -> go loc p
-    | Pi (_, body) -> go None body
-    | _ -> last_loc
-  in
-  go None t
-;;
-
-let rec pi (tele : pretype binder list) (result : pretype) : pretype =
+let rec pi (tele : pretype sbinder list) (result : pretype) : pretype =
   match tele with
   | [] -> result
-  | b :: bs -> Pi (b, pi bs result)
+  | b :: bs ->
+    let body = pi bs result in
+    { loc = join_loc b.name.loc body.loc; node = Pi (b, body) }
 ;;
 
 let rec applied_spine (t : preterm) : preterm list =
-  match t with
+  match t.node with
   | App (_, f, arg) -> applied_spine f @ [ arg ]
-  | Located { value; _ } -> applied_spine value
   | _ -> []
 ;;
 
 let rec apply (f : preterm) (args : preterm list) : preterm =
   match f, args with
   | f, [] -> f
-  | f, x :: xs -> apply (App (false, f, x)) xs
+  | f, x :: xs -> apply { loc = join_loc f.loc x.loc; node = App (false, f, x) } xs
 ;;
 
-let rec apply_tele (f : preterm) (tele : preterm binder list) : preterm =
+let rec apply_tele (f : preterm) (tele : preterm sbinder list) : preterm =
   match f, tele with
   | f, [] -> f
   | f, { name; implicit; _ } :: xs ->
-    apply_tele (App (implicit, f, Var [ Name.to_string name ])) xs
+    let arg = { loc = name.loc; node = Var [ Name.to_string name.value ] } in
+    apply_tele { loc = join_loc f.loc name.loc; node = App (implicit, f, arg) } xs
 ;;
 
 let%expect_test "applied spine" =
-  let result = applied_spine (apply (Var [ "a" ]) [ Var [ "b" ]; Var [ "c" ] ]) in
+  let v s = Mk.at dummy_loc (Var [ s ]) in
+  let result = applied_spine (apply (v "a") [ v "b"; v "c" ]) in
   print_string @@ [%show: preterm list] result;
   [%expect {| [b; c] |}]
+;;
+
+(* join_loc is fed provenance locs on synthesized terms, which come in
+   arbitrary textual order and possibly from different files. It must be
+   total: out-of-order or cross-source pairs fall back to the first range
+   instead of raising (Asai.Range.make asserts start <= end). *)
+let%expect_test "join_loc: ordered, inverted, cross-file" =
+  let mk_range file b e : Asai.Range.t =
+    let pos cnum : Lexing.position =
+      { pos_fname = file; pos_lnum = 1; pos_bol = 0; pos_cnum = cnum }
+    in
+    Asai.Range.of_lex_range (pos b, pos e)
+  in
+  let show r =
+    match Asai.Range.view r with
+    | `Range (s, e) -> Printf.sprintf "[%d,%d)" s.Asai.Range.offset e.Asai.Range.offset
+    | `End_of_file _ -> "<eof>"
+  in
+  let early = mk_range "f.vt" 10 20 in
+  let late = mk_range "f.vt" 50 60 in
+  let other = mk_range "g.vt" 0 5 in
+  Printf.printf
+    "ordered=%s inverted=%s cross=%s"
+    (show (join_loc early late))
+    (show (join_loc late early))
+    (show (join_loc early other));
+  [%expect {| ordered=[10,60) inverted=[50,60) cross=[10,20) |}]
 ;;

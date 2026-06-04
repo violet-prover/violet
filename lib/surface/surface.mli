@@ -12,25 +12,46 @@ type 't binder = 't Violet_kernel.Syntax.binder =
 
 module Name = Violet_kernel.Syntax.Name
 
+type 'a spanned =
+  { loc : Asai.Range.t
+  ; value : 'a
+  }
+
+val pp_spanned : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a spanned -> unit
+val show_spanned : ('a -> string) -> 'a spanned -> string
+
 type preterm =
-  | Located of preterm Asai.Range.located
+  (preterm_record
+  [@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
+
+and preterm_record =
+  { loc : (Asai.Range.t[@opaque])
+  ; node : preterm_node
+  }
+
+and preterm_node =
   | Universe
   | Hole
   | Goal of string option
   | Var of string list
   | App of bool * preterm * preterm
-  | Lambda of preterm binder
-  | TypedLambda of pretype binder * preterm
-  | Pi of pretype binder * pretype
+  | Lambda of preterm sbinder
+  | TypedLambda of pretype sbinder * preterm
+  | Pi of pretype sbinder * pretype
   | Max of preterm * preterm
   | Op_soup of soup_item list
-  | RecordLit of (string * preterm) list
-  | RecordUpdate of preterm * (string * preterm) list
-  | Proj of preterm * string
+  | RecordLit of (string spanned * preterm) list
+  | RecordUpdate of preterm * (string spanned * preterm) list
+  | Proj of preterm * string spanned
   | IdAbsurd of preterm
   | Absurd of preterm
   | Inline_elim of inline_elim_data
-[@@deriving show]
+
+and 't sbinder =
+  { name : binder_name spanned
+  ; bound : 't
+  ; implicit : bool
+  }
 
 and inline_elim_data =
   { target : string
@@ -41,21 +62,29 @@ and inline_elim_data =
 
 and soup_item =
   | SI_Atom of preterm
-  | SI_Name of string * Asai.Range.t option
+  | SI_Name of string spanned
   | SI_Imp_arg of preterm
-[@@deriving show]
 
 and pretype = preterm
 
 and pattern =
+  (pattern_record
+  [@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
+
+and pattern_record =
+  { ploc : (Asai.Range.t[@opaque])
+  ; pnode : pattern_node
+  }
+
+and pattern_node =
   | PVar of string
   | PWildcard
-  | PCon of string * pattern list
+  | PCon of string spanned * pattern list
   | PImpVar of string
-  | PRecord of (string * pattern) list
+  | PRecord of (string spanned * pattern) list
 
 and clause =
-  { head : string
+  { head : string spanned
   ; patterns : pattern list
   ; body : preterm
   }
@@ -88,35 +117,29 @@ type op_option =
 
 type top =
   | Let of
-      { name : string
-      ; name_loc : Asai.Range.t option
-      ; bindings : pretype binder list
+      { name : string spanned
+      ; bindings : pretype sbinder list
       ; result_ty : pretype
       ; body : preterm
       }
   | Data of
-      { name : string
-      ; name_loc : Asai.Range.t option
-      ; params : pretype binder list
-      ; deps : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
+      ; deps : pretype sbinder list
       ; ind_ty : pretype
-      ; ind_ty_loc : Asai.Range.t option
-      ; ctors : pretype binder list
-      ; ctor_name_locs : Asai.Range.t option list
+      ; ctors : pretype sbinder list
       }
-  | Universe_decl of (string * Asai.Range.t option) list
+  | Universe_decl of string spanned list
   | Stack_def of
-      { name : string
-      ; name_loc : Asai.Range.t option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; signature : pretype
       ; moves : stack_move list
       ; clauses : clause list
       }
   | Elim_def of
-      { name : string
-      ; name_loc : Asai.Range.t option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; signature : pretype
       ; opens : string list
       ; intros : (string * bool) list
@@ -129,27 +152,34 @@ type top =
       ; options : op_option list
       }
   | Record of
-      { name : string
-      ; name_loc : Asai.Range.t option
-      ; params : pretype binder list
+      { name : string spanned
+      ; params : pretype sbinder list
       ; ind_ty : pretype
-      ; fields : pretype binder list
+      ; fields : pretype sbinder list
       }
 [@@deriving show]
 
 type t =
   { name : string
   ; imports : Yuujinchou.Trie.path list
-  ; exports : (string * Asai.Range.t option) list
-  ; tops : top Asai.Range.located list
+  ; exports : string spanned list
+  ; tops : top spanned list
   }
 
-val lambda : string list -> preterm -> preterm
-val typed_lambda : pretype binder list -> preterm -> preterm
-val telescope : pretype -> pretype binder list
+val join_loc : Asai.Range.t -> Asai.Range.t -> Asai.Range.t
+val dummy_loc : Asai.Range.t
+
+module Mk : sig
+  val at : Asai.Range.t -> preterm_node -> preterm
+  val re_loc : Asai.Range.t -> preterm -> preterm
+end
+
+val forget_binder : 't sbinder -> 't Violet_kernel.Syntax.binder
+val lambda : string spanned list -> preterm -> preterm
+val typed_lambda : pretype sbinder list -> preterm -> preterm
+val telescope : pretype -> pretype sbinder list
 val codomain : pretype -> pretype
-val codomain_loc : pretype -> Asai.Range.t option
-val pi : pretype binder list -> pretype -> pretype
+val pi : pretype sbinder list -> pretype -> pretype
 val applied_spine : preterm -> preterm list
 val apply : preterm -> preterm list -> preterm
-val apply_tele : preterm -> preterm binder list -> preterm
+val apply_tele : preterm -> preterm sbinder list -> preterm

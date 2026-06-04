@@ -18,35 +18,26 @@ let try_insert_implicit_abstraction
   =
   match Evaluation.force_head ty with
   | Core.VPi ({ name = pi_name; bound = a; implicit = true }, b)
-    when match term with
+    when match term.Surface.node with
          | Lambda { implicit = true; _ } -> false
          | _ -> true ->
     let body_ty = b (Core.RigidLocal (m.ctx.lvl, Bwd.Emp)) in
     save_ctx m;
     m.ctx <- bind m.ctx pi_name a;
     push m (KLam_Body (loc, pi_name, true));
-    push m (GCheck (loc, term, body_ty));
+    push m (GCheck (term, body_ty));
     true
   | _ -> false
 ;;
 
 let rec dispatch (m : machine) (g : goal) : unit =
   match g with
-  | GInfer (loc, Located { loc = loc'; value }) ->
-    push m (GInfer (Option.get loc', value));
-    ignore loc
-  | GCheck (loc, Located { loc = loc'; value }, ty) ->
-    push m (GCheck (Option.get loc', value, ty));
-    ignore loc
-  | GCheck (loc, term, ty) when try_insert_implicit_abstraction m loc term ty -> ()
-  | GInferType (loc, Located { loc = loc'; value }) ->
-    push m (GInferType (Option.get loc', value));
-    ignore loc
-  | GInfer (_, Universe) ->
+  | GCheck (term, ty) when try_insert_implicit_abstraction m term.loc term ty -> ()
+  | GInfer { node = Universe; _ } ->
     m.result
     <- Some
          (PTermType (Core.Universe Level.LZero, Core.Universe (Level.LSuc Level.LZero)))
-  | GInfer (loc, Var [ x ]) ->
+  | GInfer { loc; node = Var [ x ] } ->
     (match resolve_local m.ctx x with
      | Some i ->
        let ty = local_type m.ctx i in
@@ -69,20 +60,20 @@ let rec dispatch (m : machine) (g : goal) : unit =
           in
           Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
           m.result <- Some (PTermType (Core.Var x, ty))))
-  | GInfer (loc, Var path) ->
+  | GInfer { loc; node = Var path } ->
     let ty = Context.lookup_path path in
     let joined = String.concat "/" path in
     let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
     Observer.emit (Use { path; loc; def_loc = None; ty; pp_ty });
     m.result <- Some (PTermType (Core.Var joined, ty))
-  | GInferType (loc, Goal name_opt) ->
+  | GInferType { loc; node = Goal name_opt } ->
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:(Core.Universe Level.LZero);
     incr m.pending_goals;
     m.result <- Some (PType (Meta.fresh_goal m.ctx.lvl, Level.LZero))
-  | GInferType (loc, p) ->
+  | GInferType ({ loc; _ } as p) ->
     push m (KEnsureUniverse loc);
-    push m (GInfer (loc, p))
+    push m (GInfer p)
   | KEnsureUniverse loc ->
     (match take_result m with
      | PTermType (tm, ty) ->
@@ -97,9 +88,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf Elab_error "KEnsureUniverse: bad result %s" (produced_tag other))
-  | GInfer (loc, Pi ({ name; bound = a; implicit }, b)) ->
-    push m (KPi_HaveDom (loc, name, implicit, b));
-    push m (GInferType (loc, a))
+  | GInfer { loc; node = Pi ({ name; bound = a; implicit }, b) } ->
+    push m (KPi_HaveDom (loc, name.Surface.value, implicit, b));
+    push m (GInferType a)
   | KPi_HaveDom (loc, name, implicit, body) ->
     (match take_result m with
      | PType (a_tm, l_a) ->
@@ -107,7 +98,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        save_ctx m;
        m.ctx <- bind m.ctx name a_val;
        push m (KPi_HaveCod (loc, name, implicit, a_tm, l_a));
-       push m (GInferType (loc, body))
+       push m (GInferType body)
      | other ->
        Reporter.fatalf Elab_error "KPi_HaveDom: bad result %s" (produced_tag other))
   | KPi_HaveCod (_loc, name, implicit, a_tm, l_a) ->
@@ -121,7 +112,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
                , Core.Universe (Level.lmax l_a l_b) ))
      | other ->
        Reporter.fatalf Elab_error "KPi_HaveCod: bad result %s" (produced_tag other))
-  | GCheck (loc, Lambda { name; bound = body; implicit = lambda_mode }, ty) ->
+  | GCheck ({ loc; node = Lambda { name; bound = body; implicit = lambda_mode } }, ty) ->
     (match Evaluation.force_head ty with
      | Core.VPi ({ name = _; bound = a; implicit = pi_mode }, b) ->
        if lambda_mode <> pi_mode
@@ -129,9 +120,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        else begin
          let body_ty = b (Core.RigidLocal (m.ctx.lvl, Bwd.Emp)) in
          save_ctx m;
-         m.ctx <- bind m.ctx name a;
-         push m (KLam_Body (loc, name, lambda_mode));
-         push m (GCheck (loc, body, body_ty))
+         m.ctx <- bind m.ctx name.Surface.value a;
+         push m (KLam_Body (loc, name.Surface.value, lambda_mode));
+         push m (GCheck (body, body_ty))
        end
      | _ ->
        let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
@@ -142,9 +133,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
        restore_ctx m;
        m.result <- Some (PTerm (Core.Lambda { name; bound = body_tm; implicit }))
      | other -> Reporter.fatalf Elab_error "KLam_Body: bad result %s" (produced_tag other))
-  | GInfer (loc, TypedLambda ({ name; bound = ty; implicit }, body)) ->
-    push m (KTypedLam_HaveDom (loc, name, implicit, body));
-    push m (GInferType (loc, ty))
+  | GInfer { loc; node = TypedLambda ({ name; bound = ty; implicit }, body) } ->
+    push m (KTypedLam_HaveDom (loc, name.Surface.value, implicit, body));
+    push m (GInferType ty)
   | KTypedLam_HaveDom (loc, name, implicit, body) ->
     (match take_result m with
      | PType (ty_tm, _) ->
@@ -152,7 +143,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        save_ctx m;
        m.ctx <- bind m.ctx name ty_val;
        push m (KTypedLam_HaveBody (loc, name, implicit, ty_tm, ty_val));
-       push m (GInfer (loc, body))
+       push m (GInfer body)
      | other ->
        Reporter.fatalf Elab_error "KTypedLam_HaveDom: bad result %s" (produced_tag other))
   | KTypedLam_HaveBody (_loc, name, implicit, ty_tm, ty_val) ->
@@ -166,9 +157,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
                , Core.VPi ({ name; bound = ty_val; implicit }, fun _ -> body_ty) ))
      | other ->
        Reporter.fatalf Elab_error "KTypedLam_HaveBody: bad result %s" (produced_tag other))
-  | GInfer (loc, App (is_implicit, f, arg)) ->
+  | GInfer { loc; node = App (is_implicit, f, arg) } ->
     push m (KApp_HaveFn (loc, is_implicit, arg));
-    push m (GInfer (loc, f))
+    push m (GInfer f)
   | KApp_HaveFn (loc, is_implicit, arg) ->
     (match take_result m with
      | PTermType (f_tm, f_ty) ->
@@ -177,7 +168,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           if is_implicit = implicit
           then begin
             push m (KApp_HaveArg (loc, f_tm, b, implicit));
-            push m (GCheck (loc, arg, a))
+            push m (GCheck (arg, a))
           end
           else if implicit
           then begin
@@ -218,13 +209,13 @@ let rec dispatch (m : machine) (g : goal) : unit =
        m.result <- Some (PTermType (Core.App (f_tm, arg_tm, implicit), b arg_val))
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveArg: bad result %s" (produced_tag other))
-  | GInfer (loc, Op_soup _) | GCheck (loc, Op_soup _, _) ->
+  | GInfer { loc; node = Op_soup _ } | GCheck ({ loc; node = Op_soup _ }, _) ->
     Reporter.fatalf
       ~loc
       Elab_error
       "internal: Op_soup reached elaborator (resolver should have lowered it)"
-  | GInfer (loc, RecordLit _) -> Elab_record.handle_infer_record_lit m loc
-  | GCheck (loc, RecordLit entries, expected_ty) ->
+  | GInfer { loc; node = RecordLit _ } -> Elab_record.handle_infer_record_lit m loc
+  | GCheck ({ loc; node = RecordLit entries }, expected_ty) ->
     Elab_record.handle_check_record_lit m loc entries expected_ty
   | KRecordLit_Field
       ( loc
@@ -243,8 +234,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
       remaining_entries
       remaining_term_binders
       eval_env
-  | GInfer (loc, RecordUpdate _) -> Elab_record.handle_infer_record_update m loc
-  | GCheck (loc, RecordUpdate (base, overrides), expected_ty) ->
+  | GInfer { loc; node = RecordUpdate _ } -> Elab_record.handle_infer_record_update m loc
+  | GCheck ({ loc; node = RecordUpdate (base, overrides) }, expected_ty) ->
     Elab_record.handle_check_record_update m loc base overrides expected_ty
   | KRecordUpdate_HaveBase (loc, r_name, overrides, term_fields, field_env) ->
     Elab_record.handle_record_update_have_base
@@ -273,38 +264,39 @@ let rec dispatch (m : machine) (g : goal) : unit =
       current_fname
       remaining_term_fields
       eval_env
-  | GInfer (loc, Proj (e, f)) -> Elab_record.handle_infer_proj m loc e f
+  | GInfer { loc; node = Proj (e, f) } -> Elab_record.handle_infer_proj m loc e f
   | KProj_HaveRec (loc, f) -> Elab_record.handle_proj_have_rec m loc f
-  | GInfer (loc, Lambda _) -> Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
-  | GCheck (_loc, Hole, _) -> m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
-  | GInfer (_loc, Hole) ->
+  | GInfer { loc; node = Lambda _ } ->
+    Reporter.fatalf ~loc Elab_error "cannot infer lambda term"
+  | GCheck ({ node = Hole; _ }, _) -> m.result <- Some (PTerm (Meta.meta_fresh m.ctx.lvl))
+  | GInfer { node = Hole; _ } ->
     let ty = Evaluation.eval m.ctx.env (Meta.meta_fresh m.ctx.lvl) in
     let tm = Meta.meta_fresh m.ctx.lvl in
     m.result <- Some (PTermType (tm, ty))
-  | GCheck (loc, Inline_elim d, ty) ->
+  | GCheck ({ loc; node = Inline_elim d }, ty) ->
     Elab_elim.handle_check_inline_elim ~infer_term m loc d ty
-  | GInfer (loc, Inline_elim _) ->
+  | GInfer { loc; node = Inline_elim _ } ->
     Reporter.fatalf ~loc Elab_error "cannot infer the type of a nested `<= \\elim`"
-  | GCheck (loc, Goal name_opt, ty) ->
+  | GCheck ({ loc; node = Goal name_opt }, ty) ->
     let name = resolve_goal_name m name_opt in
     emit_goal_report ~loc m ~name ~target:ty;
     incr m.pending_goals;
     m.result <- Some (PTerm (Meta.fresh_goal m.ctx.lvl))
-  | GInfer (loc, Goal name_opt) ->
+  | GInfer { loc; node = Goal name_opt } ->
     let name = resolve_goal_name m name_opt in
     let ty_tm = Meta.fresh_goal m.ctx.lvl in
     let ty_val = Evaluation.eval m.ctx.env ty_tm in
     emit_goal_report ~loc m ~name ~target:ty_val;
     incr m.pending_goals;
     m.result <- Some (PTermType (Meta.fresh_goal m.ctx.lvl, ty_val))
-  | GInfer (loc, Max (a, b)) ->
+  | GInfer { loc; node = Max (a, b) } ->
     push m (KMax_HaveLeft (loc, b));
-    push m (GInfer (loc, a))
+    push m (GInfer a)
   | KMax_HaveLeft (loc, b) ->
     (match take_result m with
      | PTermType (Core.Universe l_a, _) ->
        push m (KMax_HaveRight (loc, l_a));
-       push m (GInfer (loc, b))
+       push m (GInfer b)
      | PTermType (other_tm, _) ->
        Reporter.fatalf
          ~loc
@@ -326,12 +318,12 @@ let rec dispatch (m : machine) (g : goal) : unit =
          (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
        Reporter.fatalf Elab_error "KMax_HaveRight: bad result %s" (produced_tag other))
-  | GInfer (loc, IdAbsurd p) ->
+  | GInfer { loc; node = IdAbsurd p } ->
     push m (KIdAbsurd_HaveArg loc);
-    push m (GInfer (loc, p))
-  | GInfer (loc, Absurd p) ->
+    push m (GInfer p)
+  | GInfer { loc; node = Absurd p } ->
     push m (KAbsurd_HaveArg loc);
-    push m (GCheck (loc, p, Core.VEmpty))
+    push m (GCheck (p, Core.VEmpty))
   | KAbsurd_HaveArg loc ->
     (match take_result m with
      | PTermType (p_tm, _) | PTerm p_tm ->
@@ -397,7 +389,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf Elab_error "KIdAbsurd_HaveArg: bad result %s" (produced_tag other))
-  | GCheck (loc, Var [ x ], expected) when Option.is_none (resolve_local m.ctx x) ->
+  | GCheck (({ loc; node = Var [ x ] } as term), expected)
+    when Option.is_none (resolve_local m.ctx x) ->
     (* Type-directed resolution: if expected forces to IndType(ind, _) and
        [ind; x] is bound in Context, use the namespaced binding.
        Otherwise fall through to standard inference. *)
@@ -411,10 +404,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
        m.result <- Some (PTermType (tm, ty))
      | _ ->
        push m (KCheckBy_Infer (loc, expected));
-       push m (GInfer (loc, Var [ x ])))
-  | GCheck (loc, other, expected) ->
-    push m (KCheckBy_Infer (loc, expected));
-    push m (GInfer (loc, other))
+       push m (GInfer term))
+  | GCheck (other, expected) ->
+    push m (KCheckBy_Infer (other.loc, expected));
+    push m (GInfer other)
   | KCheckBy_Infer (loc, expected) ->
     (match take_result m with
      | PTermType (tm, infer_ty) ->
@@ -442,42 +435,37 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | other ->
        Reporter.fatalf Elab_error "KCheckBy_Infer: bad result %s" (produced_tag other))
   | GTopUniverseDecl names -> Elab_decl.handle_universe_decl m names
-  | GTopLet { loc; name; name_loc; bindings; result_ty; body } ->
-    Elab_decl.handle_top_let m ~loc ~name ~name_loc ~bindings ~result_ty ~body
-  | KTopLet_HaveType { loc; name; name_loc; body; bindings } ->
-    Elab_decl.handle_top_let_have_type m ~loc ~name ~name_loc ~body ~bindings
-  | KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val } ->
-    Elab_decl.handle_top_let_have_body m ~loc ~name ~name_loc ~typ_tm ~typ_val
-  | KTopElimDef_HaveBody { loc; name; name_loc; typ_tm; typ_val; func_name; target_pos }
-    ->
+  | GTopLet { loc; name; bindings; result_ty; body } ->
+    Elab_decl.handle_top_let m ~loc ~name ~bindings ~result_ty ~body
+  | KTopLet_HaveType { loc; name; body; bindings } ->
+    Elab_decl.handle_top_let_have_type m ~loc ~name ~body ~bindings
+  | KTopLet_HaveBody { loc; name; typ_tm; typ_val } ->
+    Elab_decl.handle_top_let_have_body m ~loc ~name ~typ_tm ~typ_val
+  | KTopElimDef_HaveBody { loc; name; typ_tm; typ_val; func_name; target_pos } ->
     Elab_elim.handle_elim_def_have_body
       m
       ~loc
       ~name
-      ~name_loc
       ~typ_tm
       ~typ_val
       ~func_name
       ~target_pos
-  | GTopStackDef { loc; name; name_loc; bindings; result_ty; moves; clauses } ->
-    Elab_elim.handle_stack_def m ~loc ~name ~name_loc ~bindings ~result_ty ~moves ~clauses
-  | KTopStackDef_HaveType { loc; name; name_loc; bindings; signature; moves; clauses } ->
+  | GTopStackDef { loc; name; bindings; result_ty; moves; clauses } ->
+    Elab_elim.handle_stack_def m ~loc ~name ~bindings ~result_ty ~moves ~clauses
+  | KTopStackDef_HaveType { loc; name; bindings; signature; moves; clauses } ->
     Elab_elim.handle_stack_def_have_type
       m
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~signature
       ~moves
       ~clauses
-  | GTopElimDef
-      { loc; name; name_loc; bindings; result_ty; opens; intros; target; clauses } ->
+  | GTopElimDef { loc; name; bindings; result_ty; opens; intros; target; clauses } ->
     Elab_elim.handle_elim_def
       m
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~result_ty
       ~opens
@@ -485,12 +473,11 @@ let rec dispatch (m : machine) (g : goal) : unit =
       ~target
       ~clauses
   | KTopElimDef_HaveType
-      { loc; name; name_loc; bindings; signature; opens; intros; target; clauses } ->
+      { loc; name; bindings; signature; opens; intros; target; clauses } ->
     Elab_elim.handle_elim_def_have_type
       m
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~signature
       ~opens
@@ -498,19 +485,16 @@ let rec dispatch (m : machine) (g : goal) : unit =
       ~target
       ~clauses
   | GTopData (loc, data) -> Elab_data.handle_top_data m loc data
-  | KTopData_HaveType { loc; name; name_loc; params; deps; ind_ty; ctors; ctor_name_locs }
-    ->
+  | KTopData_HaveType { loc; name; params; deps; ind_ty; ctors } ->
     Elab_data.handle_top_data_have_type
       ~check_type
       m
       ~loc
       ~name
-      ~name_loc
       ~params
       ~deps
       ~ind_ty
       ~ctors
-      ~ctor_name_locs
   | GTopRecord (loc, Surface.Record { name; params; ind_ty; fields; _ }) ->
     Elab_record.handle_top_record m loc name params ind_ty fields
   | GTopRecord (_, _) -> Elab_record.handle_top_record_error m
@@ -525,9 +509,7 @@ and drive (m : machine) : produced =
     dispatch m g;
     drive m
 
-and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
-  : Core.term * Level.level
-  =
+and infer_type (ctx : local_ctx) (pretype : Surface.pretype) : Core.term * Level.level =
   let m =
     make_machine
       ~module_name:"_internal"
@@ -537,15 +519,16 @@ and infer_type ~loc (ctx : local_ctx) (pretype : Surface.pretype)
       ()
   in
   m.ctx <- ctx;
-  push m (GInferType (loc, pretype));
+  push m (GInferType pretype);
   match drive m with
   | PType (tm, l) -> tm, l
-  | other -> Reporter.fatalf ~loc Elab_error "infer_type: %s" (produced_tag other)
+  | other ->
+    Reporter.fatalf ~loc:pretype.Surface.loc Elab_error "infer_type: %s" (produced_tag other)
 
-and check_type ~loc (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
-  fst (infer_type ~loc ctx pretype)
+and check_type (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
+  fst (infer_type ctx pretype)
 
-and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Core.value =
+and infer_term (ctx : local_ctx) (term : Surface.preterm) : Core.term * Core.value =
   let m =
     make_machine
       ~module_name:"_internal"
@@ -555,10 +538,11 @@ and infer_term ~loc (ctx : local_ctx) (term : Surface.preterm) : Core.term * Cor
       ()
   in
   m.ctx <- ctx;
-  push m (GInfer (loc, term));
+  push m (GInfer term);
   match drive m with
   | PTermType (tm, ty) -> tm, ty
-  | other -> Reporter.fatalf ~loc Elab_error "infer_term: %s" (produced_tag other)
+  | other ->
+    Reporter.fatalf ~loc:term.Surface.loc Elab_error "infer_term: %s" (produced_tag other)
 ;;
 
 let with_handlers (k : unit -> 'a) : 'a =
@@ -602,6 +586,10 @@ let with_handlers_emitting (k : unit -> 'a) : 'a =
   @@ k
 ;;
 
+let dloc = Surface.dummy_loc
+let d node = Surface.Mk.at dloc node
+let dn v = { Surface.loc = dloc; Surface.value = v }
+
 let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   with_handlers
   @@ fun () ->
@@ -612,14 +600,14 @@ let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
       ~goal_counter:(ref 0)
       ()
   in
-  push m (GInfer (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), p));
+  push m (GInfer p);
   match drive m with
   | PTermType (tm, ty) -> tm, ty
   | other -> Reporter.fatalf Elab_error "infer_for_test: got %s" (produced_tag other)
 ;;
 
 let%expect_test "infer Universe" =
-  let tm, ty = infer_for_test Surface.Universe in
+  let tm, ty = infer_for_test (d Surface.Universe) in
   Printf.printf
     "%s : %s"
     (Pretty.pp_term Context_view.empty tm)
@@ -637,11 +625,7 @@ let%expect_test "infer Var bound locally" =
         ()
     in
     m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
-    push
-      m
-      (GInfer
-         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-         , Surface.Var [ "x" ] ));
+    push m (GInfer (d (Surface.Var [ "x" ])));
     let tm, ty =
       match drive m with
       | PTermType (a, b) -> a, b
@@ -666,11 +650,7 @@ let%expect_test "user `_` binder is a normal name and can be referenced" =
         ()
     in
     m.ctx <- bind m.ctx (Syntax.Named "_") (Core.Universe Level.LZero);
-    push
-      m
-      (GInfer
-         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-         , Surface.Var [ "_" ] ));
+    push m (GInfer (d (Surface.Var [ "_" ])));
     let tm, ty =
       match drive m with
       | PTermType (a, b) -> a, b
@@ -696,11 +676,7 @@ let%expect_test "var lookup of `_` ignores Anon binders" =
            ()
        in
        m.ctx <- bind m.ctx Syntax.Anon (Core.Universe Level.LZero);
-       push
-         m
-         (GInfer
-            ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-            , Surface.Var [ "_" ] ));
+       push m (GInfer (d (Surface.Var [ "_" ])));
        let _ = drive m in
        print_endline "UNEXPECTED: `_` resolved")
    with
@@ -710,8 +686,10 @@ let%expect_test "var lookup of `_` ignores Anon binders" =
 
 let%expect_test "infer Pi" =
   let p =
-    Surface.Pi
-      ({ name = Named "x"; bound = Surface.Universe; implicit = false }, Surface.Universe)
+    d
+      (Surface.Pi
+         ( { name = dn (Named "x"); bound = d Surface.Universe; implicit = false }
+         , d Surface.Universe ))
   in
   let tm, ty = infer_for_test p in
   Printf.printf
@@ -723,7 +701,9 @@ let%expect_test "infer Pi" =
 
 let%expect_test "check Lambda against Pi" =
   let p =
-    Surface.Lambda { name = Named "x"; bound = Surface.Var [ "x" ]; implicit = false }
+    d
+      (Surface.Lambda
+         { name = dn (Named "x"); bound = d (Surface.Var [ "x" ]); implicit = false })
   in
   let expected_ty =
     Core.VPi
@@ -738,10 +718,7 @@ let%expect_test "check Lambda against Pi" =
         ~goal_counter:(ref 0)
         ()
     in
-    push
-      m
-      (GCheck
-         (Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos), p, expected_ty));
+    push m (GCheck (p, expected_ty));
     let tm =
       match drive m with
       | PTerm t -> t
@@ -762,7 +739,6 @@ let%expect_test "infer App" =
         ~goal_counter:(ref 0)
         ()
     in
-    let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
     m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
     let f_ty =
       Core.VPi
@@ -770,7 +746,9 @@ let%expect_test "infer App" =
         , fun _ -> Core.Universe Level.LZero )
     in
     m.ctx <- bind m.ctx (Syntax.Named "f") f_ty;
-    push m (GInfer (loc, Surface.App (false, Surface.Var [ "f" ], Surface.Var [ "x" ])));
+    push
+      m
+      (GInfer (d (Surface.App (false, d (Surface.Var [ "f" ]), d (Surface.Var [ "x" ])))));
     match drive m with
     | PTermType (tm, ty) ->
       Printf.printf
@@ -796,12 +774,7 @@ let%expect_test "report named goal in check mode" =
     in
     m.ctx <- bind m.ctx (Syntax.Named "A") (Core.Universe Level.LZero);
     m.ctx <- bind m.ctx (Syntax.Named "x") (Core.RigidLocal (0, Bwd.Emp));
-    push
-      m
-      (GCheck
-         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-         , Surface.Goal (Some "here")
-         , Core.RigidLocal (0, Bwd.Emp) ));
+    push m (GCheck (d (Surface.Goal (Some "here")), Core.RigidLocal (0, Bwd.Emp)));
     ignore (drive m);
     flush_goal_reports m;
     Printf.printf "pending=%d" !(m.pending_goals));
@@ -827,18 +800,8 @@ let%expect_test "auto-numbered goals" =
         ~goal_counter:counter
         ()
     in
-    push
-      m
-      (GCheck
-         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-         , Surface.Goal None
-         , Core.Universe Level.LZero ));
-    push
-      m
-      (GCheck
-         ( Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-         , Surface.Goal None
-         , Core.Universe Level.LZero ));
+    push m (GCheck (d (Surface.Goal None), Core.Universe Level.LZero));
+    push m (GCheck (d (Surface.Goal None), Core.Universe Level.LZero));
     ignore (drive m);
     flush_goal_reports m;
     Printf.printf "pending=%d counter=%d" !(m.pending_goals) !counter);
@@ -869,18 +832,16 @@ let check_top
   let g =
     match top with
     | Surface.Universe_decl names -> GTopUniverseDecl names
-    | Surface.Let { name; name_loc; bindings; result_ty; body } ->
-      GTopLet { loc; name; name_loc; bindings; result_ty; body }
+    | Surface.Let { name; bindings; result_ty; body } ->
+      GTopLet { loc; name; bindings; result_ty; body }
     | Surface.Data _ as d -> GTopData (loc, d)
-    | Surface.Stack_def { name; name_loc; params; signature; moves; clauses } ->
+    | Surface.Stack_def { name; params; signature; moves; clauses } ->
       GTopStackDef
-        { loc; name; name_loc; bindings = params; result_ty = signature; moves; clauses }
-    | Surface.Elim_def
-        { name; name_loc; params; signature; opens; intros; target; clauses } ->
+        { loc; name; bindings = params; result_ty = signature; moves; clauses }
+    | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
       GTopElimDef
         { loc
         ; name
-        ; name_loc
         ; bindings = params
         ; result_ty = signature
         ; opens
@@ -928,7 +889,7 @@ let check_module
   Context.clear_level_vars ();
   let exports_set =
     let h = Hashtbl.create 16 in
-    List.iter (fun (n, _) -> Hashtbl.replace h n ()) file.exports;
+    List.iter (fun (e : string Surface.spanned) -> Hashtbl.replace h e.value ()) file.exports;
     h
   in
   let is_exported name = Hashtbl.mem exports_set name in
@@ -943,8 +904,8 @@ let check_module
        Env.S.modify_visible @@ Yuujinchou.Language.(union [ all; renaming library [] ]))
     file.imports;
   let goal_counter = ref 0 in
-  let run_top (top : Surface.top Asai.Range.located) =
-    let loc = Option.get top.loc in
+  let run_top (top : Surface.top Surface.spanned) =
+    let loc = top.Surface.loc in
     try
       check_top ~module_name ~kernel_module ~goal_counter ~is_exported ~loc top.value
     with
@@ -952,10 +913,10 @@ let check_module
       Kernel_accept.report_rejection ~loc ~name:(name_of_top top.value) err
   in
   List.iter
-    (fun top ->
+    (fun (top : Surface.top Surface.spanned) ->
        Reporter.try_with
          ~fatal:(fun diag -> Reporter.emit_diagnostic diag)
-         (fun () -> Reporter.merge_loc top.loc (fun () -> run_top top)))
+         (fun () -> Reporter.merge_loc (Some top.Surface.loc) (fun () -> run_top top)))
     file.tops;
   let bound_names : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   Yuujinchou.Trie.iter
@@ -965,18 +926,19 @@ let check_module
        | seg :: _ -> Hashtbl.replace bound_names seg ())
     (Context.S.get_export ());
   let undefined =
-    List.filter (fun (n, _) -> not (Hashtbl.mem bound_names n)) file.exports
+    List.filter
+      (fun (e : string Surface.spanned) -> not (Hashtbl.mem bound_names e.value))
+      file.exports
   in
   List.iter
-    (fun (name, loc) ->
-       match loc with
-       | Some loc ->
-         (match Context.S.resolve [ name ] with
-          | Some (ty, _) ->
-            let cv = Violet_kernel.Context_view.make ~names:Bwd.Emp ~lvl:0 in
-            let pp_ty = Pretty.pp_term cv (Evaluation.quote 0 ty) in
-            Observer.emit (Use { path = [ name ]; loc; def_loc = None; ty; pp_ty })
-          | None -> ())
+    (fun (e : string Surface.spanned) ->
+       let name = e.Surface.value in
+       let loc = e.Surface.loc in
+       match Context.S.resolve [ name ] with
+       | Some (ty, _) ->
+         let cv = Violet_kernel.Context_view.make ~names:Bwd.Emp ~lvl:0 in
+         let pp_ty = Pretty.pp_term cv (Evaluation.quote 0 ty) in
+         Observer.emit (Use { path = [ name ]; loc; def_loc = None; ty; pp_ty })
        | None -> ())
     file.exports;
   match undefined with
@@ -985,40 +947,35 @@ let check_module
     Reporter.fatalf
       Export_error
       "the following names are listed in \\export but never defined: %s"
-      (String.concat ", " (List.map fst names))
+      (String.concat ", " (List.map (fun (e : string Surface.spanned) -> e.value) names))
 ;;
 
 let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let loc top = Asai.Range.locate dummy_loc top in
+  let loc top = { Surface.loc = dloc; Surface.value = top } in
   let nat_data : Surface.top =
     Surface.Data
-      { name = "Nat"
-      ; name_loc = None
+      { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
+      ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
+          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "suc")
             ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
+                d (Surface.Pi
+                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                     , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
           ]
-      ; ctor_name_locs = [ None; None ]
       }
   in
   let let_zero : Surface.top =
     Surface.Let
-      { name = "x"
-      ; name_loc = None
+      { name = dn "x"
       ; bindings = []
-      ; result_ty = Surface.Var [ "Nat" ]
-      ; body = Surface.Var [ "zero" ]
+      ; result_ty = d (Surface.Var [ "Nat" ])
+      ; body = d (Surface.Var [ "zero" ])
       }
   in
   let ast : Surface.t =
@@ -1040,31 +997,27 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
 let%expect_test
     "module: \\export of an inductive bundle: Nat, ctors, elim visible cross-module"
   =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let loc top = Asai.Range.locate dummy_loc top in
+  let loc top = { Surface.loc = dloc; Surface.value = top } in
   let nat_data : Surface.top =
     Surface.Data
-      { name = "Nat"
-      ; name_loc = None
+      { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
+      ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
+          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "suc")
             ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
+                d (Surface.Pi
+                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                     , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
           ]
-      ; ctor_name_locs = [ None; None ]
       }
   in
   let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ "Nat", None ]; tops = [ loc nat_data ] }
+    { name = "a.vt"; imports = []; exports = [ dn "Nat" ]; tops = [ loc nat_data ] }
   in
   (* uses_bundle : Nat => Nat/zero — references both the type and a constructor,
      proving the inductive bundle (type + ctors) is visible cross-module. *)
@@ -1075,11 +1028,10 @@ let%expect_test
     ; tops =
         [ loc
             (Surface.Let
-               { name = "uses_bundle"
-               ; name_loc = None
+               { name = dn "uses_bundle"
                ; bindings = []
-               ; result_ty = Surface.Var [ "Nat" ]
-               ; body = Surface.Var [ "Nat"; "zero" ]
+               ; result_ty = d (Surface.Var [ "Nat" ])
+               ; body = d (Surface.Var [ "Nat"; "zero" ])
                })
         ]
     }
@@ -1099,38 +1051,33 @@ let%expect_test
 let%expect_test
     "module: \\export of a record bundle: Point companions visible cross-module"
   =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
-  let loc top = Asai.Range.locate dummy_loc top in
+  let loc top = { Surface.loc = dloc; Surface.value = top } in
   let nat_data : Surface.top =
     Surface.Data
-      { name = "Nat"
-      ; name_loc = None
+      { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
+      ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
+          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "suc")
             ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
+                d (Surface.Pi
+                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                     , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
           ]
-      ; ctor_name_locs = [ None; None ]
       }
   in
   let point_record : Surface.top =
     Surface.Record
-      { name = "Point"
-      ; name_loc = None
+      { name = dn "Point"
       ; params = []
-      ; ind_ty = Surface.Universe
+      ; ind_ty = d Surface.Universe
       ; fields =
-          [ { name = Named "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          [ { name = dn (Named "x"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "y"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
           ]
       }
   in
@@ -1139,7 +1086,7 @@ let%expect_test
   let mod_a : Surface.t =
     { name = "a.vt"
     ; imports = []
-    ; exports = [ "Nat", None; "Point", None ]
+    ; exports = [ dn "Nat"; dn "Point" ]
     ; tops = [ loc nat_data; loc point_record ]
     }
   in
@@ -1153,14 +1100,16 @@ let%expect_test
     ; tops =
         [ loc
             (Surface.Let
-               { name = "uses_proj"
-               ; name_loc = None
+               { name = dn "uses_proj"
                ; bindings = []
                ; result_ty =
-                   Surface.Pi
-                     ( { name = Anon; bound = Surface.Var [ "Point" ]; implicit = false }
-                     , Surface.Var [ "Nat" ] )
-               ; body = Surface.Var [ "Point/x" ]
+                   d (Surface.Pi
+                        ( { name = dn Anon
+                          ; bound = d (Surface.Var [ "Point" ])
+                          ; implicit = false
+                          }
+                        , d (Surface.Var [ "Nat" ]) ))
+               ; body = d (Surface.Var [ "Point/x" ])
                })
         ]
     }
@@ -1179,38 +1128,34 @@ let%expect_test
 
 let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Module entries"
   =
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let dummy_loc = dloc in
   (* First declare Nat so fields can refer to it *)
   let nat_data : Surface.top =
     Surface.Data
-      { name = "Nat"
-      ; name_loc = None
+      { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
+      ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
+          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "suc")
             ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
+                d (Surface.Pi
+                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                     , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
           ]
-      ; ctor_name_locs = [ None; None ]
       }
   in
   let point_record : Surface.top =
     Surface.Record
-      { name = "Point"
-      ; name_loc = None
+      { name = dn "Point"
       ; params = []
-      ; ind_ty = Surface.Universe
+      ; ind_ty = d Surface.Universe
       ; fields =
-          [ { name = Named "x"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "y"; bound = Surface.Var [ "Nat" ]; implicit = false }
+          [ { name = dn (Named "x"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "y"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
           ]
       }
   in
@@ -1260,57 +1205,55 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
      Verifies that { fst = Nat/zero, snd = Nat/zero } : Pair Nat Nat
      elaborates to RecordIntro { name = "Pair"; fields = [("fst", ...); ("snd", ...)] }.
   *)
-  let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let dummy_loc = dloc in
   let nat_data : Surface.top =
     Surface.Data
-      { name = "Nat"
-      ; name_loc = None
+      { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = Surface.Universe
-      ; ind_ty_loc = None
+      ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = Named "zero"; bound = Surface.Var [ "Nat" ]; implicit = false }
-          ; { name = Named "suc"
+          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          ; { name = dn (Named "suc")
             ; bound =
-                Surface.Pi
-                  ( { name = Anon; bound = Surface.Var [ "Nat" ]; implicit = false }
-                  , Surface.Var [ "Nat" ] )
+                d (Surface.Pi
+                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                     , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
           ]
-      ; ctor_name_locs = [ None; None ]
       }
   in
   let pair_record : Surface.top =
     Surface.Record
-      { name = "Pair"
-      ; name_loc = None
+      { name = dn "Pair"
       ; params =
-          [ { name = Named "A"; bound = Surface.Universe; implicit = false }
-          ; { name = Named "B"; bound = Surface.Universe; implicit = false }
+          [ { name = dn (Named "A"); bound = d Surface.Universe; implicit = false }
+          ; { name = dn (Named "B"); bound = d Surface.Universe; implicit = false }
           ]
-      ; ind_ty = Surface.Universe
+      ; ind_ty = d Surface.Universe
       ; fields =
-          [ { name = Named "fst"; bound = Surface.Var [ "A" ]; implicit = false }
-          ; { name = Named "snd"; bound = Surface.Var [ "B" ]; implicit = false }
+          [ { name = dn (Named "fst"); bound = d (Surface.Var [ "A" ]); implicit = false }
+          ; { name = dn (Named "snd"); bound = d (Surface.Var [ "B" ]); implicit = false }
           ]
       }
   in
   (* \let p : Pair Nat Nat => { fst = Nat/zero, snd = Nat/zero } *)
   let p_let : Surface.top =
     Surface.Let
-      { name = "p"
-      ; name_loc = None
+      { name = dn "p"
       ; bindings = []
       ; result_ty =
-          Surface.App
-            ( false
-            , Surface.App (false, Surface.Var [ "Pair" ], Surface.Var [ "Nat" ])
-            , Surface.Var [ "Nat" ] )
+          d (Surface.App
+               ( false
+               , d (Surface.App
+                      (false, d (Surface.Var [ "Pair" ]), d (Surface.Var [ "Nat" ])))
+               , d (Surface.Var [ "Nat" ]) ))
       ; body =
-          Surface.RecordLit
-            [ "fst", Surface.Var [ "Nat"; "zero" ]; "snd", Surface.Var [ "Nat"; "zero" ] ]
+          d (Surface.RecordLit
+               [ dn "fst", d (Surface.Var [ "Nat"; "zero" ])
+               ; dn "snd", d (Surface.Var [ "Nat"; "zero" ])
+               ])
       }
   in
   let kernel_module = Violet_kernel.Module.create () in

@@ -5,13 +5,11 @@ module Context_view = Violet_kernel.Context_view
 module Pretty = Violet_kernel.Pretty
 module Evaluation = Wiring.Eval
 open Syntax
-open Asai.Range
 open Surface_utils
 open Bwd
 
-let loc_or (default : Asai.Range.t) (t : Surface.preterm) : Asai.Range.t =
-  Option.value (loc_of t) ~default
-;;
+let at loc node : Surface.preterm = Surface.Mk.at loc node
+let sn loc value : binder_name Surface.spanned = { Surface.loc; value }
 
 let drop_key (name : string) (assoc : (string * 'a) list) : (string * 'a) list =
   List.filter (fun (k, _) -> not (String.equal k name)) assoc
@@ -54,10 +52,10 @@ let rename_vars_surface (renaming : (string * string) list) (t : Surface.preterm
   | [] -> t
   | _ ->
     map_free_vars
-      ~on_var:(fun ren n ->
+      ~on_var:(fun ~loc ren n ->
         match List.assoc_opt n ren with
-        | Some n' -> Surface.Var [ n' ]
-        | None -> Surface.Var [ n ])
+        | Some n' -> at loc (Surface.Var [ n' ])
+        | None -> at loc (Surface.Var [ n ]))
       ~enter:drop_key
       renaming
       t
@@ -79,10 +77,10 @@ let qualify_ctor_names
   =
   let is_ctor n = List.mem n ctor_names in
   map_free_vars
-    ~on_var:(fun shadowed n ->
+    ~on_var:(fun ~loc shadowed n ->
       if is_ctor n && not (List.mem n shadowed)
-      then Surface.Var [ ind_head; n ]
-      else Surface.Var [ n ])
+      then at loc (Surface.Var [ ind_head; n ])
+      else at loc (Surface.Var [ n ]))
     ~enter:(fun name shadowed -> name :: shadowed)
     shadowed
     body
@@ -119,7 +117,7 @@ let align_call_implicits
     List.fold_right
       (fun (_, is_imp) k explicit_args ->
          if is_imp
-         then (true, Surface.Hole) :: k explicit_args
+         then (true, at loc Surface.Hole) :: k explicit_args
          else (
            match explicit_args with
            | a :: rest -> a :: k rest
@@ -147,43 +145,44 @@ let mark_recursive_call_implicits
       (body : Surface.preterm)
   : Surface.preterm
   =
-  let rec spine_of acc = function
+  let rec spine_of acc (t : Surface.preterm) =
+    match t.Surface.node with
     | Surface.App (impl, f, a) -> spine_of ((impl, a) :: acc) f
-    | Surface.Located { value = t; _ } -> spine_of acc t
-    | head -> head, acc
+    | _ -> t, acc
   in
-  let rec strip = function
-    | Surface.Located { value = t; _ } -> strip t
-    | t -> t
-  in
+  (* Rebuild [head args]; each App node spans from head to its argument. *)
   let rebuild head args =
-    List.fold_left (fun f (impl, a) -> Surface.App (impl, f, a)) head args
+    List.fold_left
+      (fun f (impl, a) ->
+         at (Surface.join_loc f.Surface.loc a.Surface.loc) (Surface.App (impl, f, a)))
+      head
+      args
   in
-  let rec rw t =
-    match t with
-    | Surface.Located { value = inner; loc } -> Surface.Located { value = rw inner; loc }
+  let rec rw (t : Surface.preterm) =
+    let keep node = { t with Surface.node } in
+    match t.Surface.node with
     | Surface.App _ ->
       let head, args = spine_of [] t in
       let args = List.map (fun (impl, a) -> impl, rw a) args in
-      (match strip head with
+      (match head.Surface.node with
        | Surface.Var [ n ] when String.equal n func_name ->
          rebuild head (align_call_implicits ~loc ~func_name ~intros args)
        | _ -> rebuild (rw head) args)
-    | Surface.Lambda b -> Surface.Lambda { b with bound = rw b.bound }
+    | Surface.Lambda b -> keep (Surface.Lambda { b with bound = rw b.bound })
     | Surface.TypedLambda (b, body) ->
-      Surface.TypedLambda ({ b with bound = rw b.bound }, rw body)
-    | Surface.Pi (b, body) -> Surface.Pi ({ b with bound = rw b.bound }, rw body)
-    | Surface.Max (a, b) -> Surface.Max (rw a, rw b)
+      keep (Surface.TypedLambda ({ b with bound = rw b.bound }, rw body))
+    | Surface.Pi (b, body) -> keep (Surface.Pi ({ b with bound = rw b.bound }, rw body))
+    | Surface.Max (a, b) -> keep (Surface.Max (rw a, rw b))
     | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd _ -> t
     | Surface.Absurd _ -> t
     | Surface.Op_soup _ -> t
     | Surface.RecordLit entries ->
-      Surface.RecordLit (List.map (fun (f, e) -> f, rw e) entries)
+      keep (Surface.RecordLit (List.map (fun (f, e) -> f, rw e) entries))
     | Surface.RecordUpdate (base, entries) ->
-      Surface.RecordUpdate (rw base, List.map (fun (f, e) -> f, rw e) entries)
-    | Surface.Proj (e, f) -> Surface.Proj (rw e, f)
-    | Surface.Inline_elim _ as t -> t
+      keep (Surface.RecordUpdate (rw base, List.map (fun (f, e) -> f, rw e) entries))
+    | Surface.Proj (e, f) -> keep (Surface.Proj (rw e, f))
+    | Surface.Inline_elim _ -> t
   in
   rw body
 ;;
@@ -198,29 +197,30 @@ let align_clause_patterns
       (patterns : Surface.pattern list)
   : Surface.pattern list
   =
-  let rec go slots pats =
+  let rec go slots (pats : Surface.pattern list) =
     match slots, pats with
     | [], [] -> []
-    | [], _ :: _ -> Reporter.fatalf ~loc Elab_error "clause: too many patterns"
-    | (_, true) :: rest_slots, Surface.PImpVar n :: rest_pats ->
-      Surface.PVar n :: go rest_slots rest_pats
-    | (slot_name, true) :: rest_slots, _ -> Surface.PVar slot_name :: go rest_slots pats
-    | (_, false) :: rest_slots, (Surface.PVar _ as p) :: rest_pats ->
+    | [], p :: _ -> Reporter.fatalf ~loc:p.Surface.ploc Elab_error "clause: too many patterns"
+    | (_, true) :: rest_slots, ({ Surface.pnode = Surface.PImpVar n; ploc } :: rest_pats) ->
+      { Surface.ploc; pnode = Surface.PVar n } :: go rest_slots rest_pats
+    | (slot_name, true) :: rest_slots, _ ->
+      { Surface.ploc = loc; pnode = Surface.PVar slot_name } :: go rest_slots pats
+    | (_, false) :: rest_slots, ({ Surface.pnode = Surface.PVar _; _ } as p) :: rest_pats ->
       p :: go rest_slots rest_pats
-    | (_, false) :: rest_slots, (Surface.PWildcard as p) :: rest_pats ->
+    | (_, false) :: rest_slots, ({ Surface.pnode = Surface.PWildcard; _ } as p) :: rest_pats
+      -> p :: go rest_slots rest_pats
+    | (_, false) :: rest_slots, ({ Surface.pnode = Surface.PCon _; _ } as p) :: rest_pats ->
       p :: go rest_slots rest_pats
-    | (_, false) :: rest_slots, (Surface.PCon _ as p) :: rest_pats ->
-      p :: go rest_slots rest_pats
-    | (_, false) :: _, Surface.PImpVar n :: _ ->
-      Reporter.fatalf ~loc Elab_error "clause: `{%s}` pattern at explicit slot" n
+    | (_, false) :: _, { Surface.pnode = Surface.PImpVar n; ploc } :: _ ->
+      Reporter.fatalf ~loc:ploc Elab_error "clause: `{%s}` pattern at explicit slot" n
     | (slot_name, false) :: _, [] ->
       Reporter.fatalf
         ~loc
         Elab_error
         "clause: missing pattern for explicit slot `%s`"
         slot_name
-    | (_, false) :: rest_slots, (Surface.PRecord _ as p) :: rest_pats ->
-      p :: go rest_slots rest_pats
+    | (_, false) :: rest_slots, ({ Surface.pnode = Surface.PRecord _; _ } as p) :: rest_pats
+      -> p :: go rest_slots rest_pats
   in
   go effective patterns
 ;;
@@ -235,10 +235,10 @@ let subst_vars_surface (subst : (string * Surface.preterm) list) (t : Surface.pr
   | [] -> t
   | _ ->
     map_free_vars
-      ~on_var:(fun s n ->
+      ~on_var:(fun ~loc s n ->
         match List.assoc_opt n s with
         | Some t' -> t'
-        | None -> Surface.Var [ n ])
+        | None -> at loc (Surface.Var [ n ]))
       ~enter:drop_key
       subst
       t
@@ -249,9 +249,11 @@ let subst_vars_surface (subst : (string * Surface.preterm) list) (t : Surface.pr
    both [build_elim_body] paths normalize before matching. *)
 let make_normalize (ctors : (string * int) list) : Surface.pattern -> Surface.pattern =
   let is_ctor n = List.exists (fun (cn, _) -> String.equal cn n) ctors in
-  function
-  | Surface.PVar n when is_ctor n -> Surface.PCon (n, [])
-  | p -> p
+  fun (p : Surface.pattern) ->
+    match p.Surface.pnode with
+    | Surface.PVar n when is_ctor n ->
+      { p with Surface.pnode = Surface.PCon ({ Surface.loc = p.Surface.ploc; value = n }, []) }
+    | _ -> p
 ;;
 
 (* Result of matching a single elim clause against a constructor: the names
@@ -266,7 +268,6 @@ type processed_clause =
   }
 
 let find_matched_clauses_for_ctor
-      ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
       ~(normalize_pattern : Surface.pattern -> Surface.pattern)
@@ -276,29 +277,35 @@ let find_matched_clauses_for_ctor
   =
   List.filter
     (fun (c : Surface.clause) ->
-       let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
-       match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
-       | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
+       let aligned = align_clause_patterns ~loc:c.body.Surface.loc intros c.patterns in
+       match
+         Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+           (List.nth_opt aligned target_pos)
+       with
+       | Some (Surface.PCon (cn, _)) -> String.equal cn.Surface.value ctor_name
        | _ -> false)
     clauses
 ;;
 
 let pick_head_and_deeper
-      ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
       ~(normalize_pattern : Surface.pattern -> Surface.pattern)
       (matched : Surface.clause list)
   : (Surface.clause * Surface.clause list) option
   =
-  let is_pvar = function
+  let is_pvar (p : Surface.pattern) =
+    match p.Surface.pnode with
     | Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard -> true
     | Surface.PCon _ | Surface.PRecord _ -> false
   in
   let is_head (c : Surface.clause) =
-    let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
+    let aligned = align_clause_patterns ~loc:c.body.Surface.loc intros c.patterns in
     let target_sub_all_pvar =
-      match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
+      match
+        Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+          (List.nth_opt aligned target_pos)
+      with
       | Some (Surface.PCon (_, sps)) -> List.for_all is_pvar sps
       | _ -> false
     in
@@ -336,7 +343,8 @@ let expand_pcon_sub_patterns
     let rec go names imps user =
       match names, imps, user with
       | [], [], [] -> []
-      | n :: rest_n, true :: rest_i, _ -> Surface.PVar n :: go rest_n rest_i user
+      | n :: rest_n, true :: rest_i, _ ->
+        { Surface.ploc = loc; pnode = Surface.PVar n } :: go rest_n rest_i user
       | _ :: rest_n, false :: rest_i, p :: rest_p -> p :: go rest_n rest_i rest_p
       | _ -> assert false
     in
@@ -364,7 +372,6 @@ let update_view_after_ctor_match
 ;;
 
 let make_siblings_with_views
-      ~(loc : Asai.Range.t)
       ~(intros : (string * bool) list)
       ~(target_pos : int)
       ~(normalize_pattern : Surface.pattern -> Surface.pattern)
@@ -376,15 +383,18 @@ let make_siblings_with_views
   =
   List.map
     (fun (c : Surface.clause) ->
-       let aligned = align_clause_patterns ~loc:(loc_or loc c.body) intros c.patterns in
+       let aligned = align_clause_patterns ~loc:c.body.Surface.loc intros c.patterns in
        let sub_pats =
-         match Option.map normalize_pattern (List.nth_opt aligned target_pos) with
+         match
+           Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+             (List.nth_opt aligned target_pos)
+         with
          | Some (Surface.PCon (_, sps)) -> sps
          | _ -> []
        in
        let expanded =
          expand_pcon_sub_patterns
-           ~loc:(loc_or loc c.body)
+           ~loc:c.body.Surface.loc
            ~ctor_name
            ~implicits
            ~binder_names
@@ -400,9 +410,10 @@ let annotate_inline_elim_siblings
       (siblings : (Surface.clause * Surface.pattern list) list)
   : Surface.preterm
   =
-  match body with
-  | Surface.Inline_elim d -> Surface.Inline_elim { d with siblings }
-  | other -> other
+  match body.Surface.node with
+  | Surface.Inline_elim d ->
+    { body with Surface.node = Surface.Inline_elim { d with siblings } }
+  | _ -> body
 ;;
 
 (* Accept either the full-arity form or just the explicit slots; if the
@@ -441,7 +452,6 @@ let expand_pattern_binders
 ;;
 
 let process_clause
-      ~(loc : Asai.Range.t)
       ~(func_name : string)
       ~(ctor_name : string)
       ~(implicits : bool list)
@@ -453,38 +463,42 @@ let process_clause
       (clause : Surface.clause)
   : processed_clause
   =
-  let clause_loc = loc_or loc clause.body in
+  let clause_loc = clause.body.Surface.loc in
   let aligned_patterns = align_clause_patterns ~loc:clause_loc intros clause.patterns in
-  if not (String.equal clause.head func_name)
+  if not (String.equal clause.head.Surface.value func_name)
   then
     Reporter.fatalf
-      ~loc:clause_loc
+      ~loc:clause.head.Surface.loc
       Elab_error
       "elim clause head `%s` does not match function name `%s`"
-      clause.head
+      clause.head.Surface.value
       func_name;
   let raw_vs =
-    match Option.map normalize_pattern (List.nth_opt aligned_patterns target_pos) with
+    match
+      Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+        (List.nth_opt aligned_patterns target_pos)
+    with
     | Some (Surface.PCon (_, vs)) -> vs
     | _ -> []
   in
   let vs =
     List.map
-      (function
-        | Surface.PVar n -> n
-        | Surface.PWildcard -> "_"
-        | Surface.PCon _ ->
-          Reporter.fatalf
-            ~loc:clause_loc
-            Elab_error
-            "elim: deep constructor patterns at the elim target are not yet supported — \
-             use a nested `<= \\elim` instead"
-        | Surface.PImpVar n -> n
-        | Surface.PRecord _ ->
-          Reporter.fatalf
-            ~loc:clause_loc
-            Elab_error
-            "elim: record patterns nested inside a constructor are not supported")
+      (fun (p : Surface.pattern) ->
+         match p.Surface.pnode with
+         | Surface.PVar n -> n
+         | Surface.PWildcard -> "_"
+         | Surface.PCon _ ->
+           Reporter.fatalf
+             ~loc:p.Surface.ploc
+             Elab_error
+             "elim: deep constructor patterns at the elim target are not yet supported — \
+              use a nested `<= \\elim` instead"
+         | Surface.PImpVar n -> n
+         | Surface.PRecord _ ->
+           Reporter.fatalf
+             ~loc:p.Surface.ploc
+             Elab_error
+             "elim: record patterns nested inside a constructor are not supported")
       raw_vs
   in
   let vs =
@@ -505,18 +519,19 @@ let process_clause
   in
   let trailing_pattern_names =
     List.filteri (fun i _ -> i > target_pos) aligned_patterns
-    |> List.map (function
+    |> List.map (fun (p : Surface.pattern) ->
+      match p.Surface.pnode with
       | Surface.PVar n -> n
       | Surface.PWildcard -> "_"
       | Surface.PCon _ ->
         Reporter.fatalf
-          ~loc:clause_loc
+          ~loc:p.Surface.ploc
           Elab_error
           "elim: pattern at non-target position must be a variable"
       | Surface.PImpVar _ -> assert false (* normalized away by align_clause_patterns *)
       | Surface.PRecord _ ->
         Reporter.fatalf
-          ~loc:clause_loc
+          ~loc:p.Surface.ploc
           Elab_error
           "elim: record pattern at non-target position must be a variable")
   in
@@ -544,7 +559,7 @@ let qualify_ctor_namespaces
       ~(ind_head : string)
       ~(ctors : (string * int) list)
       ~(opens : string list)
-      ~(params : Surface.pretype binder list)
+      ~(params : Surface.pretype Surface.sbinder list)
       ~(intros : (string * bool) list)
       ~(vs : string list)
       ~(rec_arg_to_ih : (string * string) list)
@@ -554,7 +569,9 @@ let qualify_ctor_namespaces
   =
   let ih_names = List.map snd rec_arg_to_ih in
   let param_names =
-    List.map (fun (b : Surface.pretype binder) -> Name.to_string b.name) params
+    List.map
+      (fun (b : Surface.pretype Surface.sbinder) -> Name.to_string b.name.Surface.value)
+      params
   in
   let intro_names = List.map fst intros in
   let shadowed = vs @ ih_names @ trailing_pattern_names @ intro_names @ param_names in
@@ -589,7 +606,7 @@ let qualify_ctor_namespaces
    Pi-binders must be matched by a bare intro. *)
 let compute_effective_intros
       ~(loc : Asai.Range.t)
-      ~(bindings : Surface.pretype binder list)
+      ~(bindings : Surface.pretype Surface.sbinder list)
       ~(signature : Surface.pretype)
       ~(intros : (string * bool) list)
   : (string * bool) list
@@ -611,7 +628,7 @@ let compute_effective_intros
     | (pname, false) :: _, [] ->
       Reporter.fatalf ~loc Elab_error "missing intro for explicit param `%s`" pname
     | [], _ -> walk_sig sig_binders user
-  and walk_sig (bs : Surface.pretype binder list) user =
+  and walk_sig (bs : Surface.pretype Surface.sbinder list) user =
     match bs, user with
     | _, [] -> []
     | [], (uname, _) :: _ ->
@@ -619,7 +636,7 @@ let compute_effective_intros
     | b :: rest, ((uname, u_impl) :: urest as user) ->
       (match b.implicit, u_impl with
        | true, true -> (uname, true) :: walk_sig rest urest
-       | true, false -> (Name.to_string b.name, true) :: walk_sig rest user
+       | true, false -> (Name.to_string b.name.Surface.value, true) :: walk_sig rest user
        | false, false -> (uname, false) :: walk_sig rest urest
        | false, true ->
          Reporter.fatalf
@@ -627,11 +644,12 @@ let compute_effective_intros
            Elab_error
            "intro `{%s}` at explicit Pi-binder `%s`"
            uname
-           (Name.to_string b.name))
+           (Name.to_string b.name.Surface.value))
   in
   let param_binders =
     List.map
-      (fun (b : Surface.pretype binder) -> Name.to_string b.name, b.implicit)
+      (fun (b : Surface.pretype Surface.sbinder) ->
+         Name.to_string b.name.Surface.value, b.implicit)
       bindings
   in
   walk_pi param_binders (pi_domain signature) intros
@@ -729,9 +747,13 @@ let ctor_spine_and_flex
    so all Pi-binders here are per-call. *)
 let ctor_binder_implicits (info : Context.ind_info) (ctor_name : string) : bool list =
   let ctor_surface =
-    List.find (fun (b : Surface.pretype binder) -> b.name = Named ctor_name) info.ctors
+    List.find
+      (fun (b : Surface.pretype Surface.sbinder) -> b.name.Surface.value = Named ctor_name)
+      info.ctors
   in
-  List.map (fun (b : Surface.pretype binder) -> b.implicit) (pi_domain ctor_surface.bound)
+  List.map
+    (fun (b : Surface.pretype Surface.sbinder) -> b.implicit)
+    (pi_domain ctor_surface.bound)
 ;;
 
 (* Build the unify-path motive. When [has_conflict] is set, the motive is
@@ -751,7 +773,7 @@ let build_unify_motive
       ~(target_index_surfaces : Surface.preterm list)
   : Surface.preterm
   =
-  let result_after_target = peel_pi_surface ~loc (target_pos - np + 1) signature in
+  let result_after_target = peel_pi_surface (target_pos - np + 1) signature in
   let with_ids =
     if has_conflict
     then (
@@ -761,8 +783,8 @@ let build_unify_motive
         else (
           let id_ty =
             Surface.apply
-              (Surface.Var [ "Id" ])
-              [ Surface.Var [ idx_name i ]
+              (at loc (Surface.Var [ "Id" ]))
+              [ at loc (Surface.Var [ idx_name i ])
               ; (match List.nth_opt target_index_surfaces i with
                  | Some v -> v
                  | None ->
@@ -777,13 +799,16 @@ let build_unify_motive
           in
           wrap_ids
             (i - 1)
-            (Surface.Pi ({ name = Named (p_name i); bound = id_ty; implicit = false }, acc)))
+            (at
+               loc
+               (Surface.Pi
+                  ({ name = sn loc (Named (p_name i)); bound = id_ty; implicit = false }, acc))))
       in
       wrap_ids (m_indices - 1) result_after_target)
     else result_after_target
   in
   let inner =
-    Surface.Lambda { name = Named target; bound = with_ids; implicit = false }
+    at loc (Surface.Lambda { name = sn loc (Named target); bound = with_ids; implicit = false })
   in
   let rec wrap_idx_lambdas i acc =
     if i < 0
@@ -791,7 +816,10 @@ let build_unify_motive
     else
       wrap_idx_lambdas
         (i - 1)
-        (Surface.Lambda { name = Named (idx_name i); bound = acc; implicit = false })
+        (at
+           loc
+           (Surface.Lambda
+              { name = sn loc (Named (idx_name i)); bound = acc; implicit = false }))
   in
   wrap_idx_lambdas (m_indices - 1) inner
 ;;
@@ -814,7 +842,10 @@ let wrap_p_binders
       else
         go
           (i - 1)
-          (Surface.Lambda { name = Named (p_name i); bound = acc; implicit = false })
+          (at
+             acc.Surface.loc
+             (Surface.Lambda
+                { name = sn acc.Surface.loc (Named (p_name i)); bound = acc; implicit = false }))
     in
     go (m_indices - 1) body)
 ;;
@@ -830,7 +861,7 @@ let wrap_p_binders
 let build_elim_body_unify
       ~(loc : Asai.Range.t)
       ~(func_name : string)
-      ~(params : Surface.pretype binder list)
+      ~(params : Surface.pretype Surface.sbinder list)
       ~(signature : Surface.pretype)
       ~(opens : string list)
       ~(intros : (string * bool) list)
@@ -961,20 +992,23 @@ let build_elim_body_unify
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda
-                      { name = Named (func_name ^ " " ^ v)
-                      ; bound = body
-                      ; implicit = false
-                      }
+                    at
+                      check_loc
+                      (Surface.Lambda
+                         { name = sn check_loc (Named (func_name ^ " " ^ v))
+                         ; bound = body
+                         ; implicit = false
+                         })
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = Named v; bound = inner; implicit })
+                at
+                  check_loc
+                  (Surface.Lambda { name = sn check_loc (Named v); bound = inner; implicit }))
              binders
              body
          in
          let matched_clauses =
            find_matched_clauses_for_ctor
-             ~loc
              ~intros
              ~target_pos
              ~normalize_pattern
@@ -984,7 +1018,6 @@ let build_elim_body_unify
          let opt_clause =
            match
              pick_head_and_deeper
-               ~loc
                ~intros
                ~target_pos
                ~normalize_pattern
@@ -1018,7 +1051,10 @@ let build_elim_body_unify
               orthogonal ctor heads on both sides, so `\absurd-id` derives
               `Empty` and `absurd` casts it to the case body's type. *)
            let absurd_body =
-             Surface.Absurd (Surface.IdAbsurd (Surface.Var [ p_name k ]))
+             at
+               loc
+               (Surface.Absurd
+                  (at loc (Surface.IdAbsurd (at loc (Surface.Var [ p_name k ])))))
            in
            close_ctor_lambdas
              ~check_loc:loc
@@ -1038,7 +1074,6 @@ let build_elim_body_unify
            in
            let pc =
              process_clause
-               ~loc
                ~func_name
                ~ctor_name
                ~implicits
@@ -1070,11 +1105,10 @@ let build_elim_body_unify
              subst_vars_surface renamings pc.normalized_body
            in
            let body_with_siblings =
-             match body_subst_applied with
+             match body_subst_applied.Surface.node with
              | Surface.Inline_elim d when List.length matched_clauses > 1 ->
                let siblings =
                  make_siblings_with_views
-                   ~loc
                    ~intros
                    ~target_pos
                    ~normalize_pattern
@@ -1083,8 +1117,11 @@ let build_elim_body_unify
                    ~binder_names:ctor_info_.binder_names
                    matched_clauses
                in
-               Surface.Inline_elim
-                 { d with siblings; outer_subst = subst_sigma @ d.outer_subst }
+               { body_subst_applied with
+                 Surface.node =
+                   Surface.Inline_elim
+                     { d with siblings; outer_subst = subst_sigma @ d.outer_subst }
+               }
              | _ -> body_subst_applied
            in
            let qualified_body =
@@ -1103,7 +1140,10 @@ let build_elim_body_unify
            let with_trailing =
              List.fold_right
                (fun n body ->
-                  Surface.Lambda { name = Named n; bound = body; implicit = false })
+                  at
+                    pc.clause_loc
+                    (Surface.Lambda
+                       { name = sn pc.clause_loc (Named n); bound = body; implicit = false }))
                pc.trailing_pattern_names
                qualified_body
            in
@@ -1115,18 +1155,16 @@ let build_elim_body_unify
   let elim_call =
     let refl_args =
       if has_conflict
-      then List.init m_indices (fun _ -> Surface.Var [ "Id"; "refl" ])
+      then List.init m_indices (fun _ -> at loc (Surface.Var [ "Id"; "refl" ]))
       else []
     in
-    List.fold_left
-      (fun acc a -> Surface.App (false, acc, a))
-      (Surface.Var [ ind_head; "elim" ])
-      (data_args @ [ Surface.Var [ target ]; motive ] @ case_args @ refl_args)
+    Surface.apply
+      (at loc (Surface.Var [ ind_head; "elim" ]))
+      (data_args @ [ at loc (Surface.Var [ target ]); motive ] @ case_args @ refl_args)
   in
-  List.fold_left
-    (fun acc (n, _) -> Surface.App (false, acc, Surface.Var [ n ]))
+  Surface.apply
     elim_call
-    trailing_intros
+    (List.map (fun (n, _) -> at loc (Surface.Var [ n ])) trailing_intros)
 ;;
 
 (* Build a Surface preterm body for an Elim_def. The result represents the
@@ -1147,7 +1185,7 @@ let build_elim_body_unify
 let build_elim_body
       ~(loc : Asai.Range.t)
       ~(func_name : string)
-      ~(params : Surface.pretype binder list)
+      ~(params : Surface.pretype Surface.sbinder list)
       ~(signature : Surface.pretype)
       ~(opens : string list)
       ~(intros : (string * bool) list)
@@ -1193,8 +1231,8 @@ let build_elim_body
       Reporter.fatalf ~loc Elab_error "elim: signature has fewer Pi-layers than required"
   in
   let ind_head, data_args =
-    let here = loc_or loc target_type_surface in
-    match head_of_surface target_type_surface with
+    let here = target_type_surface.Surface.loc in
+    match (head_of_surface target_type_surface).Surface.node with
     | Surface.Var [ n ] -> n, Surface.applied_spine target_type_surface
     | Surface.Var _ ->
       Reporter.fatalf
@@ -1218,7 +1256,9 @@ let build_elim_body
      as a Var `v`, bind a fresh name and rename `v -> fresh` in the body. *)
   let n_explicit_params =
     List.length
-      (List.filter (fun (p : Surface.pretype binder) -> not p.implicit) info.params)
+      (List.filter
+         (fun (p : Surface.pretype Surface.sbinder) -> not p.implicit)
+         info.params)
   in
   let dep_args = List.drop n_explicit_params data_args in
   let n_deps = List.length info.deps in
@@ -1230,14 +1270,10 @@ let build_elim_body
       "elim: target type spine has %d index arg(s), expected %d"
       (List.length dep_args)
       n_deps;
-  let rec strip_loc = function
-    | Surface.Located { value; _ } -> strip_loc value
-    | t -> t
-  in
   let any_non_var =
     List.exists
-      (fun a ->
-         match strip_loc a with
+      (fun (a : Surface.preterm) ->
+         match a.Surface.node with
          | Surface.Var [ _ ] -> false
          | _ -> true)
       dep_args
@@ -1268,8 +1304,8 @@ let build_elim_body
     let dep_freshener = make_freshener intro_names in
     let dep_renaming : (string * string) list =
       List.map
-        (fun a ->
-           match strip_loc a with
+        (fun (a : Surface.preterm) ->
+           match a.Surface.node with
            | Surface.Var [ n ] -> n, dep_freshener.freshen "i"
            | _ ->
              Reporter.fatalf
@@ -1280,14 +1316,17 @@ let build_elim_body
         dep_args
     in
     let motive : Surface.preterm =
-      let body0 = peel_pi_surface ~loc (target_pos - np + 1) signature in
+      let body0 = peel_pi_surface (target_pos - np + 1) signature in
       let body = rename_vars_surface dep_renaming body0 in
       let inner =
-        Surface.Lambda { name = Named target; bound = body; implicit = false }
+        at body.Surface.loc
+          (Surface.Lambda { name = sn loc (Named target); bound = body; implicit = false })
       in
       List.fold_right
         (fun (_, fresh) acc ->
-           Surface.Lambda { name = Named fresh; bound = acc; implicit = false })
+           at acc.Surface.loc
+             (Surface.Lambda
+                { name = sn loc (Named fresh); bound = acc; implicit = false }))
         dep_renaming
         inner
     in
@@ -1302,7 +1341,6 @@ let build_elim_body
            in
            let matched_clauses =
              find_matched_clauses_for_ctor
-               ~loc
                ~intros
                ~target_pos
                ~normalize_pattern
@@ -1312,7 +1350,6 @@ let build_elim_body
            let clause =
              match
                pick_head_and_deeper
-                 ~loc
                  ~intros
                  ~target_pos
                  ~normalize_pattern
@@ -1333,7 +1370,6 @@ let build_elim_body
            let implicits = ctor_binder_implicits info ctor_name in
            let pc =
              process_clause
-               ~loc
                ~func_name
                ~ctor_name
                ~implicits
@@ -1349,7 +1385,6 @@ let build_elim_body
              then (
                let siblings =
                  make_siblings_with_views
-                   ~loc
                    ~intros
                    ~target_pos
                    ~normalize_pattern
@@ -1374,10 +1409,11 @@ let build_elim_body
                ~trailing_pattern_names:pc.trailing_pattern_names
                body_with_siblings
            in
+           let cl = pc.clause_loc in
            let with_trailing =
              List.fold_right
                (fun n body ->
-                  Surface.Lambda { name = Named n; bound = body; implicit = false })
+                  at cl (Surface.Lambda { name = sn cl (Named n); bound = body; implicit = false }))
                pc.trailing_pattern_names
                qualified_body
            in
@@ -1386,50 +1422,46 @@ let build_elim_body
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda
-                      { name = Named (func_name ^ " " ^ v)
-                      ; bound = body
-                      ; implicit = false
-                      }
+                    at
+                      cl
+                      (Surface.Lambda
+                         { name = sn cl (Named (func_name ^ " " ^ v))
+                         ; bound = body
+                         ; implicit = false
+                         })
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = Named v; bound = inner; implicit })
+                at cl (Surface.Lambda { name = sn cl (Named v); bound = inner; implicit }))
              (List.combine (List.combine pc.vs ctor_info_.binder_kinds) implicits)
              with_trailing)
         ctors
     in
     let elim_call =
-      List.fold_left
-        (fun acc a -> Surface.App (false, acc, a))
-        (Surface.Var [ ind_head; "elim" ])
-        (data_args @ [ Surface.Var [ target ]; motive ] @ case_args)
+      Surface.apply
+        (at loc (Surface.Var [ ind_head; "elim" ]))
+        (data_args @ [ at loc (Surface.Var [ target ]); motive ] @ case_args)
     in
-    List.fold_left
-      (fun acc (n, _) -> Surface.App (false, acc, Surface.Var [ n ]))
+    Surface.apply
       elim_call
-      trailing_intros)
+      (List.map (fun (n, _) -> at loc (Surface.Var [ n ])) trailing_intros))
 ;;
 
 let find_var_in_spine ~(name : string) (spine : Surface.preterm list)
   : (int * (string * int) option) option
   =
-  let strip = function
-    | Surface.Located { value; _ } -> value
-    | t -> t
-  in
-  let is_named p =
-    match strip p with
+  let is_named (p : Surface.preterm) =
+    match p.Surface.node with
     | Surface.Var [ n ] when String.equal n name -> true
     | _ -> false
   in
   let rec walk i = function
     | [] -> None
-    | elem :: rest ->
+    | (elem : Surface.preterm) :: rest ->
       if is_named elem
       then Some (i, None)
       else (
-        let head, args = head_and_spine (strip elem) in
-        match strip head with
+        let head, args = head_and_spine elem in
+        match head.Surface.node with
         | Surface.Var path when args <> [] ->
           let ctor_name =
             match List.rev path with
@@ -1455,8 +1487,11 @@ let build_cong_extractor
       ~(info : Context.ind_info)
   : Surface.preterm option
   =
+  let lams names body =
+    Surface.lambda (List.map (fun n -> { Surface.loc; value = n }) names) body
+  in
   match sub_opt with
-  | None -> Some (Surface.lambda [ "__sh" ] (Surface.Var [ "__sh" ]))
+  | None -> Some (lams [ "__sh" ] (at loc (Surface.Var [ "__sh" ])))
   | Some (matched_ctor_name, sub_arg_idx) ->
     let dep_binder =
       match List.nth_opt info.deps dep_binder_idx with
@@ -1469,57 +1504,64 @@ let build_cong_extractor
           dep_binder_idx
           (List.length info.deps)
     in
-    (match head_of_surface dep_binder.Syntax.bound with
+    (match (head_of_surface dep_binder.Surface.bound).Surface.node with
      | Surface.Var [ index_ind_name ] ->
        (match Context.S.resolve [ index_ind_name ] with
         | Some (_, `Inductive index_info) ->
           let cases =
             List.map
-              (fun (c : Surface.pretype binder) ->
+              (fun (c : Surface.pretype Surface.sbinder) ->
                  let lambdas, fields =
                    Eliminator_synth.case_arg_lambda_binders
                      ~prefix:""
                      ~ind_name:index_ind_name
                      c
                  in
-                 if c.name = Named matched_ctor_name && sub_arg_idx < List.length fields
+                 if c.name.Surface.value = Named matched_ctor_name
+                    && sub_arg_idx < List.length fields
                  then
-                   Surface.lambda
+                   lams
                      lambdas
-                     (Surface.Var
-                        [ (match List.nth_opt fields sub_arg_idx with
-                           | Some v -> v
-                           | None ->
-                             Reporter.fatalf
-                               ~loc
-                               Elab_error
-                               "build_cong_extractor: field index %d out of bounds \
-                                (fields len=%d)"
-                               sub_arg_idx
-                               (List.length fields))
-                        ])
+                     (at loc
+                        (Surface.Var
+                           [ (match List.nth_opt fields sub_arg_idx with
+                              | Some v -> v
+                              | None ->
+                                Reporter.fatalf
+                                  ~loc
+                                  Elab_error
+                                  "build_cong_extractor: field index %d out of bounds \
+                                   (fields len=%d)"
+                                  sub_arg_idx
+                                  (List.length fields))
+                           ]))
                  else (
                    let default_ctor =
                      match Eliminator_synth.arities_of index_info with
-                     | (n, _) :: _ -> Surface.Var [ index_ind_name; n ]
-                     | [] -> Surface.Var [ "__sh" ]
+                     | (n, _) :: _ -> at loc (Surface.Var [ index_ind_name; n ])
+                     | [] -> at loc (Surface.Var [ "__sh" ])
                    in
-                   Surface.lambda lambdas default_ctor))
+                   lams lambdas default_ctor))
               index_info.ctors
           in
           let motive =
-            Surface.Lambda
-              { name = Anon; bound = Surface.Var [ index_ind_name ]; implicit = false }
+            at loc
+              (Surface.Lambda
+                 { name = sn loc Anon
+                 ; bound = at loc (Surface.Var [ index_ind_name ])
+                 ; implicit = false
+                 })
           in
           Some
-            (Surface.Lambda
-               { name = Named "__sh"
-               ; bound =
-                   Surface.apply
-                     (Surface.Var [ index_ind_name; "elim" ])
-                     ([ Surface.Var [ "__sh" ]; motive ] @ cases)
-               ; implicit = false
-               })
+            (at loc
+               (Surface.Lambda
+                  { name = sn loc (Named "__sh")
+                  ; bound =
+                      Surface.apply
+                        (at loc (Surface.Var [ index_ind_name; "elim" ]))
+                        ([ at loc (Surface.Var [ "__sh" ]); motive ] @ cases)
+                  ; implicit = false
+                  }))
         | _ -> None)
      | _ -> None)
 ;;
@@ -1537,8 +1579,8 @@ let position_of_target
         Elab_error
         "nested `<= \\elim %s`: target not found among current binders"
         target_name
-    | Surface.PVar n :: _ when String.equal n target_name -> i
-    | Surface.PImpVar n :: _ when String.equal n target_name -> i
+    | { Surface.pnode = Surface.PVar n; _ } :: _ when String.equal n target_name -> i
+    | { Surface.pnode = Surface.PImpVar n; _ } :: _ when String.equal n target_name -> i
     | _ :: rest -> go (i + 1) rest
   in
   go 0 head_view
@@ -1663,8 +1705,8 @@ let build_inline_elim_dispatch
           else (
             let id_ty =
               Surface.apply
-                (Surface.Var [ "Id" ])
-                [ Surface.Var [ idx_name i ]
+                (at loc (Surface.Var [ "Id" ]))
+                [ at loc (Surface.Var [ idx_name i ])
                 ; (match List.nth_opt target_index_surfaces i with
                    | Some v -> v
                    | None ->
@@ -1679,14 +1721,17 @@ let build_inline_elim_dispatch
             in
             wrap_ids
               (i - 1)
-              (Surface.Pi
-                 ({ name = Named (p_name i); bound = id_ty; implicit = false }, acc)))
+              (at loc
+                 (Surface.Pi
+                    ({ name = sn loc (Named (p_name i)); bound = id_ty; implicit = false }, acc))))
         in
         wrap_ids (m_indices - 1) result_type_surface)
       else result_type_surface
     in
     let inner =
-      Surface.Lambda { name = Named target_name; bound = with_ids; implicit = false }
+      at loc
+        (Surface.Lambda
+           { name = sn loc (Named target_name); bound = with_ids; implicit = false })
     in
     let rec wrap_idx_lambdas i acc =
       if i < 0
@@ -1694,7 +1739,9 @@ let build_inline_elim_dispatch
       else
         wrap_idx_lambdas
           (i - 1)
-          (Surface.Lambda { name = Named (idx_name i); bound = acc; implicit = false })
+          (at loc
+             (Surface.Lambda
+                { name = sn loc (Named (idx_name i)); bound = acc; implicit = false }))
     in
     wrap_idx_lambdas (m_indices - 1) inner
   in
@@ -1727,19 +1774,27 @@ let build_inline_elim_dispatch
                 let inner =
                   match (kind : Context.binder_kind) with
                   | Context.Recursive _ ->
-                    Surface.Lambda
-                      { name = Named ("ih-" ^ v); bound = body; implicit = false }
+                    at check_loc
+                      (Surface.Lambda
+                         { name = sn check_loc (Named ("ih-" ^ v))
+                         ; bound = body
+                         ; implicit = false
+                         })
                   | Context.Regular -> body
                 in
-                Surface.Lambda { name = Named v; bound = inner; implicit })
+                at check_loc
+                  (Surface.Lambda { name = sn check_loc (Named v); bound = inner; implicit }))
              binders
              body
          in
          let matched_sub =
            List.filter
              (fun (_, view) ->
-                match Option.map normalize_pattern (List.nth_opt view target_pos) with
-                | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
+                match
+                  Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+                    (List.nth_opt view target_pos)
+                with
+                | Some (Surface.PCon (cn, _)) -> String.equal cn.Surface.value ctor_name
                 | _ -> false)
              siblings
          in
@@ -1756,8 +1811,11 @@ let build_inline_elim_dispatch
                ctor_name;
            let body =
              if id_reify
-             then Surface.Absurd (Surface.IdAbsurd (Surface.Var [ p_name k ]))
-             else Surface.Hole
+             then
+               at loc
+                 (Surface.Absurd
+                    (at loc (Surface.IdAbsurd (at loc (Surface.Var [ p_name k ])))))
+             else at loc Surface.Hole
            in
            close_ctor_lambdas ~check_loc:loc ctor_info_.binder_names (wrap_p_binders body)
          | Index_unify.Success sigma ->
@@ -1771,7 +1829,8 @@ let build_inline_elim_dispatch
                  ind_head
                  ctor_name
              | _ ->
-               let is_pvar = function
+               let is_pvar (p : Surface.pattern) =
+                 match p.Surface.pnode with
                  | Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard -> true
                  | Surface.PCon _ | Surface.PRecord _ -> false
                in
@@ -1779,7 +1838,8 @@ let build_inline_elim_dispatch
                  List.find_opt
                    (fun (_, view) ->
                       match
-                        Option.map normalize_pattern (List.nth_opt view target_pos)
+                        Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+                          (List.nth_opt view target_pos)
                       with
                       | Some (Surface.PCon (_, sps)) -> List.for_all is_pvar sps
                       | _ -> false)
@@ -1799,28 +1859,30 @@ let build_inline_elim_dispatch
            let sub_head, sub_head_view = sub_head_view in
            let head_sub_pats =
              match
-               Option.map normalize_pattern (List.nth_opt sub_head_view target_pos)
+               Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+                 (List.nth_opt sub_head_view target_pos)
              with
              | Some (Surface.PCon (_, sps)) -> sps
              | _ -> []
            in
            let vs : string list =
              List.map
-               (function
-                 | Surface.PVar n -> n
-                 | Surface.PImpVar n -> n
-                 | Surface.PWildcard -> "_"
-                 | Surface.PCon _ ->
-                   Reporter.fatalf
-                     ~loc
-                     Elab_error
-                     "nested `<= \\elim`: head sibling's PCon sub-pattern was not a \
-                      variable — internal invariant violated"
-                 | Surface.PRecord _ ->
-                   Reporter.fatalf
-                     ~loc
-                     Elab_error
-                     "nested `<= \\elim`: record pattern not allowed inside a ctor")
+               (fun (p : Surface.pattern) ->
+                  match p.Surface.pnode with
+                  | Surface.PVar n -> n
+                  | Surface.PImpVar n -> n
+                  | Surface.PWildcard -> "_"
+                  | Surface.PCon _ ->
+                    Reporter.fatalf
+                      ~loc:p.Surface.ploc
+                      Elab_error
+                      "nested `<= \\elim`: head sibling's PCon sub-pattern was not a \
+                       variable — internal invariant violated"
+                  | Surface.PRecord _ ->
+                    Reporter.fatalf
+                      ~loc:p.Surface.ploc
+                      Elab_error
+                      "nested `<= \\elim`: record pattern not allowed inside a ctor")
                head_sub_pats
            in
            let vs =
@@ -1836,7 +1898,7 @@ let build_inline_elim_dispatch
              : string
              =
              let user_wrote_it =
-               match user_pat with
+               match Option.map (fun (p : Surface.pattern) -> p.Surface.pnode) user_pat with
                | Some (Surface.PVar _) | Some (Surface.PImpVar _) -> true
                | _ -> false
              in
@@ -1887,13 +1949,16 @@ let build_inline_elim_dispatch
              List.map
                (fun (c, view) ->
                   let sps =
-                    match Option.map normalize_pattern (List.nth_opt view target_pos) with
+                    match
+                      Option.map (fun p -> (normalize_pattern p).Surface.pnode)
+                        (List.nth_opt view target_pos)
+                    with
                     | Some (Surface.PCon (_, sps)) -> sps
                     | _ -> []
                   in
                   let expanded =
                     expand_pcon_sub_patterns
-                      ~loc:(loc_or loc c.Surface.body)
+                      ~loc:c.Surface.body.Surface.loc
                       ~ctor_name
                       ~implicits
                       ~binder_names:ctor_info_.binder_names
@@ -1911,12 +1976,13 @@ let build_inline_elim_dispatch
                let n_explicit_params =
                  List.length
                    (List.filter
-                      (fun (p : Surface.pretype binder) -> not p.implicit)
+                      (fun (p : Surface.pretype Surface.sbinder) -> not p.implicit)
                       info.params)
                in
                let outer_ctor =
                  List.find
-                   (fun (c : Surface.pretype binder) -> c.name = Named ctor_name)
+                   (fun (c : Surface.pretype Surface.sbinder) ->
+                      c.name.Surface.value = Named ctor_name)
                    info.ctors
                in
                let cod_spine =
@@ -1994,7 +2060,7 @@ let build_inline_elim_dispatch
                                   in
                                   let rename_subst : (string * Surface.preterm) list =
                                     List.map2
-                                      (fun bn uv -> bn, Surface.Var [ uv ])
+                                      (fun bn uv -> bn, at loc (Surface.Var [ uv ]))
                                       ctor_info_.binder_names
                                       vs
                                   in
@@ -2028,41 +2094,48 @@ let build_inline_elim_dispatch
                                         (List.length target_index_surfaces)
                                   in
                                   let cong_proof =
-                                    Surface.App
-                                      ( false
-                                      , Surface.App
-                                          ( true
-                                          , Surface.App
-                                              ( true
-                                              , Surface.App
-                                                  (false, Surface.Var [ "ap" ], extr)
-                                              , cons_idx_lhs )
-                                          , cons_idx_rhs )
-                                      , Surface.Var [ p_name spine_idx ] )
+                                    at loc
+                                      (Surface.App
+                                         ( false
+                                         , at loc
+                                             (Surface.App
+                                                ( true
+                                                , at loc
+                                                    (Surface.App
+                                                       ( true
+                                                       , at loc
+                                                           (Surface.App
+                                                              ( false
+                                                              , at loc (Surface.Var [ "ap" ])
+                                                              , extr ))
+                                                       , cons_idx_lhs ))
+                                                , cons_idx_rhs ))
+                                         , at loc (Surface.Var [ p_name spine_idx ]) ))
                                   in
                                   let subst_motive =
-                                    Surface.Lambda
-                                      { name = Named "__v"
-                                      ; bound =
-                                          Surface.apply
-                                            (Surface.Var [ ind_head ])
-                                            [ Surface.Var [ "__v" ] ]
-                                      ; implicit = false
-                                      }
+                                    at loc
+                                      (Surface.Lambda
+                                         { name = sn loc (Named "__v")
+                                         ; bound =
+                                             Surface.apply
+                                               (at loc (Surface.Var [ ind_head ]))
+                                               [ at loc (Surface.Var [ "__v" ]) ]
+                                         ; implicit = false
+                                         })
                                   in
                                   let coerced =
                                     Surface.apply
-                                      (Surface.Var [ "transport" ])
+                                      (at loc (Surface.Var [ "transport" ]))
                                       [ subst_motive
-                                      ; Surface.Var [ dep_user_name ]
+                                      ; at loc (Surface.Var [ dep_user_name ])
                                       ; value_surface
                                       ; cong_proof
-                                      ; Surface.Var [ bind_user_name ]
+                                      ; at loc (Surface.Var [ bind_user_name ])
                                       ]
                                   in
                                   let refined_ty =
                                     Surface.apply
-                                      (Surface.Var [ ind_head ])
+                                      (at loc (Surface.Var [ ind_head ]))
                                       [ value_surface ]
                                   in
                                   Some (bind_user_name, coerced, refined_ty))))))
@@ -2070,7 +2143,7 @@ let build_inline_elim_dispatch
              else []
            in
            let body =
-             match sub_head.Surface.body with
+             match sub_head.Surface.body.Surface.node with
              | Surface.Inline_elim d ->
                let coerce_for_target =
                  List.find_opt (fun (b, _, _) -> String.equal b d.target) coerce_wraps
@@ -2083,28 +2156,33 @@ let build_inline_elim_dispatch
                let next_outer_subst =
                  if Option.is_some next_target_override then [] else sigma @ outer_subst
                in
-               Surface.Inline_elim
-                 { d with
-                   siblings = new_siblings_for_next
-                 ; outer_subst = next_outer_subst
-                 ; target_override = next_target_override
-                 }
-             | other ->
-               let body = subst_vars_surface sigma_renamings other in
+               { sub_head.Surface.body with
+                 Surface.node =
+                   Surface.Inline_elim
+                     { d with
+                       siblings = new_siblings_for_next
+                     ; outer_subst = next_outer_subst
+                     ; target_override = next_target_override
+                     }
+               }
+             | _ ->
+               let body = subst_vars_surface sigma_renamings sub_head.Surface.body in
                List.fold_left
                  (fun acc (bind_name, coerced_expr, refined_ty) ->
                     if not (occurs_in bind_name acc)
                     then acc
                     else
-                      Surface.App
-                        ( false
-                        , Surface.TypedLambda
-                            ( { Syntax.name = Syntax.Named bind_name
-                              ; bound = refined_ty
-                              ; implicit = false
-                              }
-                            , acc )
-                        , coerced_expr ))
+                      at loc
+                        (Surface.App
+                           ( false
+                           , at loc
+                               (Surface.TypedLambda
+                                  ( { Surface.name = sn loc (Surface.Named bind_name)
+                                    ; bound = refined_ty
+                                    ; implicit = false
+                                    }
+                                  , acc ))
+                           , coerced_expr )))
                  body
                  coerce_wraps
            in
@@ -2119,17 +2197,19 @@ let build_inline_elim_dispatch
   in
   let target_full_spine_surface = List.map readback_v target_full_spine_raw in
   let elim_param_imps =
-    let pi = List.map (fun (p : _ Syntax.binder) -> p.implicit) info.params in
-    let di = List.map (fun (d : _ Syntax.binder) -> d.implicit) info.deps in
+    let pi = List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params in
+    let di = List.map (fun (d : _ Surface.sbinder) -> d.implicit) info.deps in
     pi @ di
   in
   let refl_args =
-    if id_reify then List.init m_indices (fun _ -> Surface.Var [ "Id"; "refl" ]) else []
+    if id_reify
+    then List.init m_indices (fun _ -> at loc (Surface.Var [ "Id"; "refl" ]))
+    else []
   in
   let target_arg =
     match target_override with
     | Some e -> e
-    | None -> Surface.Var [ target_name ]
+    | None -> at loc (Surface.Var [ target_name ])
   in
   let all_args =
     target_full_spine_surface @ [ target_arg; motive ] @ case_args @ refl_args
@@ -2144,8 +2224,8 @@ let build_inline_elim_dispatch
          | Some v -> v
          | None -> false
        in
-       Surface.App (imp, acc, a), i + 1)
-    (Surface.Var [ ind_head; "elim" ], 0)
+       at (Surface.join_loc acc.Surface.loc a.Surface.loc) (Surface.App (imp, acc, a)), i + 1)
+    (at loc (Surface.Var [ ind_head; "elim" ]), 0)
     all_args
   |> fst
 ;;
@@ -2171,15 +2251,18 @@ let%expect_test "compute_effective_intros: bracketed intro at explicit param err
   let result =
     try
       with_handlers (fun () ->
-        let dummy_loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+        let dummy_loc = Surface.dummy_loc in
         let _ =
           compute_effective_intros
             ~loc:dummy_loc
             ~bindings:
-              [ ({ name = Named "A"; bound = Surface.Universe; implicit = false }
-                 : Surface.pretype binder)
+              [ ({ name = { Surface.loc = dummy_loc; value = Named "A" }
+                 ; bound = at dummy_loc Surface.Universe
+                 ; implicit = false
+                 }
+                 : Surface.pretype Surface.sbinder)
               ]
-            ~signature:Surface.Universe
+            ~signature:(at dummy_loc Surface.Universe)
             ~intros:[ "A", true ]
         in
         ());

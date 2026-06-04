@@ -11,45 +11,53 @@ open Syntax
 open Bwd
 open Surface_utils
 
+(* Synthesized Surface nodes inherit a location from the nearest source
+   artifact (the clause body/head or the declaration's loc). *)
+let at loc node : Surface.preterm = Surface.Mk.at loc node
+let sn loc value : binder_name Surface.spanned = { Surface.loc; value }
+
 (* Substitute a list of (name, replacement) pairs into a Surface preterm.
    Only replaces Var [name] for single-segment paths; does not capture-avoid
    (record pattern binders are fresh relative to the body). *)
 let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
   : Surface.preterm
   =
-  match t with
+  let keep node = { t with Surface.node } in
+  match t.Surface.node with
   | Surface.Var [ x ] ->
     (match List.assoc_opt x env with
      | Some replacement -> replacement
      | None -> t)
   | Surface.Var _ -> t
-  | Surface.Located { loc; value } ->
-    Surface.Located { loc; value = subst_vars env value }
-  | Surface.App (impl, f, a) -> Surface.App (impl, subst_vars env f, subst_vars env a)
+  | Surface.App (impl, f, a) ->
+    keep (Surface.App (impl, subst_vars env f, subst_vars env a))
   | Surface.Lambda b ->
-    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
-    Surface.Lambda { b with bound = subst_vars env' b.bound }
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name.Surface.value) env in
+    keep (Surface.Lambda { b with bound = subst_vars env' b.bound })
   | Surface.TypedLambda (b, body) ->
-    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
-    Surface.TypedLambda ({ b with bound = subst_vars env b.bound }, subst_vars env' body)
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name.Surface.value) env in
+    keep
+      (Surface.TypedLambda ({ b with bound = subst_vars env b.bound }, subst_vars env' body))
   | Surface.Pi (b, cod) ->
-    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name) env in
-    Surface.Pi ({ b with bound = subst_vars env b.bound }, subst_vars env' cod)
-  | Surface.Proj (e, f) -> Surface.Proj (subst_vars env e, f)
+    let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name.Surface.value) env in
+    keep (Surface.Pi ({ b with bound = subst_vars env b.bound }, subst_vars env' cod))
+  | Surface.Proj (e, f) -> keep (Surface.Proj (subst_vars env e, f))
   | Surface.RecordLit entries ->
-    Surface.RecordLit (List.map (fun (f, e) -> f, subst_vars env e) entries)
+    keep (Surface.RecordLit (List.map (fun (f, e) -> f, subst_vars env e) entries))
   | Surface.RecordUpdate (base, entries) ->
-    Surface.RecordUpdate
-      (subst_vars env base, List.map (fun (f, e) -> f, subst_vars env e) entries)
-  | Surface.Max (a, b) -> Surface.Max (subst_vars env a, subst_vars env b)
+    keep
+      (Surface.RecordUpdate
+         (subst_vars env base, List.map (fun (f, e) -> f, subst_vars env e) entries))
+  | Surface.Max (a, b) -> keep (Surface.Max (subst_vars env a, subst_vars env b))
   | Surface.Op_soup items ->
-    Surface.Op_soup
-      (List.map
-         (function
-           | Surface.SI_Atom e -> Surface.SI_Atom (subst_vars env e)
-           | Surface.SI_Imp_arg e -> Surface.SI_Imp_arg (subst_vars env e)
-           | other -> other)
-         items)
+    keep
+      (Surface.Op_soup
+         (List.map
+            (function
+              | Surface.SI_Atom e -> Surface.SI_Atom (subst_vars env e)
+              | Surface.SI_Imp_arg e -> Surface.SI_Imp_arg (subst_vars env e)
+              | other -> other)
+            items))
   | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
   | Surface.IdAbsurd _ -> t
   | Surface.Absurd _ -> t
@@ -60,7 +68,7 @@ let rec walk_params
           ~(loc : Asai.Range.t)
           (ctx : local_ctx)
           (goal : Core.value)
-          (bindings : Surface.pretype binder list)
+          (bindings : Surface.pretype Surface.sbinder list)
   : local_ctx * Core.value
   =
   match bindings with
@@ -68,7 +76,7 @@ let rec walk_params
   | b :: rest ->
     (match Evaluation.force_head goal with
      | Core.VPi ({ name = _; bound = a; implicit = _ }, k) ->
-       let ctx' = bind ctx b.name a in
+       let ctx' = bind ctx b.name.Surface.value a in
        let goal' = k (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
        walk_params ~loc ctx' goal' rest
      | other ->
@@ -94,7 +102,7 @@ let rec walk_moves
           (position : int)
   : Surface.preterm
   =
-  let clause_loc (c : Surface.clause) = Option.value (loc_of c.body) ~default:loc in
+  let clause_loc (c : Surface.clause) = c.body.Surface.loc in
   match moves with
   | [] ->
     (match clauses with
@@ -127,7 +135,9 @@ let rec walk_moves
        let inner =
          walk_moves ~loc ctx' cod signature n_params rest clauses (position + 1)
        in
-       Surface.Lambda { name = Syntax.Named name; bound = inner; implicit = false }
+       at
+         inner.Surface.loc
+         (Surface.Lambda { name = sn loc (Syntax.Named name); bound = inner; implicit = false })
      | other ->
        Reporter.fatalf
          ~loc
@@ -160,7 +170,9 @@ let rec walk_moves
        let clause = List.hd clauses in
        let cloc = clause_loc clause in
        let entries =
-         match List.nth_opt clause.patterns pattern_position with
+         match Option.map (fun (p : Surface.pattern) -> p.Surface.pnode)
+                 (List.nth_opt clause.patterns pattern_position)
+         with
          | Some (Surface.PRecord es) -> es
          | Some (Surface.PVar _) | Some (Surface.PImpVar _) | Some Surface.PWildcard ->
            Reporter.fatalf
@@ -181,20 +193,20 @@ let rec walk_moves
              ~loc:cloc
              Elab_error
              "clause `%s` has too few patterns"
-             clause.head
+             clause.head.Surface.value
        in
        let _ =
          List.fold_left
-           (fun seen (fname, _) ->
-              if List.mem fname seen
+           (fun seen ((fname, _) : string Surface.spanned * _) ->
+              if List.mem fname.Surface.value seen
               then
                 Reporter.fatalf
                   ~loc:cloc
                   Elab_error
                   "duplicate field `%s` in record pattern for `%s`"
-                  fname
+                  fname.Surface.value
                   r_name
-              else fname :: seen)
+              else fname.Surface.value :: seen)
            []
            entries
        in
@@ -203,7 +215,9 @@ let rec walk_moves
            (fun (b : Core.value_ty Syntax.binder) -> Syntax.Name.to_string b.name)
            fields
        in
-       let entry_names = List.map fst entries in
+       let entry_names =
+         List.map (fun ((f, _) : string Surface.spanned * _) -> f.Surface.value) entries
+       in
        List.iter
          (fun fname ->
             if not (List.mem fname field_names)
@@ -232,13 +246,21 @@ let rec walk_moves
        let subst_pairs =
          List.filter_map
            (fun fname ->
-              let sub_pat = List.assoc fname entries in
-              match sub_pat with
+              let fspanned, sub_pat =
+                List.find
+                  (fun ((f, _) : string Surface.spanned * _) ->
+                     String.equal f.Surface.value fname)
+                  entries
+              in
+              match sub_pat.Surface.pnode with
               | Surface.PVar v ->
                 Some
                   ( v
-                  , Surface.Proj (Surface.Var [ Syntax.Name.to_string target_name ], fname)
-                  )
+                  , at
+                      cloc
+                      (Surface.Proj
+                         ( at cloc (Surface.Var [ Syntax.Name.to_string target_name ])
+                         , fspanned )) )
               | _ ->
                 Reporter.fatalf
                   ~loc:cloc
@@ -259,9 +281,16 @@ let rec walk_moves
        (* A bare IDENT in a pattern position parses as PVar, but the user may
           have written the name of a nullary constructor. Normalize on-the-fly. *)
        let is_ctor name = List.exists (fun (n, _) -> String.equal n name) ctors in
-       let normalize_pattern = function
-         | Surface.PVar name when is_ctor name -> Surface.PCon (name, [])
-         | p -> p
+       (* Normalize a bare-ident PVar that names a nullary constructor into a
+          PCon; preserves the pattern's own location. *)
+       let normalize_pattern (p : Surface.pattern) : Surface.pattern =
+         match p.Surface.pnode with
+         | Surface.PVar name when is_ctor name ->
+           { p with
+             Surface.pnode =
+               Surface.PCon ({ Surface.loc = p.Surface.ploc; value = name }, [])
+           }
+         | _ -> p
        in
        let seen = Hashtbl.create 4 in
        List.iter
@@ -270,31 +299,32 @@ let rec walk_moves
             match
               Option.map normalize_pattern (List.nth_opt c.patterns pattern_position)
             with
-            | Some (Surface.PCon (cn, _)) ->
-              if not (is_ctor cn)
+            | Some { Surface.pnode = Surface.PCon (cn, _); ploc } ->
+              if not (is_ctor cn.Surface.value)
               then
                 Reporter.fatalf
-                  ~loc:cloc
+                  ~loc:cn.Surface.loc
                   Elab_error
                   "`%s` is not a constructor of `%s`"
-                  cn
+                  cn.Surface.value
                   ind_head;
-              if Hashtbl.mem seen cn
+              if Hashtbl.mem seen cn.Surface.value
               then
                 Reporter.fatalf
-                  ~loc:cloc
+                  ~loc:ploc
                   Elab_error
                   "constructor `%s` has more than one clause"
-                  cn;
-              Hashtbl.add seen cn ()
-            | Some (Surface.PVar _) | Some (Surface.PImpVar _) | Some Surface.PWildcard ->
+                  cn.Surface.value;
+              Hashtbl.add seen cn.Surface.value ()
+            | Some { Surface.pnode = Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard; ploc }
+              ->
               Reporter.fatalf
-                ~loc:cloc
+                ~loc:ploc
                 Elab_error
                 "expected constructor pattern at split position, got variable"
-            | Some (Surface.PRecord _) ->
+            | Some { Surface.pnode = Surface.PRecord _; ploc } ->
               Reporter.fatalf
-                ~loc:cloc
+                ~loc:ploc
                 Elab_error
                 "expected constructor pattern at split position, got record pattern \
                  (target `%s` is an inductive, not a record)"
@@ -304,7 +334,7 @@ let rec walk_moves
                 ~loc:cloc
                 Elab_error
                 "clause `%s` has too few patterns"
-                c.head)
+                c.head.Surface.value)
          clauses;
        let case_args : Surface.preterm list =
          List.map
@@ -315,10 +345,11 @@ let rec walk_moves
                     (fun (c : Surface.clause) ->
                        match
                          Option.map
-                           normalize_pattern
+                           (fun p -> (normalize_pattern p).Surface.pnode)
                            (List.nth_opt c.patterns pattern_position)
                        with
-                       | Some (Surface.PCon (cn, _)) -> String.equal cn ctor_name
+                       | Some (Surface.PCon (cn, _)) ->
+                         String.equal cn.Surface.value ctor_name
                        | _ -> false)
                     clauses
                 with
@@ -332,19 +363,17 @@ let rec walk_moves
                     ctor_name
               in
               let cloc = clause_loc clause in
+              let pat = List.nth_opt clause.patterns pattern_position in
+              let ploc = Option.fold ~none:cloc ~some:(fun (p : Surface.pattern) -> p.Surface.ploc) pat in
               let vs =
-                match
-                  Option.map
-                    normalize_pattern
-                    (List.nth_opt clause.patterns pattern_position)
-                with
+                match Option.map (fun p -> (normalize_pattern p).Surface.pnode) pat with
                 | Some (Surface.PCon (_, vs)) -> vs
                 | _ -> []
               in
               if List.length vs <> arity
               then
                 Reporter.fatalf
-                  ~loc:cloc
+                  ~loc:ploc
                   Elab_error
                   "constructor `%s` expects %d field-binders, got %d"
                   ctor_name
@@ -352,34 +381,39 @@ let rec walk_moves
                   (List.length vs);
               let v_names =
                 List.map
-                  (function
-                    | Surface.PVar n -> n
-                    | Surface.PImpVar n -> n
-                    | Surface.PWildcard -> "_"
-                    | Surface.PCon _ ->
-                      Reporter.fatalf
-                        ~loc:cloc
-                        Elab_error
-                        "`<= split`: deep constructor patterns not supported here"
-                    | Surface.PRecord _ ->
-                      Reporter.fatalf
-                        ~loc:cloc
-                        Elab_error
-                        "`<= split`: record pattern not allowed inside a constructor")
+                  (fun (p : Surface.pattern) ->
+                     match p.Surface.pnode with
+                     | Surface.PVar n -> n
+                     | Surface.PImpVar n -> n
+                     | Surface.PWildcard -> "_"
+                     | Surface.PCon _ ->
+                       Reporter.fatalf
+                         ~loc:p.Surface.ploc
+                         Elab_error
+                         "`<= split`: deep constructor patterns not supported here"
+                     | Surface.PRecord _ ->
+                       Reporter.fatalf
+                         ~loc:p.Surface.ploc
+                         Elab_error
+                         "`<= split`: record pattern not allowed inside a constructor")
                   vs
               in
               List.fold_right
                 (fun v body ->
-                   Surface.Lambda { name = Named v; bound = body; implicit = false })
+                   at
+                     cloc
+                     (Surface.Lambda { name = sn cloc (Named v); bound = body; implicit = false }))
                 v_names
                 clause.body)
            ctors
        in
        let motive_body =
-         peel_pi_surface ~loc (pattern_position + 1 - n_params) signature
+         peel_pi_surface (pattern_position + 1 - n_params) signature
        in
        let motive : Surface.preterm =
-         Surface.Lambda { name = target_name; bound = motive_body; implicit = false }
+         at
+           motive_body.Surface.loc
+           (Surface.Lambda { name = sn loc target_name; bound = motive_body; implicit = false })
        in
        (* Extract the target's type as a Surface preterm so we can read off the
           data-type's params + deps to prepend to the eliminator's spine. The
@@ -405,11 +439,10 @@ let rec walk_moves
              "stack-def: cannot locate target type in signature"
        in
        let data_args : Surface.preterm list = Surface.applied_spine target_type_surface in
-       List.fold_left
-         (fun acc arg -> Surface.App (false, acc, arg))
-         (Surface.Var [ ind_head; "elim" ])
+       Surface.apply
+         (at loc (Surface.Var [ ind_head; "elim" ]))
          (data_args
-          @ [ Surface.Var [ Syntax.Name.to_string target_name ]; motive ]
+          @ [ at loc (Surface.Var [ Syntax.Name.to_string target_name ]); motive ]
           @ case_args)
      | other ->
        Reporter.fatalf
@@ -425,7 +458,6 @@ let handle_stack_def
       (m : machine)
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~result_ty
       ~moves
@@ -434,34 +466,35 @@ let handle_stack_def
   List.iter
     (fun (c : Surface.clause) ->
        List.iter
-         (function
-           | Surface.PImpVar n ->
-             Reporter.fatalf
-               ~loc
-               Elab_error
-               "`{%s}` patterns are only valid in `<= elim` definitions"
-               n
-           | _ -> ())
+         (fun (p : Surface.pattern) ->
+            match p.Surface.pnode with
+            | Surface.PImpVar n ->
+              Reporter.fatalf
+                ~loc:p.Surface.ploc
+                Elab_error
+                "`{%s}` patterns are only valid in `<= elim` definitions"
+                n
+            | _ -> ())
          c.patterns)
     clauses;
   let typ : Surface.pretype =
     List.fold_right
-      (fun binding return_ty -> Surface.Pi (binding, return_ty))
+      (fun binding return_ty ->
+         { Surface.loc = return_ty.Surface.loc; node = Surface.Pi (binding, return_ty) })
       bindings
       result_ty
   in
   push
     m
     (KTopStackDef_HaveType
-       { loc; name; name_loc; bindings; signature = result_ty; moves; clauses });
-  push m (GInferType (loc, typ))
+       { loc; name; bindings; signature = result_ty; moves; clauses });
+  push m (GInferType typ)
 ;;
 
 let handle_stack_def_have_type
       (m : machine)
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~signature
       ~moves
@@ -484,13 +517,15 @@ let handle_stack_def_have_type
     in
     let term : Surface.preterm =
       List.fold_right
-        (fun (b : Surface.pretype binder) body ->
-           Surface.Lambda { name = b.name; bound = body; implicit = b.implicit })
+        (fun (b : Surface.pretype Surface.sbinder) body ->
+           at
+             (Surface.join_loc b.name.Surface.loc body.Surface.loc)
+             (Surface.Lambda { name = b.name; bound = body; implicit = b.implicit }))
         bindings
         inner
     in
-    push m (KTopLet_HaveBody { loc; name; name_loc; typ_tm; typ_val });
-    push m (GCheck (loc, term, typ_val))
+    push m (KTopLet_HaveBody { loc; name; typ_tm; typ_val });
+    push m (GCheck (term, typ_val))
   | other ->
     Reporter.fatalf Elab_error "KTopStackDef_HaveType: bad result %s" (produced_tag other)
 ;;
@@ -499,7 +534,6 @@ let handle_elim_def
       (m : machine)
       ~loc
       ~name
-      ~name_loc
       ~bindings
       ~result_ty
       ~opens
@@ -509,7 +543,8 @@ let handle_elim_def
   =
   let typ : Surface.pretype =
     List.fold_right
-      (fun binding return_ty -> Surface.Pi (binding, return_ty))
+      (fun binding return_ty ->
+         { Surface.loc = return_ty.Surface.loc; node = Surface.Pi (binding, return_ty) })
       bindings
       result_ty
   in
@@ -518,7 +553,6 @@ let handle_elim_def
     (KTopElimDef_HaveType
        { loc
        ; name
-       ; name_loc
        ; bindings
        ; signature = result_ty
        ; opens
@@ -526,14 +560,13 @@ let handle_elim_def
        ; target
        ; clauses
        });
-  push m (GInferType (loc, typ))
+  push m (GInferType typ)
 ;;
 
 let handle_elim_def_have_type
       (m : machine)
       ~loc
-      ~name
-      ~name_loc
+      ~(name : string Surface.spanned)
       ~bindings
       ~signature
       ~opens
@@ -543,6 +576,8 @@ let handle_elim_def_have_type
   =
   match take_result m with
   | PType (typ_tm, _) ->
+    let name_loc = name.Surface.loc in
+    let name = name.Surface.value in
     let typ_val = Evaluation.eval m.ctx.env typ_tm in
     let effective_intros =
       Inductive.compute_effective_intros ~loc ~bindings ~signature ~intros
@@ -600,7 +635,9 @@ let handle_elim_def_have_type
     let term : Surface.preterm =
       List.fold_right
         (fun (n, implicit) body ->
-           Surface.Lambda { name = Named n; bound = body; implicit })
+           at
+             (Surface.join_loc name_loc body.Surface.loc)
+             (Surface.Lambda { name = sn name_loc (Named n); bound = body; implicit }))
         intros
         elim_inner
     in
@@ -608,8 +645,14 @@ let handle_elim_def_have_type
     push
       m
       (KTopElimDef_HaveBody
-         { loc; name; name_loc; typ_tm; typ_val; func_name = name; target_pos });
-    push m (GCheck (loc, term, typ_val))
+         { loc
+         ; name = { Surface.loc = name_loc; value = name }
+         ; typ_tm
+         ; typ_val
+         ; func_name = name
+         ; target_pos
+         });
+    push m (GCheck (term, typ_val))
   | other ->
     Reporter.fatalf Elab_error "KTopElimDef_HaveType: bad result %s" (produced_tag other)
 ;;
@@ -689,8 +732,7 @@ let rewrite_recursive_calls ~loc ~func_name ~target_pos term =
 let handle_elim_def_have_body
       (m : machine)
       ~loc
-      ~name
-      ~(name_loc : Asai.Range.t option)
+      ~(name : string Surface.spanned)
       ~typ_tm
       ~typ_val
       ~(func_name : string)
@@ -698,6 +740,8 @@ let handle_elim_def_have_body
   =
   match take_result m with
   | PTerm term ->
+    let name_loc = Some name.Surface.loc in
+    let name = name.Surface.value in
     let term = rewrite_recursive_calls ~loc ~func_name ~target_pos term in
     let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
     Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
@@ -713,8 +757,7 @@ let handle_elim_def_have_body
 ;;
 
 let handle_check_inline_elim
-      ~(infer_term :
-         loc:Asai.Range.t -> local_ctx -> Surface.preterm -> Core.term * Core.value)
+      ~(infer_term : local_ctx -> Surface.preterm -> Core.term * Core.value)
       (m : machine)
       loc
       (d : Surface.inline_elim_data)
@@ -732,7 +775,7 @@ let handle_check_inline_elim
   | _ ->
     let raw_target_ty =
       match d.target_override with
-      | Some override -> snd (infer_term ~loc m.ctx override)
+      | Some override -> snd (infer_term m.ctx override)
       | None ->
         (match resolve_local m.ctx d.target with
          | Some ix -> local_type m.ctx ix
@@ -785,5 +828,5 @@ let handle_check_inline_elim
         ~outer_subst:d.outer_subst
         ~target_override:d.target_override
     in
-    push m (GCheck (loc, expanded, ty))
+    push m (GCheck (expanded, ty))
 ;;

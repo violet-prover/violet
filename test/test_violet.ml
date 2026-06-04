@@ -96,6 +96,26 @@ let load_with_deps (filename : string) : (string * Violet_surface.Surface.t) lis
   | ErrorCycle _ -> failwith "import cycle"
 ;;
 
+(* Render a diagnostic's source span as `line:col-line:col` so that the
+   bad/ goldens pin error POSITIONS, not just messages. Columns are 1-based. *)
+let render_loc : Asai.Range.t option -> string = function
+  | None -> "<no location>"
+  | Some r ->
+    (match Asai.Range.view r with
+     | `Range (s, e) ->
+       Printf.sprintf
+         "%d:%d-%d:%d"
+         s.Asai.Range.line_num
+         (s.Asai.Range.offset - s.Asai.Range.start_of_line + 1)
+         e.Asai.Range.line_num
+         (e.Asai.Range.offset - e.Asai.Range.start_of_line + 1)
+     | `End_of_file p ->
+       Printf.sprintf
+         "eof %d:%d"
+         p.Asai.Range.line_num
+         (p.Asai.Range.offset - p.Asai.Range.start_of_line + 1))
+;;
+
 (* In the child: silence stdout/stderr (to keep the test log clean), then
    run the elaborator. On fatal error, render the diagnostic's explanation
    to `msg_file` and exit 1. The parent reads `msg_file` after waitpid. *)
@@ -135,7 +155,11 @@ let run_check_in_child filename ~msg_file =
      exit_code := 1;
      (try
         let oc = open_out msg_file in
-        output_string oc (Asai.Diagnostic.string_of_text d.explanation.value);
+        output_string
+          oc
+          (render_loc d.explanation.loc
+           ^ "\n"
+           ^ Asai.Diagnostic.string_of_text d.explanation.value);
         close_out oc
       with
       | _ -> ())

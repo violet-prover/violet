@@ -23,10 +23,10 @@ type polarity =
 [@@deriving show]
 
 type ind_info =
-  { params : Surface.pretype binder list
-  ; deps : Surface.pretype binder list
+  { params : Surface.pretype Surface.sbinder list
+  ; deps : Surface.pretype Surface.sbinder list
   ; ind_ty : Surface.pretype
-  ; ctors : Surface.pretype binder list
+  ; ctors : Surface.pretype Surface.sbinder list
   ; infos : ctor_info list
   ; param_polarity : polarity list
   }

@@ -260,7 +260,7 @@ module Tp = struct
 end
 
 module P = struct
-  type token_buf = Lexer.token Asai.Range.located array
+  type token_buf = Lexer.token Surface.spanned array
 
   type 'a t =
     { tp : Tp.t
@@ -270,26 +270,28 @@ module P = struct
   exception
     ParseFailure of
       { offset : int
-      ; loc : Asai.Range.t option
+      ; loc : Asai.Range.t
       ; found : Lexer.token
       }
 
   let fail_at buf i =
     if i < Array.length buf
     then (
-      let lt = buf.(i) in
-      raise
-        (ParseFailure { offset = i; loc = lt.Asai.Range.loc; found = lt.Asai.Range.value }))
-    else raise (ParseFailure { offset = i; loc = None; found = Lexer.EOF })
+      let lt : Lexer.token Surface.spanned = buf.(i) in
+      raise (ParseFailure { offset = i; loc = lt.Surface.loc; found = lt.Surface.value }))
+    else (
+      (* the buffer always ends with a located EOF token *)
+      let last : Lexer.token Surface.spanned = buf.(Array.length buf - 1) in
+      raise (ParseFailure { offset = i; loc = last.Surface.loc; found = Lexer.EOF }))
   ;;
 
   let tok tag =
-    let parse buf i =
+    let parse (buf : token_buf) i =
       if i < Array.length buf
       then (
         let lt = buf.(i) in
-        if C.tag_of lt.Asai.Range.value = tag
-        then i + 1, lt.Asai.Range.value
+        if C.tag_of lt.Surface.value = tag
+        then i + 1, lt.Surface.value
         else fail_at buf i)
       else fail_at buf i
     in
@@ -297,39 +299,32 @@ module P = struct
   ;;
 
   let tok_loc tag =
-    let parse buf i =
+    let parse (buf : token_buf) i =
       if i < Array.length buf
       then (
         let lt = buf.(i) in
-        if C.tag_of lt.Asai.Range.value = tag
-        then i + 1, (lt.Asai.Range.loc, lt.Asai.Range.value)
+        if C.tag_of lt.Surface.value = tag
+        then i + 1, (lt.Surface.loc, lt.Surface.value)
         else fail_at buf i)
       else fail_at buf i
     in
     { tp = Tp.tok tag; parse }
   ;;
 
-  let span_of buf i last =
+  let span_of (buf : token_buf) i last : Asai.Range.t =
     if i < Array.length buf && last >= i && last < Array.length buf
-    then
-      begin match buf.(i).Asai.Range.loc, buf.(last).Asai.Range.loc with
-      | Some lstart, Some lend ->
-        (match Asai.Range.view lstart, Asai.Range.view lend with
-         | `Range (bpos, _), `Range (_, epos) -> Some (Asai.Range.make (bpos, epos))
-         | _ -> Some lstart)
-      | (Some _ as l), None | None, (Some _ as l) -> l
-      | None, None -> None
-      end
-    else None
+    then Surface.join_loc buf.(i).Surface.loc buf.(last).Surface.loc
+    else if i < Array.length buf
+    then buf.(i).Surface.loc
+    else buf.(Array.length buf - 1).Surface.loc
   ;;
 
   (* Wrap a parser so its result is paired with a range spanning every token
      it consumed (start of the first, end of the last). Used for top-level
      constructs so that error reports underline the entire definition rather
-     than just the introducing keyword. Falls back to either endpoint's loc
-     if a merged range cannot be constructed. *)
+     than just the introducing keyword. *)
   let with_full_range p =
-    let parse buf i =
+    let parse (buf : token_buf) i =
       let i', x = p.parse buf i in
       let loc = span_of buf i (i' - 1) in
       i', (loc, x)
@@ -349,7 +344,7 @@ module P = struct
   let ( let+ ) p f = map f p
 
   let ( and+ ) p1 p2 =
-    let parse buf i =
+    let parse (buf : token_buf) i =
       let i, a = p1.parse buf i in
       let i, b = p2.parse buf i in
       i, (a, b)
@@ -368,7 +363,7 @@ module P = struct
     let+ lv = tok_loc C.T_IDENT in
     let loc, v = lv in
     match v with
-    | Lexer.IDENT s -> loc, s
+    | Lexer.IDENT s -> { Surface.loc; value = s }
     | _ -> assert false
   ;;
 
@@ -390,7 +385,7 @@ module P = struct
     let+ lv = tok_loc C.T_SYMBOL in
     let loc, v = lv in
     match v with
-    | Lexer.SYMBOL s -> loc, s
+    | Lexer.SYMBOL s -> { Surface.loc; value = s }
     | _ -> assert false
   ;;
 
@@ -399,10 +394,10 @@ module P = struct
 
   let ( || ) p1 p2 =
     let tp = Tp.alt p1.tp p2.tp in
-    let parse buf i =
+    let parse (buf : token_buf) i =
       if i < Array.length buf
       then begin
-        let t = buf.(i).Asai.Range.value in
+        let t = buf.(i).Surface.value in
         if C.mem t p1.tp.first
         then p1.parse buf i
         else if C.mem t p2.tp.first
@@ -457,17 +452,31 @@ module Grammar = struct
   open P
   module S = Syntax.Surface
 
-  let wrap_loc loc v =
-    match loc with
-    | Some l -> S.Located (Asai.Range.locate l v)
-    | None -> v
+  (* Every preterm production goes through one of these: parse a NODE, get
+     back a located preterm covering exactly the consumed tokens. *)
+  let with_loc (p : S.preterm_node t) : S.preterm t =
+    let parse (buf : P.token_buf) i =
+      let i', x = p.parse buf i in
+      i', { S.loc = span_of buf i (i' - 1); node = x }
+    in
+    { tp = p.tp; parse }
   ;;
 
-  let with_loc p =
-    let parse buf i =
+  let with_ploc (p : S.pattern_node t) : S.pattern t =
+    let parse (buf : P.token_buf) i =
       let i', x = p.parse buf i in
-      let loc = span_of buf i (i' - 1) in
-      i', wrap_loc loc x
+      i', { S.ploc = span_of buf i (i' - 1); pnode = x }
+    in
+    { tp = p.tp; parse }
+  ;;
+
+  (* Like [with_loc], but for productions that already build a located
+     preterm: re-anchor its TOP node to the full consumed token span (inner
+     nodes keep their own, name-anchored spans). *)
+  let relocate_full (p : S.preterm t) : S.preterm t =
+    let parse (buf : P.token_buf) i =
+      let i', x = p.parse buf i in
+      i', S.Mk.re_loc (span_of buf i (i' - 1)) x
     in
     { tp = p.tp; parse }
   ;;
@@ -489,11 +498,11 @@ module Grammar = struct
     path
   ;;
 
-  let p_export : (string * Asai.Range.t option) list t =
+  let p_export : string S.spanned list t =
     let+ _ = tok C.T_EXPORT
     and+ first = ident_loc
     and+ rest = star ident_loc in
-    List.map (fun (loc, name) -> name, loc) (first :: rest)
+    first :: rest
   ;;
 
   (* Peek helpers used by the two hand-coded disambiguators. *)
@@ -502,14 +511,14 @@ module Grammar = struct
     let n = Array.length buf in
     if i + 1 >= n
     then false
-    else if C.tag_of buf.(i + 1).Asai.Range.value <> C.T_IDENT
+    else if C.tag_of buf.(i + 1).Surface.value <> C.T_IDENT
     then false
     else begin
       let j = ref (i + 1) in
-      while !j < n && C.tag_of buf.(!j).Asai.Range.value = C.T_IDENT do
+      while !j < n && C.tag_of buf.(!j).Surface.value = C.T_IDENT do
         incr j
       done;
-      !j < n && C.tag_of buf.(!j).Asai.Range.value = C.T_COLON
+      !j < n && C.tag_of buf.(!j).Surface.value = C.T_COLON
     end
   ;;
 
@@ -519,7 +528,7 @@ module Grammar = struct
     if i + 1 >= n
     then false
     else (
-      match C.tag_of buf.(i + 1).Asai.Range.value with
+      match C.tag_of buf.(i + 1).Surface.value with
       | C.T_LPAREN | C.T_LBRACKET -> true
       | _ -> false)
   ;;
@@ -551,7 +560,7 @@ module Grammar = struct
     let j = ref (i + 1) in
     let result = ref None in
     while !result = None && !j < n do
-      let tok = buf.(!j).Asai.Range.value in
+      let tok = buf.(!j).Surface.value in
       (match tok with
        | Lexer.L_BRACKET | Lexer.L_PAREN -> incr depth
        | Lexer.R_BRACKET | Lexer.R_PAREN ->
@@ -582,26 +591,31 @@ module Grammar = struct
      points. Tied together by a single `fix`. *)
   let p_term : S.preterm t =
     fix (fun term ->
-      (* `IDENT+` — at least one ident, returns the name list *)
-      let p_idents : string list t =
-        let+ first = ident
-        and+ rest = star ident in
+      (* `IDENT+` — at least one ident, returns the located name list *)
+      let p_idents_loc : string S.spanned list t =
+        let+ first = ident_loc
+        and+ rest = star ident_loc in
         first :: rest
       in
-      let mk_binding implicit names bound : S.preterm Syntax.binder list =
-        List.map (fun name -> { Syntax.name = Syntax.Named name; bound; implicit }) names
+      let mk_binding implicit (names : string S.spanned list) bound
+        : S.preterm S.sbinder list
+        =
+        List.map
+          (fun (n : string S.spanned) ->
+             { S.name = { S.loc = n.loc; value = S.Named n.value }; bound; implicit })
+          names
       in
-      let p_binding_parens : S.preterm Syntax.binder list t =
+      let p_binding_parens : S.preterm S.sbinder list t =
         let+ _ = tok C.T_LPAREN
-        and+ names = p_idents
+        and+ names = p_idents_loc
         and+ _ = tok C.T_COLON
         and+ ty = term
         and+ _ = tok C.T_RPAREN in
         mk_binding false names ty
       in
-      let p_binding_brackets : S.preterm Syntax.binder list t =
+      let p_binding_brackets : S.preterm S.sbinder list t =
         let+ _ = tok C.T_LBRACKET
-        and+ names = p_idents
+        and+ names = p_idents_loc
         and+ _ = tok C.T_COLON
         and+ ty = term
         and+ _ = tok C.T_RBRACKET in
@@ -614,32 +628,37 @@ module Grammar = struct
       in
       (* atoms *)
       let ident_atom : S.preterm t =
-        let+ loc, first = ident_loc
-        and+ rest =
-          star
-            (let+ _ = tok C.T_SLASH
-             and+ x = ident in
-             x)
-        in
-        wrap_loc loc (S.Var (first :: rest))
+        with_loc
+          (let+ first = ident
+           and+ rest =
+             star
+               (let+ _ = tok C.T_SLASH
+                and+ x = ident in
+                x)
+           in
+           S.Var (first :: rest))
       in
       (* LPAREN atom: disambiguate binder vs paren-term via 2-token peek *)
       let parens_binder_atom : S.preterm t =
-        with_loc
+        relocate_full
           (let+ binders = p_binding_parens
            and+ _ = tok C.T_ARROW
            and+ rhs = term in
            S.pi binders rhs)
       in
       let parens_term_atom : S.preterm t =
-        let+ loc, _ = tok_loc C.T_LPAREN
-        and+ inner = term
-        and+ _ = tok C.T_RPAREN in
-        wrap_loc loc inner
+        let tp = Tp.{ null = false; first = C.one C.T_LPAREN; follow = C.empty } in
+        let parse (buf : P.token_buf) i =
+          let i1, _ = (tok C.T_LPAREN).parse buf i in
+          let i2, inner = term.parse buf i1 in
+          let i3, _ = (tok C.T_RPAREN).parse buf i2 in
+          i3, S.Mk.re_loc (span_of buf i (i3 - 1)) inner
+        in
+        { tp; parse }
       in
       let p_atom_lparen : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LPAREN; follow = C.empty } in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           if peek_is_binder_after_lparen buf i
           then parens_binder_atom.parse buf i
           else parens_term_atom.parse buf i
@@ -648,7 +667,7 @@ module Grammar = struct
       in
       (* LBRACKET atom: always implicit binder `{x:T}+ -> body` *)
       let p_atom_lbracket : S.preterm t =
-        with_loc
+        relocate_full
           (let+ binders = p_binding_brackets
            and+ _ = tok C.T_ARROW
            and+ rhs = term in
@@ -656,15 +675,15 @@ module Grammar = struct
       in
       (* LAMBDA atom: untyped (`\ x y -> body`) or typed (`\ (x:T) -> body`) *)
       let lambda_untyped : S.preterm t =
-        with_loc
+        relocate_full
           (let+ _ = tok C.T_LAMBDA
-           and+ names = p_idents
+           and+ names = p_idents_loc
            and+ _ = tok C.T_ARROW
            and+ body = term in
            S.lambda names body)
       in
       let lambda_typed : S.preterm t =
-        with_loc
+        relocate_full
           (let+ _ = tok C.T_LAMBDA
            and+ binders = p_bindings_flat
            and+ _ = tok C.T_ARROW
@@ -673,7 +692,7 @@ module Grammar = struct
       in
       let p_atom_lambda : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LAMBDA; follow = C.empty } in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           if peek_is_typed_lambda buf i
           then lambda_typed.parse buf i
           else lambda_untyped.parse buf i
@@ -687,38 +706,26 @@ module Grammar = struct
          for the surrounding `spine` to consume as a separate argument. *)
       let goal_atom : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_QMARK; follow = C.empty } in
-        let parse buf i =
-          let qmark_loc = buf.(i).Asai.Range.loc in
+        let parse (buf : P.token_buf) i =
+          let qmark_loc = buf.(i).Surface.loc in
           let after = i + 1 in
           let adjacent_ident =
             after < Array.length buf
-            && C.tag_of buf.(after).Asai.Range.value = C.T_IDENT
+            && C.tag_of buf.(after).Surface.value = C.T_IDENT
             &&
-            match qmark_loc, buf.(after).Asai.Range.loc with
-            | Some q, Some j ->
-              (match Asai.Range.view q, Asai.Range.view j with
-               | `Range (_, q_end), `Range (j_start, _) -> q_end.offset = j_start.offset
-               | _ -> false)
+            match Asai.Range.view qmark_loc, Asai.Range.view buf.(after).Surface.loc with
+            | `Range (_, q_end), `Range (j_start, _) -> q_end.offset = j_start.offset
             | _ -> false
           in
           if adjacent_ident
           then (
-            match buf.(after).Asai.Range.value with
+            match buf.(after).Surface.value with
             | Lexer.IDENT s ->
-              let ident_loc = buf.(after).Asai.Range.loc in
-              let span =
-                match qmark_loc, ident_loc with
-                | Some q, Some j ->
-                  (match Asai.Range.view q, Asai.Range.view j with
-                   | `Range (bpos, _), `Range (_, epos) ->
-                     Some (Asai.Range.make (bpos, epos))
-                   | _ -> qmark_loc)
-                | Some _, None -> qmark_loc
-                | None, _ -> ident_loc
-              in
-              after + 1, wrap_loc span (S.Goal (Some s))
+              let ident_loc = buf.(after).Surface.loc in
+              let span = Surface.join_loc qmark_loc ident_loc in
+              after + 1, { S.loc = span; node = S.Goal (Some s) }
             | _ -> assert false)
-          else after, wrap_loc qmark_loc (S.Goal None)
+          else after, { S.loc = qmark_loc; node = S.Goal None }
         in
         { tp; parse }
       in
@@ -739,28 +746,32 @@ module Grammar = struct
             ; follow = C.empty
             }
         in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           let n = Array.length buf in
           (* Greedily consume `.field` projections after an atom, mirroring the
              postfix `proj_soup` loop in the full term parser. This makes
              projection bind tighter than operators, so projections can mixin
              the expression (e.g. `x.v + y.v`). *)
-          let apply_proj_loop start_i base =
+          let apply_proj_loop start_proj start_i base =
             let acc = ref base in
             let pos = ref start_i in
             let continue_ = ref true in
             while
-              !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT
+              !continue_ && !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_DOT
             do
               let dot_i = !pos + 1 in
-              if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
+              if dot_i < n && C.tag_of buf.(dot_i).Surface.value = C.T_IDENT
               then begin
                 let field =
-                  match buf.(dot_i).Asai.Range.value with
+                  match buf.(dot_i).Surface.value with
                   | Lexer.IDENT s -> s
                   | _ -> assert false
                 in
-                acc := S.Proj (!acc, field);
+                let field_loc = buf.(dot_i).Surface.loc in
+                acc
+                := { S.loc = span_of buf start_proj dot_i
+                   ; node = S.Proj (!acc, { S.loc = field_loc; value = field })
+                   };
                 pos := dot_i + 1
               end
               else continue_ := false
@@ -781,41 +792,41 @@ module Grammar = struct
           let parse_item buf i =
             if i >= n
             then None
-            else if is_terminator buf.(i).Asai.Range.value
+            else if is_terminator buf.(i).Surface.value
             then None
             else (
-              match C.tag_of buf.(i).Asai.Range.value with
+              match C.tag_of buf.(i).Surface.value with
               | C.T_SYMBOL ->
                 (* operator name (any non-terminator symbol, including `=`) *)
-                let loc = buf.(i).Asai.Range.loc in
+                let loc = buf.(i).Surface.loc in
                 let s =
-                  match buf.(i).Asai.Range.value with
+                  match buf.(i).Surface.value with
                   | Lexer.SYMBOL s -> s
                   | _ -> assert false
                 in
-                Some (i + 1, S.SI_Name (s, loc))
+                Some (i + 1, S.SI_Name { S.loc; value = s })
               | C.T_IDENT ->
                 (* Mirror `p_ident_soup_item`: bare ident → SI_Name; qualified
                    or projected ident → concrete SI_Atom. *)
-                let loc = buf.(i).Asai.Range.loc in
+                let loc = buf.(i).Surface.loc in
                 let bare =
-                  not (i + 1 < n && C.tag_of buf.(i + 1).Asai.Range.value = C.T_SLASH)
+                  not (i + 1 < n && C.tag_of buf.(i + 1).Surface.value = C.T_SLASH)
                 in
                 let first_name =
-                  match buf.(i).Asai.Range.value with
+                  match buf.(i).Surface.value with
                   | Lexer.IDENT s -> s
                   | _ -> assert false
                 in
                 let i2, var = atom_no_bracket.parse buf i in
-                let i3, projected = apply_proj_loop i2 var in
+                let i3, projected = apply_proj_loop i i2 var in
                 if i3 > i2
                 then Some (i3, S.SI_Atom projected)
                 else if bare
-                then Some (i2, S.SI_Name (first_name, loc))
+                then Some (i2, S.SI_Name { S.loc; value = first_name })
                 else Some (i2, S.SI_Atom var)
               | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
                 let i2, a = atom_no_bracket.parse buf i in
-                let i3, a = apply_proj_loop i2 a in
+                let i3, a = apply_proj_loop i i2 a in
                 Some (i3, S.SI_Atom a)
               | _ -> None)
           in
@@ -833,44 +844,43 @@ module Grammar = struct
                 items := it :: !items;
                 pos := i'
             done;
-            !pos, wrap_loc (span_of buf start (!pos - 1)) (S.Op_soup (List.rev !items))
+            ( !pos
+            , { S.loc = span_of buf start (!pos - 1)
+              ; node = S.Op_soup (List.rev !items)
+              } )
         in
         { tp; parse }
       in
       (* One field entry: `name = value` (explicit) or `name` (pun). *)
-      let p_record_entry : (string * S.preterm) t =
+      let p_record_entry : (string S.spanned * S.preterm) t =
         let tp = Tp.{ null = false; first = C.one C.T_IDENT; follow = C.empty } in
-        let parse buf i =
-          let i, name_tok = (tok C.T_IDENT).parse buf i in
-          let name =
-            match name_tok with
-            | Lexer.IDENT s -> s
-            | _ -> assert false
-          in
+        let parse (buf : P.token_buf) i =
+          let i, name = ident_loc.parse buf i in
+          let pun = { S.loc = name.S.loc; node = S.Var [ name.S.value ] } in
           if i < Array.length buf
           then (
-            match buf.(i).Asai.Range.value with
+            match buf.(i).Surface.value with
             | Lexer.SYMBOL "=" ->
               let i = i + 1 in
               let i, e = p_record_value.parse buf i in
               i, (name, e)
-            | _ -> i, (name, S.Var [ name ]))
-          else i, (name, S.Var [ name ])
+            | _ -> i, (name, pun))
+          else i, (name, pun)
         in
         { tp; parse }
       in
       (* `{ entry , … }` or `{}`. `,` is SYMBOL "," so we hand-code the loop. *)
       let p_record_lit : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           let start = i in
           let i = i + 1 in
           (* consume `{` *)
           let n = Array.length buf in
-          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
+          if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
           then (
             let end_i = i in
-            end_i + 1, wrap_loc (span_of buf start end_i) (S.RecordLit []))
+            end_i + 1, { S.loc = span_of buf start end_i; node = S.RecordLit [] })
           else begin
             let i, first = p_record_entry.parse buf i in
             let entries = ref [ first ] in
@@ -878,7 +888,7 @@ module Grammar = struct
             while
               !pos < n
               &&
-              match buf.(!pos).Asai.Range.value with
+              match buf.(!pos).Surface.value with
               | Lexer.SYMBOL "," -> true
               | _ -> false
             do
@@ -889,7 +899,10 @@ module Grammar = struct
               pos := i'
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            i', wrap_loc (span_of buf start (i' - 1)) (S.RecordLit (List.rev !entries))
+            ( i'
+            , { S.loc = span_of buf start (i' - 1)
+              ; node = S.RecordLit (List.rev !entries)
+              } )
           end
         in
         { tp; parse }
@@ -902,7 +915,7 @@ module Grammar = struct
          which is the common case; more complex bases can be parenthesised. *)
       let p_record_update : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           let start = i in
           let i = i + 1 in
           (* consume `{` *)
@@ -913,8 +926,8 @@ module Grammar = struct
           (* Consume `|` (T_VERT) *)
           let i, _ = (tok C.T_VERT).parse buf i in
           (* Parse comma-separated entries *)
-          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
-          then i + 1, wrap_loc (span_of buf start i) (S.RecordUpdate (base, []))
+          if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
+          then i + 1, { S.loc = span_of buf start i; node = S.RecordUpdate (base, []) }
           else begin
             let i, first = p_record_entry.parse buf i in
             let entries = ref [ first ] in
@@ -922,7 +935,7 @@ module Grammar = struct
             while
               !pos < n
               &&
-              match buf.(!pos).Asai.Range.value with
+              match buf.(!pos).Surface.value with
               | Lexer.SYMBOL "," -> true
               | _ -> false
             do
@@ -934,9 +947,9 @@ module Grammar = struct
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
             ( i'
-            , wrap_loc
-                (span_of buf start (i' - 1))
-                (S.RecordUpdate (base, List.rev !entries)) )
+            , { S.loc = span_of buf start (i' - 1)
+              ; node = S.RecordUpdate (base, List.rev !entries)
+              } )
           end
         in
         { tp; parse }
@@ -948,7 +961,7 @@ module Grammar = struct
          second token after the ident. *)
       let p_lbracket_atom : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           if peek_is_record_update buf i
           then p_record_update.parse buf i
           else if peek_is_record_lit buf i
@@ -967,22 +980,31 @@ module Grammar = struct
         goal_atom || p_atom_lparen || p_atom_lambda
       in
       (* SYMBOL token as a name. *)
-      let p_symbol_name_loc : (Asai.Range.t option * string) t = symbol_loc in
+      let p_symbol_name_loc : string S.spanned t = symbol_loc in
       (* IDENT, optionally followed by `/`-separated continuation segments.
          A bare ident becomes SI_Name (so it can match operator literals);
          a qualified name like `Nat/suc` becomes SI_Atom (Var [...]) since
          qualified names are never operator tokens. *)
       let p_ident_soup_item : S.soup_item t =
-        let+ loc, first = ident_loc
-        and+ rest =
-          star
-            (let+ _ = tok C.T_SLASH
-             and+ x = ident in
-             x)
+        let parse (buf : P.token_buf) i =
+          let i', name = ident_loc.parse buf i in
+          let rest =
+            star
+              (let+ _ = tok C.T_SLASH
+               and+ x = ident in
+               x)
+          in
+          let i'', segs = rest.parse buf i' in
+          match segs with
+          | [] -> i'', S.SI_Name name
+          | _ ->
+            ( i''
+            , S.SI_Atom
+                { S.loc = span_of buf i (i'' - 1)
+                ; node = S.Var (name.S.value :: segs)
+                } )
         in
-        match rest with
-        | [] -> S.SI_Name (first, loc)
-        | _ -> S.SI_Atom (wrap_loc loc (S.Var (first :: rest)))
+        { tp = ident_loc.tp; parse }
       in
       (* Greedily consume a `T_DOT IDENT` chain starting at [pos], wrapping
          [base] in left-associative `S.Proj`s. [start] anchors the projection
@@ -992,16 +1014,20 @@ module Grammar = struct
         let acc = ref base in
         let pos = ref pos in
         let continue_ = ref true in
-        while !continue_ && !pos < n && C.tag_of buf.(!pos).Asai.Range.value = C.T_DOT do
+        while !continue_ && !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_DOT do
           let dot_i = !pos + 1 in
-          if dot_i < n && C.tag_of buf.(dot_i).Asai.Range.value = C.T_IDENT
+          if dot_i < n && C.tag_of buf.(dot_i).Surface.value = C.T_IDENT
           then begin
             let field =
-              match buf.(dot_i).Asai.Range.value with
+              match buf.(dot_i).Surface.value with
               | Lexer.IDENT s -> s
               | _ -> assert false
             in
-            acc := wrap_loc (span_of buf start dot_i) (S.Proj (!acc, field));
+            let field_loc = buf.(dot_i).Surface.loc in
+            acc
+            := { S.loc = span_of buf start dot_i
+               ; node = S.Proj (!acc, { S.loc = field_loc; value = field })
+               };
             pos := dot_i + 1
           end
           else continue_ := false
@@ -1015,17 +1041,17 @@ module Grammar = struct
          operators. Operator symbols (T_SYMBOL) and implicit args are never
          projected. Mirrors the field-value spine parser `p_record_value`. *)
       let fold_proj (item : S.soup_item t) : S.soup_item t =
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           let start = i in
           let i', it = item.parse buf i in
           let n = Array.length buf in
           let dot_next =
             i' < n
-            && C.tag_of buf.(i').Asai.Range.value = C.T_DOT
+            && C.tag_of buf.(i').Surface.value = C.T_DOT
             && i' + 1 < n
-            && C.tag_of buf.(i' + 1).Asai.Range.value = C.T_IDENT
+            && C.tag_of buf.(i' + 1).Surface.value = C.T_IDENT
           in
-          let is_symbol_start = C.tag_of buf.(start).Asai.Range.value = C.T_SYMBOL in
+          let is_symbol_start = C.tag_of buf.(start).Surface.value = C.T_SYMBOL in
           if not dot_next
           then i', it
           else if is_symbol_start
@@ -1033,8 +1059,10 @@ module Grammar = struct
           else (
             match it with
             | S.SI_Imp_arg _ -> i', it
-            | S.SI_Name (s, loc) ->
-              let i'', p = proj_loop buf start i' (wrap_loc loc (S.Var [ s ])) in
+            | S.SI_Name s ->
+              let i'', p =
+                proj_loop buf start i' { S.loc = s.S.loc; node = S.Var [ s.S.value ] }
+              in
               i'', S.SI_Atom p
             | S.SI_Atom a ->
               let i'', p = proj_loop buf start i' a in
@@ -1049,8 +1077,8 @@ module Grammar = struct
       let soup_head_item : S.soup_item t =
         fold_proj
           (p_ident_soup_item
-           || (let+ loc, n = p_symbol_name_loc in
-               S.SI_Name (n, loc))
+           || (let+ n = p_symbol_name_loc in
+               S.SI_Name n)
            || (let+ a = structural_atom_no_lbracket in
                S.SI_Atom a)
            ||
@@ -1063,8 +1091,8 @@ module Grammar = struct
       let soup_tail_item : S.soup_item t =
         fold_proj
           (p_ident_soup_item
-           || (let+ loc, n = p_symbol_name_loc in
-               S.SI_Name (n, loc))
+           || (let+ n = p_symbol_name_loc in
+               S.SI_Name n)
            || (let+ a = structural_atom_no_lbracket in
                S.SI_Atom a)
            ||
@@ -1076,13 +1104,13 @@ module Grammar = struct
       (* A single op-soup: one head followed by zero-or-more tail items. *)
       let op_soup : S.preterm t =
         let tp = soup_head_item.tp in
-        let parse buf i =
+        let parse (buf : P.token_buf) i =
           let start = i in
           let i, head = soup_head_item.parse buf i in
           let i, rest = (star soup_tail_item).parse buf i in
           let result = S.Op_soup (head :: rest) in
           let loc = span_of buf start (i - 1) in
-          i, wrap_loc loc result
+          i, { S.loc; node = result }
         in
         { tp; parse }
       in
@@ -1099,7 +1127,12 @@ module Grammar = struct
         in
         match List.rev (head :: tail) with
         | [] -> assert false
-        | last :: rev_rest -> List.fold_left (fun acc x -> S.Max (x, acc)) last rev_rest
+        | last :: rev_rest ->
+          List.fold_left
+            (fun acc x ->
+               { S.loc = Surface.join_loc x.S.loc acc.S.loc; node = S.Max (x, acc) })
+            last
+            rev_rest
       in
       let opt_arrow : S.preterm option t =
         (eps ==> fun () -> None)
@@ -1109,7 +1142,7 @@ module Grammar = struct
         Some rhs
       in
       let tp = Tp.seq max_level.tp opt_arrow.tp in
-      let parse buf i =
+      let parse (buf : P.token_buf) i =
         let i', lhs = max_level.parse buf i in
         let i'', rhs = opt_arrow.parse buf i' in
         match rhs with
@@ -1117,61 +1150,68 @@ module Grammar = struct
         | Some r ->
           let loc = span_of buf i (i'' - 1) in
           ( i''
-          , wrap_loc loc (S.Pi ({ name = Syntax.Anon; bound = lhs; implicit = false }, r))
-          )
+          , { S.loc
+            ; node =
+                S.Pi
+                  ( { S.name = { S.loc = lhs.S.loc; value = S.Anon }
+                    ; bound = lhs
+                    ; implicit = false
+                    }
+                  , r )
+            } )
       in
       { tp; parse })
   ;;
 
-  let p_idents : string list t =
-    let+ first = ident
-    and+ rest = star ident in
+  let p_idents_loc : string S.spanned list t =
+    let+ first = ident_loc
+    and+ rest = star ident_loc in
     first :: rest
   ;;
 
-  let p_binding_parens : S.preterm Syntax.binder list t =
-    let+ _ = tok C.T_LPAREN
-    and+ names = p_idents
-    and+ _ = tok C.T_COLON
-    and+ ty = p_term
-    and+ _ = tok C.T_RPAREN in
+  let mk_binding implicit (names : string S.spanned list) bound
+    : S.preterm S.sbinder list
+    =
     List.map
-      (fun name -> { Syntax.name = Syntax.Named name; bound = ty; implicit = false })
+      (fun (n : string S.spanned) ->
+         { S.name = { S.loc = n.loc; value = S.Named n.value }; bound; implicit })
       names
   ;;
 
-  let p_binding_brackets : S.preterm Syntax.binder list t =
+  let p_binding_parens : S.preterm S.sbinder list t =
+    let+ _ = tok C.T_LPAREN
+    and+ names = p_idents_loc
+    and+ _ = tok C.T_COLON
+    and+ ty = p_term
+    and+ _ = tok C.T_RPAREN in
+    mk_binding false names ty
+  ;;
+
+  let p_binding_brackets : S.preterm S.sbinder list t =
     let+ _ = tok C.T_LBRACKET
-    and+ names = p_idents
+    and+ names = p_idents_loc
     and+ _ = tok C.T_COLON
     and+ ty = p_term
     and+ _ = tok C.T_RBRACKET in
-    List.map
-      (fun name -> { Syntax.name = Syntax.Named name; bound = ty; implicit = true })
-      names
+    mk_binding true names ty
   ;;
 
   let p_binding = p_binding_parens || p_binding_brackets
 
-  let p_bindings_flat : S.preterm Syntax.binder list t =
+  let p_bindings_flat : S.preterm S.sbinder list t =
     let+ groups = star p_binding in
     List.concat groups
   ;;
 
-  let p_ctor : S.pretype Syntax.binder t =
+  let p_ctor : S.pretype S.sbinder t =
     let+ _ = tok C.T_VERT
-    and+ name = ident
+    and+ name = ident_loc
     and+ _ = tok C.T_COLON
     and+ ty = p_term in
-    { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
-  ;;
-
-  let p_ctor_loc : (Asai.Range.t option * S.pretype Syntax.binder) t =
-    let+ _ = tok C.T_VERT
-    and+ name_loc, name = ident_loc
-    and+ _ = tok C.T_COLON
-    and+ ty = p_term in
-    name_loc, { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
+    { S.name = { S.loc = name.S.loc; value = S.Named name.S.value }
+    ; bound = ty
+    ; implicit = false
+    }
   ;;
 
   let p_stack_move : S.stack_move t =
@@ -1195,9 +1235,9 @@ module Grammar = struct
     then false
     else (
       match
-        ( buf.(i).Asai.Range.value
-        , buf.(i + 1).Asai.Range.value
-        , buf.(i + 2).Asai.Range.value )
+        ( buf.(i).Surface.value
+        , buf.(i + 1).Surface.value
+        , buf.(i + 2).Surface.value )
       with
       | Lexer.L_BRACKET, Lexer.IDENT _, Lexer.SYMBOL "=" -> true
       | _ -> false)
@@ -1223,22 +1263,28 @@ module Grammar = struct
     (* PVar / PWildcard: an IDENT. A literal `_` is a wildcard pattern that
        binds nothing referenceable; any other identifier binds a variable. *)
     let p_var =
-      let+ name = ident in
-      if String.equal name "_" then S.PWildcard else S.PVar name
+      with_ploc
+        (let+ name = ident in
+         if String.equal name "_" then S.PWildcard else S.PVar name)
     in
     (* PCon: `( ctor arg… )` where each arg is itself a pattern (so
        `(cons n1 (cons n2 stk))` works). *)
     let p_con =
-      let+ _ = tok C.T_LPAREN
-      and+ ctor = ident
-      and+ vs = star self
-      and+ _ = tok C.T_RPAREN in
-      S.PCon (ctor, vs)
+      let tp = Tp.{ null = false; first = C.one C.T_LPAREN; follow = C.empty } in
+      let parse (buf : P.token_buf) i =
+        let i1, _ = (tok C.T_LPAREN).parse buf i in
+        let i2, ctor = ident_loc.parse buf i1 in
+        let i3, vs = (star self).parse buf i2 in
+        let i4, _ = (tok C.T_RPAREN).parse buf i3 in
+        i4, { S.ploc = span_of buf i (i4 - 1); pnode = S.PCon (ctor, vs) }
+      in
+      { tp; parse }
     in
     (* p_lbrace: disambiguates `{…}` — PRecord vs PImpVar *)
     let p_lbrace : S.pattern t =
       let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
-      let parse buf i =
+      let parse (buf : P.token_buf) i =
+        let start = i in
         if peek_is_record_pattern buf i
         then begin
           (* PRecord: `{ name = pat , … }` — no punning allowed *)
@@ -1246,17 +1292,12 @@ module Grammar = struct
           (* consume `{` *)
           let n = Array.length buf in
           let parse_entry pos =
-            let pos, name_tok = (tok C.T_IDENT).parse buf pos in
-            let name =
-              match name_tok with
-              | Lexer.IDENT s -> s
-              | _ -> assert false
-            in
+            let pos, name = ident_loc.parse buf pos in
             (* Require `=` — punning is forbidden in patterns *)
             let pos =
               if pos < n
               then (
-                match buf.(pos).Asai.Range.value with
+                match buf.(pos).Surface.value with
                 | Lexer.SYMBOL "=" -> pos + 1
                 | _ -> (P.fail_at buf pos : int))
               else (P.fail_at buf pos : int)
@@ -1264,8 +1305,8 @@ module Grammar = struct
             let pos, p = self.parse buf pos in
             pos, (name, p)
           in
-          if i < n && C.tag_of buf.(i).Asai.Range.value = C.T_RBRACKET
-          then i + 1, S.PRecord []
+          if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
+          then i + 1, { S.ploc = span_of buf start i; pnode = S.PRecord [] }
           else begin
             let i, first = parse_entry i in
             let entries = ref [ first ] in
@@ -1273,7 +1314,7 @@ module Grammar = struct
             while
               !pos < n
               &&
-              match buf.(!pos).Asai.Range.value with
+              match buf.(!pos).Surface.value with
               | Lexer.SYMBOL "," -> true
               | _ -> false
             do
@@ -1284,7 +1325,7 @@ module Grammar = struct
               pos := i'
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            i', S.PRecord (List.rev !entries)
+            i', { S.ploc = span_of buf start (i' - 1); pnode = S.PRecord (List.rev !entries) }
           end
         end
         else begin
@@ -1297,8 +1338,8 @@ module Grammar = struct
             | Lexer.IDENT s -> s
             | _ -> assert false
           in
-          let i, _ = (tok C.T_RBRACKET).parse buf i in
-          i, S.PImpVar name
+          let i', _ = (tok C.T_RBRACKET).parse buf i in
+          i', { S.ploc = span_of buf start (i' - 1); pnode = S.PImpVar name }
         end
       in
       { tp; parse }
@@ -1309,18 +1350,23 @@ module Grammar = struct
   ;;
 
   let p_clause : S.clause t =
+    let body_elim =
+      let p =
+        let+ _ = tok C.T_STACK_ARROW
+        and+ _ = tok C.T_ELIM
+        and+ target = ident in
+        S.Inline_elim { target; siblings = []; outer_subst = []; target_override = None }
+      in
+      with_loc p
+    in
     let+ _ = tok C.T_VERT
-    and+ head = ident
+    and+ head = ident_loc
     and+ patterns = star p_pattern
     and+ body =
       (let+ _ = tok C.T_FAT_ARROW
        and+ tm = p_term in
        tm)
-      ||
-      let+ _ = tok C.T_STACK_ARROW
-      and+ _ = tok C.T_ELIM
-      and+ target = ident in
-      S.Inline_elim { target; siblings = []; outer_subst = []; target_override = None }
+      || body_elim
     in
     { S.head; patterns; body }
   ;;
@@ -1390,41 +1436,36 @@ module Grammar = struct
       LB_Where (moves, clauses)
   ;;
 
-  let p_let_top : S.top Asai.Range.located t =
-    let+ loc, (name_loc, name, bindings, ty, body) =
+  let p_let_top : S.top S.spanned t =
+    let+ loc, (name, bindings, ty, body) =
       with_full_range
         (let+ _ = tok C.T_LET
-         and+ name_loc, name = ident_loc
+         and+ name = ident_loc
          and+ bindings = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ty = p_term
          and+ body = p_let_body in
-         name_loc, name, bindings, ty, body)
+         name, bindings, ty, body)
     in
     match body with
     | LB_Assign tm ->
-      { Asai.Range.loc
-      ; value = S.Let { name; name_loc; bindings; result_ty = ty; body = tm }
-      }
+      { S.loc; value = S.Let { name; bindings; result_ty = ty; body = tm } }
     | LB_Where (moves, clauses) ->
-      { Asai.Range.loc
-      ; value =
-          S.Stack_def
-            { name; name_loc; params = bindings; signature = ty; moves; clauses }
+      { S.loc
+      ; value = S.Stack_def { name; params = bindings; signature = ty; moves; clauses }
       }
     | LB_Elim (opens, { head; intros; target }, clauses) ->
-      if not (String.equal head name)
+      if not (String.equal head name.S.value)
       then
         Reporter.fatalf
           Parse_error
           "elim-header head `%s` must match let name `%s`"
           head
-          name;
-      { Asai.Range.loc
+          name.S.value;
+      { S.loc
       ; value =
           S.Elim_def
             { name
-            ; name_loc
             ; params = bindings
             ; signature = ty
             ; opens
@@ -1435,66 +1476,64 @@ module Grammar = struct
       }
   ;;
 
-  let p_data_top : S.top Asai.Range.located t =
-    let+ loc, (name_loc, name, params, ret, ctors) =
+  let p_data_top : S.top S.spanned t =
+    let+ loc, (name, params, ret, ctors) =
       with_full_range
         (let+ _ = tok C.T_DATA
-         and+ name_loc, name = ident_loc
+         and+ name = ident_loc
          and+ params = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ret = p_term
-         and+ ctors = star p_ctor_loc in
-         name_loc, name, params, ret, ctors)
+         and+ ctors = star p_ctor in
+         name, params, ret, ctors)
     in
-    let ctor_binders = List.map snd ctors in
-    let ctor_name_locs = List.map fst ctors in
     let value =
       S.Data
         { name
-        ; name_loc
         ; params
         ; deps = S.telescope ret
         ; ind_ty = S.codomain ret
-        ; ind_ty_loc = S.codomain_loc ret
-        ; ctors = ctor_binders
-        ; ctor_name_locs
+        ; ctors
         }
     in
-    { Asai.Range.loc; value }
+    { S.loc; value }
   ;;
 
-  let p_record_field : S.pretype Syntax.binder t =
+  let p_record_field : S.pretype S.sbinder t =
     let+ _ = tok C.T_VERT
-    and+ name = ident
+    and+ name = ident_loc
     and+ _ = tok C.T_COLON
     and+ ty = p_term in
-    { Syntax.name = Syntax.Named name; bound = ty; implicit = false }
+    { S.name = { S.loc = name.S.loc; value = S.Named name.S.value }
+    ; bound = ty
+    ; implicit = false
+    }
   ;;
 
-  let p_record_top : S.top Asai.Range.located t =
-    let+ loc, (name_loc, name, params, ret, fields) =
+  let p_record_top : S.top S.spanned t =
+    let+ loc, (name, params, ret, fields) =
       with_full_range
         (let+ _ = tok C.T_RECORD
-         and+ name_loc, name = ident_loc
+         and+ name = ident_loc
          and+ params = p_bindings_flat
          and+ _ = tok C.T_COLON
          and+ ret = p_term
          and+ fields = star p_record_field in
-         name_loc, name, params, ret, fields)
+         name, params, ret, fields)
     in
-    let value = S.Record { name; name_loc; params; ind_ty = ret; fields } in
-    { Asai.Range.loc; value }
+    let value = S.Record { name; params; ind_ty = ret; fields } in
+    { S.loc; value }
   ;;
 
-  let p_universe_top : S.top Asai.Range.located t =
+  let p_universe_top : S.top S.spanned t =
     let+ loc, names =
       with_full_range
         (let+ _ = tok C.T_UNIVERSE
          and+ first = ident_loc
          and+ rest = star ident_loc in
-         List.map (fun (loc, name) -> name, loc) (first :: rest))
+         first :: rest)
     in
-    { Asai.Range.loc; value = S.Universe_decl names }
+    { S.loc; value = S.Universe_decl names }
   ;;
 
   (* A "name path" referencing another operator in `\weaker_than:` / etc.
@@ -1504,12 +1543,12 @@ module Grammar = struct
     let tp =
       Tp.{ null = false; first = C.of_list [ C.T_IDENT; C.T_SYMBOL ]; follow = C.empty }
     in
-    let parse buf i =
+    let parse (buf : P.token_buf) i =
       let n = Array.length buf in
       let rec loop i acc =
         if i < n
         then
-          begin match buf.(i).Asai.Range.value with
+          begin match buf.(i).Surface.value with
           | Lexer.IDENT s -> loop (i + 1) (s :: acc)
           | Lexer.SYMBOL s -> loop (i + 1) (s :: acc)
           | _ -> i, List.rev acc
@@ -1537,11 +1576,11 @@ module Grammar = struct
         ; follow = C.empty
         }
     in
-    let parse buf i =
+    let parse (buf : P.token_buf) i =
       let n = Array.length buf in
       if i >= n then P.fail_at buf i;
       let kw_tok = buf.(i) in
-      let kw = C.tag_of kw_tok.Asai.Range.value in
+      let kw = C.tag_of kw_tok.Surface.value in
       let i = i + 1 in
       let i, _ = (tok C.T_COLON).parse buf i in
       match kw with
@@ -1557,27 +1596,27 @@ module Grammar = struct
       | C.T_ASSOCIATIVITY ->
         if i >= n then P.fail_at buf i;
         let a =
-          match C.tag_of buf.(i).Asai.Range.value with
+          match C.tag_of buf.(i).Surface.value with
           | C.T_LEFT -> S.OA_Left
           | C.T_RIGHT -> S.OA_Right
           | C.T_NONE -> S.OA_None
           | _ ->
             Reporter.fatalf
-              ?loc:buf.(i).Asai.Range.loc
+              ~loc:buf.(i).Surface.loc
               Parse_error
               "expected `\\left`, `\\right`, or `\\none` after `\\associativity:`"
         in
         i + 1, S.OO_Associativity a
       | _ ->
         Reporter.fatalf
-          ?loc:kw_tok.Asai.Range.loc
+          ~loc:kw_tok.Surface.loc
           Parse_error
           "expected one of \\weaker_than, \\stronger_than, \\same_as, \\associativity"
     in
     { tp; parse }
   ;;
 
-  let p_operator_top : S.top Asai.Range.located t =
+  let p_operator_top : S.top S.spanned t =
     let+ loc, (template, body, options) =
       with_full_range
         (let+ _ = tok C.T_OPERATOR
@@ -1587,14 +1626,14 @@ module Grammar = struct
          and+ options = star p_op_option in
          template, body, options)
     in
-    { Asai.Range.loc; value = S.Operator_decl { template; body; options } }
+    { S.loc; value = S.Operator_decl { template; body; options } }
   ;;
 
-  let p_top : S.top Asai.Range.located t =
+  let p_top : S.top S.spanned t =
     p_let_top || p_data_top || p_record_top || p_operator_top
   ;;
 
-  let p_tops_loop : S.top Asai.Range.located list t =
+  let p_tops_loop : S.top S.spanned list t =
     fix (fun self ->
       (let+ t = p_top
        and+ rest = self in
@@ -1626,8 +1665,8 @@ let rec tokens filename lexbuf =
   let tok = Lexer.token lexbuf in
   let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
   match tok with
-  | Lexer.EOF -> [ Asai.Range.locate loc tok ]
-  | _ -> Asai.Range.locate loc tok :: tokens filename lexbuf
+  | Lexer.EOF -> [ { Surface.loc; value = tok } ]
+  | _ -> { Surface.loc; value = tok } :: tokens filename lexbuf
 ;;
 
 let parse_buf ~name buf =
@@ -1635,27 +1674,20 @@ let parse_buf ~name buf =
   | _, m ->
     let seen = Hashtbl.create 16 in
     List.iter
-      (fun (nm, _) ->
+      (fun (e : string Surface.spanned) ->
+         let nm = e.Surface.value in
          if Hashtbl.mem seen nm
          then Reporter.fatalf Export_error "duplicate name in \\export: `%s`" nm
          else Hashtbl.add seen nm ())
       m.Surface.exports;
     m
   | exception P.ParseFailure { offset; loc; found } ->
-    (match loc with
-     | Some loc ->
-       Reporter.fatalf
-         ~loc
-         Parse_error
-         "unexpected token `%s` at offset %d"
-         ([%show: Lexer.token] found)
-         offset
-     | None ->
-       Reporter.fatalf
-         Parse_error
-         "unexpected token `%s` at offset %d (no location)"
-         ([%show: Lexer.token] found)
-         offset)
+    Reporter.fatalf
+      ~loc
+      Parse_error
+      "unexpected token `%s` at offset %d"
+      ([%show: Lexer.token] found)
+      offset
 ;;
 
 let parse_channel filename ch =
@@ -1692,25 +1724,17 @@ let parse_expression_string ~source (src : string) : Surface.preterm =
   | next, _ ->
     let lt = toks.(next) in
     Reporter.fatalf
-      ?loc:lt.Asai.Range.loc
+      ~loc:lt.Surface.loc
       Parse_error
       "unexpected trailing token `%s` after expression"
-      ([%show: Lexer.token] lt.Asai.Range.value)
+      ([%show: Lexer.token] lt.Surface.value)
   | exception P.ParseFailure { offset; loc; found } ->
-    (match loc with
-     | Some loc ->
-       Reporter.fatalf
-         ~loc
-         Parse_error
-         "unexpected token `%s` at offset %d"
-         ([%show: Lexer.token] found)
-         offset
-     | None ->
-       Reporter.fatalf
-         Parse_error
-         "unexpected token `%s` at offset %d (no location)"
-         ([%show: Lexer.token] found)
-         offset)
+    Reporter.fatalf
+      ~loc
+      Parse_error
+      "unexpected token `%s` at offset %d"
+      ([%show: Lexer.token] found)
+      offset
 ;;
 
 (* Lex a source string to a list of tokens (location-stripped, EOF dropped) for
@@ -1813,14 +1837,14 @@ let parse_tops_for_test src =
   let lexbuf = Lexing.from_string src in
   let toks = Array.of_list (tokens "<parser-test>" lexbuf) in
   let m = parse_buf ~name:"<parser-test>" toks in
-  List.map (fun lt -> lt.Asai.Range.value) m.Surface.tops
+  List.map (fun lt -> lt.Surface.value) m.Surface.tops
 ;;
 
 let%expect_test "parse: single \\export line, no decls" =
   let m = parse_module_for_test "\\export foo bar\n" in
   Printf.printf
     "exports=[%s] tops=%d"
-    (String.concat ";" (List.map fst m.Surface.exports))
+    (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| exports=[foo;bar] tops=0 |}]
 ;;
@@ -1883,8 +1907,8 @@ let%expect_test "parse: operator decl alongside let" =
     {|
     [Surface.Operator_decl {template = "\\x + \\y"; body = <soup:[N(add)]>;
        options = []};
-      Surface.Let {name = "two"; name_loc = (Some <opaque>); bindings = [];
-        result_ty = <soup:[N(Nat)]>; body = <soup:[N(add); N(zero); N(zero)]>}
+      Surface.Let {name = "two"; bindings = []; result_ty = <soup:[N(Nat)]>;
+        body = <soup:[N(add); N(zero); N(zero)]>}
       ]
     |}]
 ;;
@@ -1894,8 +1918,7 @@ let%expect_test "parse: op soup in record field value" =
   @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => { val = a ⊕ b }\n");
   [%expect
     {|
-    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
-       result_ty = <soup:[N(T)]>;
+    [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
        body = <soup:[A({ val = <soup:[N(a); N(⊕); N(b)]> })]>}
       ]
     |}]
@@ -1907,8 +1930,7 @@ let%expect_test "parse: projection inside op soup in record field value" =
        (parse_tops_for_test "\\let r : T => { val = x.f ⍮* y.f }\n");
   [%expect
     {|
-    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
-       result_ty = <soup:[N(T)]>;
+    [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
        body = <soup:[A({ val = <soup:[A(x.f); N(⍮*); A(y.f)]> })]>}
       ]
     |}]
@@ -1919,8 +1941,8 @@ let%expect_test "parse: projection as operator operand in term position" =
   @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => x.f ⍮* y.f\n");
   [%expect
     {|
-    [Surface.Let {name = "r"; name_loc = (Some <opaque>); bindings = [];
-       result_ty = <soup:[N(T)]>; body = <soup:[A(x.f); N(⍮*); A(y.f)]>}
+    [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
+       body = <soup:[A(x.f); N(⍮*); A(y.f)]>}
       ]
     |}]
 ;;
@@ -1958,7 +1980,7 @@ let%expect_test "lex dot in field projection context" =
 
 let%expect_test "parse: multiple \\export lines concatenated in source order" =
   let m = parse_module_for_test "\\export foo\n\\export bar baz\n" in
-  Printf.printf "exports=[%s]" (String.concat ";" (List.map fst m.Surface.exports));
+  Printf.printf "exports=[%s]" (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports));
   [%expect {| exports=[foo;bar;baz] |}]
 ;;
 
@@ -1967,7 +1989,7 @@ let%expect_test "parse: imports then exports then tops" =
   Printf.printf
     "imports=%d exports=[%s] tops=%d"
     (List.length m.Surface.imports)
-    (String.concat ";" (List.map fst m.Surface.exports))
+    (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| imports=1 exports=[id] tops=1 |}]
 ;;
@@ -2014,4 +2036,36 @@ let%expect_test "reject: duplicate name across two \\export lines" =
    with
    | _ -> print_endline "rejected as expected");
   [%expect {| rejected as expected |}]
+;;
+
+(* Regression tests: top-node locs for Pi/Lambda atoms must start at the
+   LEADING token (`(`, `{`, `\`), NOT at the first binder-name token. *)
+let span_left_col (t : Surface.preterm) : int =
+  match Asai.Range.view t.Surface.loc with
+  | `Range (s, _) -> s.Asai.Range.offset - s.Asai.Range.start_of_line
+  | _ -> -1
+;;
+
+let%expect_test "span: parens pi `(x : U) -> U` starts at col 0" =
+  let t = parse_expression_string ~source:"<test>" "(x : U) -> U" in
+  Printf.printf "left_col=%d" (span_left_col t);
+  [%expect {| left_col=0 |}]
+;;
+
+let%expect_test "span: implicit pi `{x : U} -> U` starts at col 0" =
+  let t = parse_expression_string ~source:"<test>" "{x : U} -> U" in
+  Printf.printf "left_col=%d" (span_left_col t);
+  [%expect {| left_col=0 |}]
+;;
+
+let%expect_test "span: untyped lambda `\\x -> x` starts at col 0" =
+  let t = parse_expression_string ~source:"<test>" "\\x -> x" in
+  Printf.printf "left_col=%d" (span_left_col t);
+  [%expect {| left_col=0 |}]
+;;
+
+let%expect_test "span: typed lambda `\\(x : U) -> x` starts at col 0" =
+  let t = parse_expression_string ~source:"<test>" "\\(x : U) -> x" in
+  Printf.printf "left_col=%d" (span_left_col t);
+  [%expect {| left_col=0 |}]
 ;;

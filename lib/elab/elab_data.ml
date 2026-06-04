@@ -19,32 +19,37 @@ open Bwd
    | nil : List A
 
    the type of `List/nil` should be `{A : U} -> List A` *)
-let complete_ctor_type (params : Surface.pretype binder list) (typ : Surface.pretype)
+let complete_ctor_type
+      (params : Surface.pretype Surface.sbinder list)
+      (typ : Surface.pretype)
   : Surface.pretype
   =
   List.fold_right
-    (fun param acc_ty -> Surface.Pi ({ param with implicit = true }, acc_ty))
+    (fun param acc_ty ->
+       { Surface.loc = acc_ty.Surface.loc
+       ; node = Surface.Pi ({ param with implicit = true }, acc_ty)
+       })
     params
     typ
 ;;
 
 let bind_constructor
-      ~(check_type : loc:Asai.Range.t -> local_ctx -> Surface.pretype -> Core.term)
+      ~(check_type : local_ctx -> Surface.pretype -> Core.term)
       ~loc
-      ~(name_loc : Asai.Range.t option)
       ~exported
       ~(ind_name : string)
       ~(ind_qname : string)
       ~(module_name : string)
       ~(kernel_module : Violet_kernel.Module.t)
       (ctx : local_ctx)
-      (params : Surface.pretype binder list)
-      ({ name; bound = typ; _ } : Surface.pretype binder)
+      (params : Surface.pretype Surface.sbinder list)
+      ({ name; bound = typ; _ } : Surface.pretype Surface.sbinder)
   : unit
   =
-  let name = Syntax.Name.to_string name in
+  let name_loc = Some name.Surface.loc in
+  let name = Syntax.Name.to_string name.Surface.value in
   let ctor_typ = complete_ctor_type params typ in
-  let ctor_typ_tm = check_type ~loc ctx ctor_typ in
+  let ctor_typ_tm = check_type ctx ctor_typ in
   let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
   let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
   Observer.emit (Def { path = [ ind_name; name ]; loc; name_loc; ty = ctor_typ; pp_ty });
@@ -69,39 +74,31 @@ let bind_constructor
 
 let handle_top_data (m : machine) loc data =
   match (data : Surface.top) with
-  | Surface.Data
-      { name; name_loc; params; deps; ind_ty; ind_ty_loc; ctors; ctor_name_locs } ->
-    let ind_ty_for_elab =
-      match ind_ty_loc with
-      | Some l -> Surface.Located { loc = Some l; value = ind_ty }
-      | None -> ind_ty
-    in
+  | Surface.Data { name; params; deps; ind_ty; ctors } ->
     let typ : Surface.pretype =
       List.fold_right
-        (fun binding return_ty -> Surface.Pi (binding, return_ty))
+        (fun binding return_ty ->
+           { Surface.loc = return_ty.Surface.loc; node = Surface.Pi (binding, return_ty) })
         (params @ deps)
-        ind_ty_for_elab
+        ind_ty
     in
-    push
-      m
-      (KTopData_HaveType
-         { loc; name; name_loc; params; deps; ind_ty; ctors; ctor_name_locs });
-    push m (GInferType (loc, typ))
+    push m (KTopData_HaveType { loc; name; params; deps; ind_ty; ctors });
+    push m (GInferType typ)
   | _ -> Reporter.fatalf Elab_error "GTopData: payload is not Data"
 ;;
 
 let handle_top_data_have_type
-      ~(check_type : loc:Asai.Range.t -> local_ctx -> Surface.pretype -> Core.term)
+      ~(check_type : local_ctx -> Surface.pretype -> Core.term)
       (m : machine)
       ~loc
-      ~name
-      ~name_loc
+      ~(name : string Surface.spanned)
       ~params
       ~deps
       ~ind_ty
       ~ctors
-      ~ctor_name_locs
   =
+  let name_loc = Some name.Surface.loc in
+  let name = name.Surface.value in
   match take_result m with
   | PType (typ_tm, inferred_sort) ->
     let typ_val = Evaluation.eval m.ctx.env typ_tm in
@@ -168,7 +165,10 @@ let handle_top_data_have_type
     publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);
     publish_to_env ~exported [ name ] (Core.IndType (name, Bwd.Emp), `Constructor);
     let ctor_names =
-      List.map (fun (b : Surface.pretype binder) -> Syntax.Name.to_string b.name) ctors
+      List.map
+        (fun (b : Surface.pretype Surface.sbinder) ->
+           Syntax.Name.to_string b.name.Surface.value)
+        ctors
     in
     let qname = m.module_name ^ "." ^ name in
     let qctor_names =
@@ -180,12 +180,11 @@ let handle_top_data_have_type
       ~name:qname
       ~ty:typ_tm
       ~ctor_names:qctor_names;
-    List.iter2
-      (fun ctor_name_loc ctor ->
+    List.iter
+      (fun ctor ->
          bind_constructor
            ~check_type
            ~loc
-           ~name_loc:ctor_name_loc
            ~exported
            ~ind_name:name
            ~ind_qname:qname
@@ -194,16 +193,15 @@ let handle_top_data_have_type
            m.ctx
            params
            ctor)
-      ctor_name_locs
       ctors;
     let elim_typ : Surface.pretype =
-      Eliminator_synth.eliminator_type ~name ~params ~deps ~ind_ty ctors
+      Eliminator_synth.eliminator_type ~loc ~name ~params ~deps ~ind_ty ctors
     in
     let elim_name = "elim" in
     (* Two-segment path used for namespace resolution in the type context *)
     let elim_path = [ name; elim_name ] in
     let elim_flat = name ^ "/" ^ elim_name in
-    let elim_typ_tm = check_type ~loc m.ctx elim_typ in
+    let elim_typ_tm = check_type m.ctx elim_typ in
     let elim_typ_val = Evaluation.eval m.ctx.env elim_typ_tm in
     publish_to_context ~exported elim_path (elim_typ_val, `Eliminator);
     let reducer_label = elim_flat in

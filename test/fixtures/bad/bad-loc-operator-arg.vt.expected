@@ -1,0 +1,2 @@
+11:26-11:29
+cannot unify `Nat ?= (_ : Nat) -> Nat` (or verbose `Nat ?= (_ : Nat) -> Nat`)

@@ -1,0 +1,10 @@
+\universe U
+
+\data Nat : U
+| zero : Nat
+| suc : Nat -> Nat
+
+\let f : Nat -> Nat \where
+  f n <= \elim n
+  | f (zero x) => zero
+  | f (suc m) => m

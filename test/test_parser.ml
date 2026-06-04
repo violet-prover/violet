@@ -53,10 +53,16 @@ let elim_intro_test () =
     parse_tops "\\let f : (x : U) -> U \\where\n  f x <= \\elim x\n  | f x => x\n"
   in
   (match tops1 with
-   | [ { Asai.Range.value =
+   | [ { Violet_surface.Surface.value =
            Violet_surface.Surface.Elim_def
              { intros = [ ("x", false) ]
-             ; clauses = [ { patterns = [ Violet_surface.Surface.PVar "x" ]; _ } ]
+             ; clauses =
+                 [ { patterns =
+                       [ { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"; _ }
+                       ]
+                   ; _
+                   }
+                 ]
              ; _
              }
        ; _
@@ -70,7 +76,7 @@ let elim_intro_test () =
     parse_tops "\\let f : (x : U) -> U \\where\n  f {A} x <= \\elim x\n  | f x => x\n"
   in
   (match tops2 with
-   | [ { Asai.Range.value =
+   | [ { Violet_surface.Surface.value =
            Violet_surface.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
        ; _
        }
@@ -83,12 +89,14 @@ let elim_intro_test () =
     parse_tops "\\let f : (x : U) -> U \\where\n  f x <= \\elim x\n  | f {A} x => x\n"
   in
   match tops3 with
-  | [ { Asai.Range.value =
+  | [ { Violet_surface.Surface.value =
           Violet_surface.Surface.Elim_def
             { clauses =
                 [ { patterns =
-                      [ Violet_surface.Surface.PImpVar "A"
-                      ; Violet_surface.Surface.PVar "x"
+                      [ { Violet_surface.Surface.pnode = Violet_surface.Surface.PImpVar "A"
+                        ; _
+                        }
+                      ; { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"; _ }
                       ]
                   ; _
                   }
@@ -115,14 +123,16 @@ let record_top_test () =
   (* Record with two fields, no parameters *)
   let tops = parse_tops "\\record Point : U\n  | x : Nat\n  | y : Nat" in
   (match tops with
-   | [ { Asai.Range.value = Violet_surface.Surface.Record r; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Record r; _ } ] ->
      if
-       String.equal r.name "Point" && List.length r.fields = 2 && List.length r.params = 0
+       String.equal r.name.Violet_surface.Surface.value "Point"
+       && List.length r.fields = 2
+       && List.length r.params = 0
      then Format.printf "record_top_test OK  no-params@."
      else begin
        Format.printf
          "record_top_test FAIL no-params: name=%s fields=%d params=%d@."
-         r.name
+         r.name.Violet_surface.Surface.value
          (List.length r.fields)
          (List.length r.params);
        exit 1
@@ -135,13 +145,16 @@ let record_top_test () =
     parse_tops "\\record Sigma (A : U) (B : A -> U) : U\n  | fst : A\n  | snd : B fst"
   in
   match tops2 with
-  | [ { Asai.Range.value = Violet_surface.Surface.Record r; _ } ] ->
-    if String.equal r.name "Sigma" && List.length r.fields = 2 && List.length r.params = 2
+  | [ { Violet_surface.Surface.value = Violet_surface.Surface.Record r; _ } ] ->
+    if
+      String.equal r.name.Violet_surface.Surface.value "Sigma"
+      && List.length r.fields = 2
+      && List.length r.params = 2
     then Format.printf "record_top_test OK  with-params@."
     else begin
       Format.printf
         "record_top_test FAIL with-params: name=%s fields=%d params=%d@."
-        r.name
+        r.name.Violet_surface.Surface.value
         (List.length r.fields)
         (List.length r.params);
       exit 1
@@ -160,30 +173,26 @@ let record_lit_test () =
     let m = Violet_surface.Parser.parse_buf ~name:"<record_lit_test>" toks in
     m.Violet_surface.Surface.tops
   in
-  let rec peel = function
-    | Violet_surface.Surface.Located { value; _ } -> peel value
-    | t -> t
-  in
-  let peel_item = function
-    | Violet_surface.Surface.SI_Atom a -> Violet_surface.Surface.SI_Atom (peel a)
-    | other -> other
-  in
+  let peel (p : Violet_surface.Surface.preterm) = p.Violet_surface.Surface.node in
+  let key (s : string Violet_surface.Surface.spanned) = s.Violet_surface.Surface.value in
   (* Helper: extract RecordLit from the Op_soup wrapper that the parser emits
      before operator resolution.  A bare `{ … }` at head position becomes
      Op_soup [ SI_Atom (RecordLit […]) ]. *)
   let unwrap_record_lit body =
     match peel body with
     | Violet_surface.Surface.Op_soup items ->
-      (match List.map peel_item items with
-       | [ Violet_surface.Surface.SI_Atom (Violet_surface.Surface.RecordLit entries) ] ->
-         Some entries
+      (match items with
+       | [ Violet_surface.Surface.SI_Atom a ] ->
+         (match peel a with
+          | Violet_surface.Surface.RecordLit entries -> Some entries
+          | _ -> None)
        | _ -> None)
     | _ -> None
   in
   (* Empty record literal *)
   let tops0 = parse_tops "\\let p : Point => {}" in
   (match tops0 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
       | Some [] -> Format.printf "record_lit_test OK  empty@."
       | _ ->
@@ -197,9 +206,10 @@ let record_lit_test () =
   (* Plain literal: { x = a, y = b } *)
   let tops1 = parse_tops "\\let p : Point => { x = a, y = b }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
-      | Some [ ("x", _); ("y", _) ] -> Format.printf "record_lit_test OK  plain-lit@."
+      | Some [ (fx, _); (fy, _) ] when key fx = "x" && key fy = "y" ->
+        Format.printf "record_lit_test OK  plain-lit@."
       | _ ->
         Format.printf
           "record_lit_test FAIL plain-lit: body=%s@."
@@ -211,12 +221,14 @@ let record_lit_test () =
   (* Pun literal: { x, y } desugars to { x = x, y = y } *)
   let tops2 = parse_tops "\\let p : Point => { x, y }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
-      | Some [ ("x", xv); ("y", yv) ]
-        when (match peel xv with
-              | Violet_surface.Surface.Var [ "x" ] -> true
-              | _ -> false)
+      | Some [ (fx, xv); (fy, yv) ]
+        when key fx = "x"
+             && key fy = "y"
+             && (match peel xv with
+                 | Violet_surface.Surface.Var [ "x" ] -> true
+                 | _ -> false)
              &&
              match peel yv with
              | Violet_surface.Surface.Var [ "y" ] -> true
@@ -232,12 +244,15 @@ let record_lit_test () =
   (* Mixed: { x, y = e, z } desugars to { x = x, y = e, z = z } *)
   let tops3 = parse_tops "\\let p : Point => { x, y = e, z }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
-      | Some [ ("x", xv); ("y", _); ("z", zv) ]
-        when (match peel xv with
-              | Violet_surface.Surface.Var [ "x" ] -> true
-              | _ -> false)
+      | Some [ (fx, xv); (fy, _); (fz, zv) ]
+        when key fx = "x"
+             && key fy = "y"
+             && key fz = "z"
+             && (match peel xv with
+                 | Violet_surface.Surface.Var [ "x" ] -> true
+                 | _ -> false)
              &&
              match peel zv with
              | Violet_surface.Surface.Var [ "z" ] -> true
@@ -252,19 +267,18 @@ let record_lit_test () =
      exit 1);
   (* Implicit-application f {x} must still parse (regression check).
      `f {x}` = Op_soup with head SI_Name ("f", _) and tail SI_Imp_arg.
-     The inner atom may be wrapped in Located, so we check structurally
-     using the show_preterm output. *)
+     We check structurally via the node field of each { loc; node } record. *)
   let tops4 = parse_tops "\\let r : U => f {x}" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_surface.Surface.Op_soup items ->
-        let items = List.map peel_item items in
         (match items with
-         | [ Violet_surface.Surface.SI_Name ("f", _)
+         | [ Violet_surface.Surface.SI_Name f
            ; Violet_surface.Surface.SI_Imp_arg inner
-           ] ->
-           let inner_str = Violet_surface.Surface.show_preterm (peel inner) in
+           ]
+           when key f = "f" ->
+           let inner_str = Violet_surface.Surface.show_preterm inner in
            if String.equal inner_str "x"
            then Format.printf "record_lit_test OK  implicit-app@."
            else begin
@@ -298,31 +312,27 @@ let record_update_test () =
     let m = Violet_surface.Parser.parse_buf ~name:"<record_update_test>" toks in
     m.Violet_surface.Surface.tops
   in
-  let rec peel = function
-    | Violet_surface.Surface.Located { value; _ } -> peel value
-    | t -> t
-  in
-  let peel_item = function
-    | Violet_surface.Surface.SI_Atom a -> Violet_surface.Surface.SI_Atom (peel a)
-    | other -> other
-  in
+  let peel (p : Violet_surface.Surface.preterm) = p.Violet_surface.Surface.node in
+  let key (s : string Violet_surface.Surface.spanned) = s.Violet_surface.Surface.value in
   (* Helper: unwrap RecordUpdate from Op_soup wrapper *)
   let unwrap_record_update body =
     match peel body with
     | Violet_surface.Surface.Op_soup items ->
-      (match List.map peel_item items with
-       | [ Violet_surface.Surface.SI_Atom
-             (Violet_surface.Surface.RecordUpdate (base, entries))
-         ] -> Some (base, entries)
+      (match items with
+       | [ Violet_surface.Surface.SI_Atom a ] ->
+         (match peel a with
+          | Violet_surface.Surface.RecordUpdate (base, entries) -> Some (base, entries)
+          | _ -> None)
        | _ -> None)
     | _ -> None
   in
   (* Simple single-field update: { p | x = z } *)
   let tops1 = parse_tops "\\let q : Point => { p | x = z }" in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
-      | Some (_, [ ("x", _) ]) -> Format.printf "record_update_test OK  simple@."
+      | Some (_, [ (fx, _) ]) when key fx = "x" ->
+        Format.printf "record_update_test OK  simple@."
       | _ ->
         Format.printf
           "record_update_test FAIL simple: body=%s@."
@@ -334,9 +344,10 @@ let record_update_test () =
   (* Multi-field update: { p | x = z, y = w } *)
   let tops2 = parse_tops "\\let q : Point => { p | x = z, y = w }" in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
-      | Some (_, [ ("x", _); ("y", _) ]) -> Format.printf "record_update_test OK  multi@."
+      | Some (_, [ (fx, _); (fy, _) ]) when key fx = "x" && key fy = "y" ->
+        Format.printf "record_update_test OK  multi@."
       | _ ->
         Format.printf
           "record_update_test FAIL multi: body=%s@."
@@ -348,12 +359,14 @@ let record_update_test () =
   (* Pun-style override: { p | x } desugars to { p | x = x } *)
   let tops3 = parse_tops "\\let q : Point => { p | x }" in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
-      | Some (_, [ ("x", xv) ])
-        when match peel xv with
-             | Violet_surface.Surface.Var [ "x" ] -> true
-             | _ -> false -> Format.printf "record_update_test OK  pun@."
+      | Some (_, [ (fx, xv) ])
+        when key fx = "x"
+             &&
+             (match peel xv with
+              | Violet_surface.Surface.Var [ "x" ] -> true
+              | _ -> false) -> Format.printf "record_update_test OK  pun@."
       | _ ->
         Format.printf
           "record_update_test FAIL pun: body=%s@."
@@ -365,11 +378,14 @@ let record_update_test () =
   (* Regression: plain literal { x = a } must still be RecordLit, not RecordUpdate *)
   let tops4 = parse_tops "\\let p : Point => { x = a }" in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_surface.Surface.Op_soup items ->
-        (match List.map peel_item items with
-         | [ Violet_surface.Surface.SI_Atom (Violet_surface.Surface.RecordLit _) ] ->
+        (match items with
+         | [ Violet_surface.Surface.SI_Atom a ]
+           when (match peel a with
+                 | Violet_surface.Surface.RecordLit _ -> true
+                 | _ -> false) ->
            Format.printf "record_update_test OK  regression-literal@."
          | _ ->
            Format.printf
@@ -387,14 +403,13 @@ let record_update_test () =
   (* Regression: implicit application f {x} must still work *)
   let tops5 = parse_tops "\\let r : U => f {x}" in
   (match tops5 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
       | Violet_surface.Surface.Op_soup items ->
-        let items = List.map peel_item items in
         (match items with
-         | [ Violet_surface.Surface.SI_Name ("f", _)
-           ; Violet_surface.Surface.SI_Imp_arg _
-           ] -> Format.printf "record_update_test OK  regression-implicit-app@."
+         | [ Violet_surface.Surface.SI_Name f; Violet_surface.Surface.SI_Imp_arg _ ]
+           when key f = "f" ->
+           Format.printf "record_update_test OK  regression-implicit-app@."
          | _ ->
            Format.printf
              "record_update_test FAIL regression-implicit-app: body=%s@."
@@ -424,28 +439,28 @@ let projection_test () =
   let src1 = "\\let n : Nat => p.x" in
   let tops1 = parse_tops src1 in
   (match tops1 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "simple: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "simple: unexpected\n");
   (* Chained projection -- left-associative *)
   let src2 = "\\let n : Nat => r.x.y" in
   let tops2 = parse_tops src2 in
   (match tops2 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "chained: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "chained: unexpected\n");
   (* Projection on application -- (f x).y *)
   let src3 = "\\let n : Nat => (f x).y" in
   let tops3 = parse_tops src3 in
   (match tops3 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "appl: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "appl: unexpected\n");
   (* Regression: Nat/zero must parse as Var ["Nat"; "zero"], not affected by dot *)
   let src4 = "\\let n : Nat => Nat/zero" in
   let tops4 = parse_tops src4 in
   (match tops4 with
-   | [ { Asai.Range.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
+   | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      Printf.printf "qname: %s\n" (Violet_surface.Surface.show_preterm body)
    | _ -> Printf.printf "qname: unexpected\n");
   print_endline "projection_test OK"
@@ -480,14 +495,25 @@ let pattern_record_test () =
   (* Verify the PRecord pattern is actually present in the clause.
      The \split via stack moves produces a Stack_def top. *)
   (match tops with
-   | [ { Asai.Range.value =
+   | [ { Violet_surface.Surface.value =
            Violet_surface.Surface.Stack_def
              { clauses =
                  [ { patterns =
-                       [ Violet_surface.Surface.PRecord
-                           [ ("fst", Violet_surface.Surface.PVar "a")
-                           ; ("snd", Violet_surface.Surface.PVar "b")
-                           ]
+                       [ { Violet_surface.Surface.pnode =
+                             Violet_surface.Surface.PRecord
+                               [ ( fst_f
+                                 , { Violet_surface.Surface.pnode =
+                                       Violet_surface.Surface.PVar "a"
+                                   ; _
+                                   } )
+                               ; ( snd_f
+                                 , { Violet_surface.Surface.pnode =
+                                       Violet_surface.Surface.PVar "b"
+                                   ; _
+                                   } )
+                               ]
+                         ; _
+                         }
                        ]
                    ; _
                    }
@@ -496,7 +522,10 @@ let pattern_record_test () =
              }
        ; _
        }
-     ] -> Format.printf "pattern_record_test OK  PRecord structure@."
+     ]
+     when fst_f.Violet_surface.Surface.value = "fst"
+          && snd_f.Violet_surface.Surface.value = "snd" ->
+     Format.printf "pattern_record_test OK  PRecord structure@."
    | _ ->
      Format.printf
        "pattern_record_test FAIL  unexpected structure (parse may still be OK)@.");

@@ -1,0 +1,42 @@
+\universe U
+
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+
+\let sym {A : U} {x y : A} : Id x y -> Id y x \where
+  sym p <= \elim p
+  | sym refl => refl
+
+\let trans {A : U} {x y z : A} : Id x y -> Id y z -> Id x z \where
+  trans p q <= \elim p
+  | trans refl q => q
+
+\let ap {A : U} {B : U} (f : A -> B) {x y : A} : Id x y -> Id (f x) (f y) \where
+  ap f p <= \elim p
+  | ap f refl => refl
+
+\let transport {A : U} (P : A -> U) (x y : A) : Id x y -> (px : P x) -> P y \where
+  transport P x y p px <= \elim p
+  | transport P x y refl px => px
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\data Shape : U
+  | empty : Shape
+  | more : Shape -> Shape
+
+\data Stack : Shape -> U
+  | nil  : Stack Shape/empty
+  | cons : {s : Shape} -> Nat -> Stack s -> Stack (Shape/more s)
+
+\data Instr : Shape -> Shape -> U
+  | ADD : {s : Shape} -> Instr (Shape/more (Shape/more s)) (Shape/more s)
+
+\let exec-instr {s1 s2 : Shape}
+  : (i : Instr s1 s2) -> (stk : Stack s1) -> Stack s2 \where
+  exec-instr i stk <= \elim i
+  | exec-instr (ADD s)    stk <= \elim stk
+  | exec-instr (ADD s)    (cons n1 stk) <= \elim stk
+  | exec-instr (ADD s)    (cons n1 (cons n2 stk)) => Stack/cons n1 stk

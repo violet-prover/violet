@@ -1,1 +1,2 @@
+7:1-9:35
 constructor `node` of `Tree` uses `Tree` non-uniformly: in argument type `(Tree Π(_ : A) -> A)`, parameter 1 must be `A` (the declared param) but is `Π(_ : A) -> A`.

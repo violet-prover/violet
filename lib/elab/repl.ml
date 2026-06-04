@@ -8,7 +8,6 @@ module Evaluation = Wiring.Eval
 module Check = Wiring.Check
 module Unification = Unify
 open Syntax
-open Surface_utils
 
 (* These run a single GInfer against an existing handler state
    (Context.S / Env.S already populated by prior `check_module` calls).
@@ -20,11 +19,7 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
   : Core.term * Core.value
   =
   let open Elab in
-  let loc =
-    match loc_of p with
-    | Some l -> l
-    | None -> Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-  in
+  let loc = p.Surface.loc in
   let m =
     make_machine
       ~module_name
@@ -32,7 +27,7 @@ let infer_expression ~(module_name : string) (p : Surface.preterm)
       ~goal_counter:(ref 0)
       ()
   in
-  push m (GInfer (loc, p));
+  push m (GInfer p);
   match drive m with
   | PTermType (tm, ty) -> tm, ty
   | other ->

@@ -1,0 +1,2 @@
+9:19-9:23
+constructor `zero` expects 0 field-binders (or 0 if implicits are omitted), got 1
