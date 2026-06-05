@@ -897,10 +897,7 @@ let consumed_span (st : parser_state) (i : int) (j : int) : Asai.Range.t =
    range this operator match consumed), while the hole arguments keep
    their own use-site locations. The decl-site body in the table is never
    mutated — relocation happens only here. *)
-let lower_body
-      (op : op_decl)
-      (matches : Surface.preterm list)
-      ~(use_span : Asai.Range.t)
+let lower_body (op : op_decl) (matches : Surface.preterm list) ~(use_span : Asai.Range.t)
   : Surface.preterm
   =
   let at node : Surface.preterm = { Surface.loc = use_span; node } in
@@ -974,10 +971,7 @@ let lower_body
   else
     (* bare-ident sugar: body applied positionally. [sub] doubles as the
        deep relocation here (no holes ⇒ pure relocation). *)
-    List.fold_left
-      (fun acc m -> at (Surface.App (false, acc, m)))
-      (sub op.body)
-      matches
+    List.fold_left (fun acc m -> at (Surface.App (false, acc, m))) (sub op.body) matches
 ;;
 
 (* Precedence-climbing parser, extended to mixfix.
@@ -1252,7 +1246,12 @@ let parse_soup ~(loc : Asai.Range.t) (table : op_table) (items : Surface.soup_it
 ;;
 
 let%expect_test "parse_soup: empty table, single atom" =
-  let result = parse_soup ~loc:Surface.dummy_loc empty_table [ Surface.SI_Atom (d (Surface.Var [ "x" ])) ] in
+  let result =
+    parse_soup
+      ~loc:Surface.dummy_loc
+      empty_table
+      [ Surface.SI_Atom (d (Surface.Var [ "x" ])) ]
+  in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| x |}]
 ;;
@@ -1262,10 +1261,7 @@ let%expect_test "parse_soup: empty table, App spine" =
     parse_soup
       ~loc:Surface.dummy_loc
       empty_table
-      [ Surface.SI_Name (dn "f")
-      ; Surface.SI_Name (dn "x")
-      ; Surface.SI_Name (dn "y")
-      ]
+      [ Surface.SI_Name (dn "f"); Surface.SI_Name (dn "x"); Surface.SI_Name (dn "y") ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| ((f x) y) |}]
@@ -1297,10 +1293,7 @@ let%expect_test "parse_soup: binary infix" =
     parse_soup
       ~loc:Surface.dummy_loc
       table
-      [ Surface.SI_Name (dn "a")
-      ; Surface.SI_Name (dn "+")
-      ; Surface.SI_Name (dn "b")
-      ]
+      [ Surface.SI_Name (dn "a"); Surface.SI_Name (dn "+"); Surface.SI_Name (dn "b") ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| ((add a) b) |}]
@@ -1367,7 +1360,10 @@ let%expect_test "parse_soup: postfix `!`" =
   in
   let table = add_decl bang empty_table in
   let result =
-    parse_soup ~loc:Surface.dummy_loc table [ Surface.SI_Name (dn "n"); Surface.SI_Name (dn "!") ]
+    parse_soup
+      ~loc:Surface.dummy_loc
+      table
+      [ Surface.SI_Name (dn "n"); Surface.SI_Name (dn "!") ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (factorial n) |}]
@@ -1379,7 +1375,10 @@ let%expect_test "parse_soup: prefix `not`" =
   in
   let table = add_decl not_op empty_table in
   let result =
-    parse_soup ~loc:Surface.dummy_loc table [ Surface.SI_Name (dn "not"); Surface.SI_Name (dn "b") ]
+    parse_soup
+      ~loc:Surface.dummy_loc
+      table
+      [ Surface.SI_Name (dn "not"); Surface.SI_Name (dn "b") ]
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (negate b) |}]
@@ -1468,8 +1467,10 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
          ({ b with bound = lower_preterm table b.bound }, lower_preterm table body))
   | Surface.Pi (b, body) ->
     keep
-      (Surface.Pi ({ b with bound = lower_preterm table b.bound }, lower_preterm table body))
-  | Surface.Max (a, b) -> keep (Surface.Max (lower_preterm table a, lower_preterm table b))
+      (Surface.Pi
+         ({ b with bound = lower_preterm table b.bound }, lower_preterm table body))
+  | Surface.Max (a, b) ->
+    keep (Surface.Max (lower_preterm table a, lower_preterm table b))
   | Surface.Universe | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
   | Surface.IdAbsurd p -> keep (Surface.IdAbsurd (lower_preterm table p))
   | Surface.Absurd p -> keep (Surface.Absurd (lower_preterm table p))

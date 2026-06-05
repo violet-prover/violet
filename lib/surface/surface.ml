@@ -33,8 +33,7 @@ let pp_spanned pp_v fmt s = pp_v fmt s.value
 let show_spanned show_v s = show_v s.value
 
 type preterm =
-  (preterm_record
-  [@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
+  (preterm_record[@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
 
 and preterm_record =
   { loc : (Asai.Range.t[@opaque])
@@ -177,8 +176,7 @@ and soup_item =
 and pretype = preterm
 
 and pattern =
-  (pattern_record
-  [@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
+  (pattern_record[@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
 
 and pattern_record =
   { ploc : (Asai.Range.t[@opaque])
@@ -276,8 +274,8 @@ type top =
       ; params : pretype sbinder list
       ; signature : pretype
       ; opens : string list
-      ; intros : (string * bool) list
-      ; target : string
+      ; intros : (string spanned * bool) list
+      ; target : string spanned
       ; clauses : clause list
       }
   (*
@@ -321,9 +319,7 @@ let join_loc (a : Asai.Range.t) (b : Asai.Range.t) : Asai.Range.t =
 ;;
 
 (* For whitebox tests and the REPL, where there is no source file. *)
-let dummy_loc : Asai.Range.t =
-  Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
-;;
+let dummy_loc : Asai.Range.t = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
 
 module Mk = struct
   let at (loc : Asai.Range.t) (node : preterm_node) : preterm = { loc; node }

@@ -37,7 +37,8 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
   | Surface.TypedLambda (b, body) ->
     let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name.Surface.value) env in
     keep
-      (Surface.TypedLambda ({ b with bound = subst_vars env b.bound }, subst_vars env' body))
+      (Surface.TypedLambda
+         ({ b with bound = subst_vars env b.bound }, subst_vars env' body))
   | Surface.Pi (b, cod) ->
     let env' = List.filter (fun (x, _) -> Surface.Named x <> b.name.Surface.value) env in
     keep (Surface.Pi ({ b with bound = subst_vars env b.bound }, subst_vars env' cod))
@@ -76,7 +77,7 @@ let rec walk_params
   | b :: rest ->
     (match Evaluation.force_head goal with
      | Core.VPi ({ name = _; bound = a; implicit = _ }, k) ->
-       let ctx' = bind ctx b.name.Surface.value a in
+       let ctx' = bind ctx b.name a in
        let goal' = k (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
        walk_params ~loc ctx' goal' rest
      | other ->
@@ -131,13 +132,14 @@ let rec walk_moves
          else pick_binder_name clauses position
        in
        let cod = k (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
-       let ctx' = bind ctx (Syntax.Named name) a in
+       let ctx' = bind ctx (sn loc (Syntax.Named name)) a in
        let inner =
          walk_moves ~loc ctx' cod signature n_params rest clauses (position + 1)
        in
        at
          inner.Surface.loc
-         (Surface.Lambda { name = sn loc (Syntax.Named name); bound = inner; implicit = false })
+         (Surface.Lambda
+            { name = sn loc (Syntax.Named name); bound = inner; implicit = false })
      | other ->
        Reporter.fatalf
          ~loc
@@ -153,7 +155,7 @@ let rec walk_moves
         "only one optional `<= split` is allowed, and it must come last";
     let target_name, target_ty =
       match ctx.names, ctx.types with
-      | Bwd.Snoc (_, n), Bwd.Snoc (_, t) -> n, t
+      | Bwd.Snoc (_, n), Bwd.Snoc (_, t) -> n.Surface.value, t
       | _ -> Reporter.fatalf ~loc Elab_error "`<= split` requires a preceding `<= intro`"
     in
     let pattern_position = position - 1 in
@@ -170,8 +172,10 @@ let rec walk_moves
        let clause = List.hd clauses in
        let cloc = clause_loc clause in
        let entries =
-         match Option.map (fun (p : Surface.pattern) -> p.Surface.pnode)
-                 (List.nth_opt clause.patterns pattern_position)
+         match
+           Option.map
+             (fun (p : Surface.pattern) -> p.Surface.pnode)
+             (List.nth_opt clause.patterns pattern_position)
          with
          | Some (Surface.PRecord es) -> es
          | Some (Surface.PVar _) | Some (Surface.PImpVar _) | Some Surface.PWildcard ->
@@ -316,8 +320,10 @@ let rec walk_moves
                   "constructor `%s` has more than one clause"
                   cn.Surface.value;
               Hashtbl.add seen cn.Surface.value ()
-            | Some { Surface.pnode = Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard; ploc }
-              ->
+            | Some
+                { Surface.pnode = Surface.PVar _ | Surface.PImpVar _ | Surface.PWildcard
+                ; ploc
+                } ->
               Reporter.fatalf
                 ~loc:ploc
                 Elab_error
@@ -364,7 +370,12 @@ let rec walk_moves
               in
               let cloc = clause_loc clause in
               let pat = List.nth_opt clause.patterns pattern_position in
-              let ploc = Option.fold ~none:cloc ~some:(fun (p : Surface.pattern) -> p.Surface.ploc) pat in
+              let ploc =
+                Option.fold
+                  ~none:cloc
+                  ~some:(fun (p : Surface.pattern) -> p.Surface.ploc)
+                  pat
+              in
               let vs =
                 match Option.map (fun p -> (normalize_pattern p).Surface.pnode) pat with
                 | Some (Surface.PCon (_, vs)) -> vs
@@ -402,18 +413,18 @@ let rec walk_moves
                 (fun v body ->
                    at
                      cloc
-                     (Surface.Lambda { name = sn cloc (Named v); bound = body; implicit = false }))
+                     (Surface.Lambda
+                        { name = sn cloc (Named v); bound = body; implicit = false }))
                 v_names
                 clause.body)
            ctors
        in
-       let motive_body =
-         peel_pi_surface (pattern_position + 1 - n_params) signature
-       in
+       let motive_body = peel_pi_surface (pattern_position + 1 - n_params) signature in
        let motive : Surface.preterm =
          at
            motive_body.Surface.loc
-           (Surface.Lambda { name = sn loc target_name; bound = motive_body; implicit = false })
+           (Surface.Lambda
+              { name = sn loc target_name; bound = motive_body; implicit = false })
        in
        (* Extract the target's type as a Surface preterm so we can read off the
           data-type's params + deps to prepend to the eliminator's spine. The
@@ -454,15 +465,7 @@ let rec walk_moves
 
 (* --- Dispatch handlers --- *)
 
-let handle_stack_def
-      (m : machine)
-      ~loc
-      ~name
-      ~bindings
-      ~result_ty
-      ~moves
-      ~clauses
-  =
+let handle_stack_def (m : machine) ~loc ~name ~bindings ~result_ty ~moves ~clauses =
   List.iter
     (fun (c : Surface.clause) ->
        List.iter
@@ -486,8 +489,7 @@ let handle_stack_def
   in
   push
     m
-    (KTopStackDef_HaveType
-       { loc; name; bindings; signature = result_ty; moves; clauses });
+    (KTopStackDef_HaveType { loc; name; bindings; signature = result_ty; moves; clauses });
   push m (GInferType typ)
 ;;
 
@@ -551,15 +553,7 @@ let handle_elim_def
   push
     m
     (KTopElimDef_HaveType
-       { loc
-       ; name
-       ; bindings
-       ; signature = result_ty
-       ; opens
-       ; intros
-       ; target
-       ; clauses
-       });
+       { loc; name; bindings; signature = result_ty; opens; intros; target; clauses });
   push m (GInferType typ)
 ;;
 
@@ -579,8 +573,21 @@ let handle_elim_def_have_type
     let name_loc = name.Surface.loc in
     let name = name.Surface.value in
     let typ_val = Evaluation.eval m.ctx.env typ_tm in
+    (* The header carries spans on its intro names and elim target. The
+       inductive synthesis machinery consumes bare strings, so strip spans
+       at the boundary; the spans are reattached on the synthesized intro
+       lambdas (below) and on the target Use event. *)
+    let bare_intros = List.map (fun (s, b) -> s.Surface.value, b) intros in
+    let target_str = target.Surface.value in
+    (* name -> the source token's span, for intros the user wrote on the
+       header line. Auto-filled params/implicits aren't in this map and fall
+       back to the definition name's loc. *)
+    let intro_span_of =
+      let tbl = List.map (fun (s, _) -> s.Surface.value, s.Surface.loc) intros in
+      fun n -> List.assoc_opt n tbl
+    in
     let effective_intros =
-      Inductive.compute_effective_intros ~loc ~bindings ~signature ~intros
+      Inductive.compute_effective_intros ~loc ~bindings ~signature ~intros:bare_intros
     in
     let target_pos =
       let rec go i = function
@@ -589,8 +596,8 @@ let handle_elim_def_have_type
             ~loc
             Elab_error
             "elim target `%s` not among effective intros"
-            target
-        | (x, _) :: _ when String.equal x target -> i
+            target_str
+        | (x, _) :: _ when String.equal x target_str -> i
         | _ :: xs -> go (i + 1) xs
       in
       go 0 effective_intros
@@ -625,19 +632,61 @@ let handle_elim_def_have_type
         ~params:bindings
         ~signature
         ~opens
-        ~intros
-        ~target
+        ~intros:bare_intros
+        ~target:target_str
         ~clauses
         ~target_type_value
         ~start_lvl:m.ctx.lvl
     in
+    (* Emit a Use for the `\elim <target>` token: goto-def from it lands on
+       the header intro that introduced the target. The target's type isn't
+       trivially in hand here (it lives mid-Pi-tower); the intro Binder
+       emitted by the lambda path below carries the type for hover, so this
+       Use mainly provides goto-def back to the introducing token. We report
+       the target's intro span as both loc (the elim token) and def_loc. *)
+    (match intro_span_of target_str with
+     | Some intro_loc ->
+       let pp_ty =
+         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target_type_value)
+       in
+       Observer.emit
+         (Use
+            { path = [ target_str ]
+            ; loc = target.Surface.loc
+            ; def_loc = Some intro_loc
+            ; ty = target_type_value
+            ; pp_ty
+            })
+     | None -> ());
+    (* Per-clause head Use: hovering a clause head shows the function's type;
+       goto-def jumps to the `\let` name. Walked once here at the top level. *)
+    let head_pp_ty =
+      Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+    in
+    List.iter
+      (fun (c : Surface.clause) ->
+         Observer.emit
+           (Use
+              { path = [ c.head.Surface.value ]
+              ; loc = c.head.Surface.loc
+              ; def_loc = Some name_loc
+              ; ty = typ_val
+              ; pp_ty = head_pp_ty
+              }))
+      clauses;
     let intros = effective_intros in
     let term : Surface.preterm =
       List.fold_right
         (fun (n, implicit) body ->
+           (* Each intro lambda binds at the header token the user wrote (so
+              hover on `m`/`n` shows the right type); synthesized
+              params/implicits with no source token fall back to the def
+              name's loc. Using the def name's loc for every intro is what
+              made hover on the def name wrongly show a binder. *)
+           let bind_loc = Option.value (intro_span_of n) ~default:name_loc in
            at
-             (Surface.join_loc name_loc body.Surface.loc)
-             (Surface.Lambda { name = sn name_loc (Named n); bound = body; implicit }))
+             (Surface.join_loc bind_loc body.Surface.loc)
+             (Surface.Lambda { name = sn bind_loc (Named n); bound = body; implicit }))
         intros
         elim_inner
     in
@@ -744,7 +793,15 @@ let handle_elim_def_have_body
     let name = name.Surface.value in
     let term = rewrite_recursive_calls ~loc ~func_name ~target_pos term in
     let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
-    Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
+    Observer.emit
+      (Def
+         { path = [ name ]
+         ; module_path = String.split_on_char '/' m.module_name
+         ; loc
+         ; name_loc
+         ; ty = typ_val
+         ; pp_ty
+         });
     let exported = m.is_exported name in
     let body_val = Evaluation.eval m.ctx.env term in
     publish_to_env ~exported [ name ] (body_val, `Defn);
@@ -802,7 +859,9 @@ let handle_check_inline_elim
     let target_type_value = deep_resolve raw_target_ty in
     let resolved_ty = deep_resolve ty in
     let user_level_names =
-      List.mapi (fun i n -> i, Syntax.Name.to_string n) (Bwd.to_list m.ctx.names)
+      List.mapi
+        (fun i n -> i, Syntax.Name.to_string n.Surface.value)
+        (Bwd.to_list m.ctx.names)
     in
     let owner_map =
       match Evaluation.force_head target_type_value with

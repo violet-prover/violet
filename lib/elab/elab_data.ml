@@ -52,7 +52,15 @@ let bind_constructor
   let ctor_typ_tm = check_type ctx ctor_typ in
   let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
   let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
-  Observer.emit (Def { path = [ ind_name; name ]; loc; name_loc; ty = ctor_typ; pp_ty });
+  Observer.emit
+    (Def
+       { path = [ ind_name; name ]
+       ; module_path = String.split_on_char '/' module_name
+       ; loc
+       ; name_loc
+       ; ty = ctor_typ
+       ; pp_ty
+       });
   let ctor_flat = ind_name ^ "/" ^ name in
   (* Context: multi-segment for type-directed surface resolution *)
   publish_to_context ~exported [ ind_name; name ] (ctor_typ, `Constructor);
@@ -160,7 +168,15 @@ let handle_top_data_have_type
       { params; deps; ind_ty; ctors; infos; param_polarity }
     in
     let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
-    Observer.emit (Def { path = [ name ]; loc; name_loc; ty = typ_val; pp_ty });
+    Observer.emit
+      (Def
+         { path = [ name ]
+         ; module_path = String.split_on_char '/' m.module_name
+         ; loc
+         ; name_loc
+         ; ty = typ_val
+         ; pp_ty
+         });
     let exported = m.is_exported name in
     publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);
     publish_to_env ~exported [ name ] (Core.IndType (name, Bwd.Emp), `Constructor);

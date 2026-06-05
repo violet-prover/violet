@@ -290,9 +290,7 @@ module P = struct
       if i < Array.length buf
       then (
         let lt = buf.(i) in
-        if C.tag_of lt.Surface.value = tag
-        then i + 1, lt.Surface.value
-        else fail_at buf i)
+        if C.tag_of lt.Surface.value = tag then i + 1, lt.Surface.value else fail_at buf i)
       else fail_at buf i
     in
     { tp = Tp.tok tag; parse }
@@ -756,9 +754,7 @@ module Grammar = struct
             let acc = ref base in
             let pos = ref start_i in
             let continue_ = ref true in
-            while
-              !continue_ && !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_DOT
-            do
+            while !continue_ && !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_DOT do
               let dot_i = !pos + 1 in
               if dot_i < n && C.tag_of buf.(dot_i).Surface.value = C.T_IDENT
               then begin
@@ -845,9 +841,8 @@ module Grammar = struct
                 pos := i'
             done;
             ( !pos
-            , { S.loc = span_of buf start (!pos - 1)
-              ; node = S.Op_soup (List.rev !items)
-              } )
+            , { S.loc = span_of buf start (!pos - 1); node = S.Op_soup (List.rev !items) }
+            )
         in
         { tp; parse }
       in
@@ -1000,9 +995,7 @@ module Grammar = struct
           | _ ->
             ( i''
             , S.SI_Atom
-                { S.loc = span_of buf i (i'' - 1)
-                ; node = S.Var (name.S.value :: segs)
-                } )
+                { S.loc = span_of buf i (i'' - 1); node = S.Var (name.S.value :: segs) } )
         in
         { tp = ident_loc.tp; parse }
       in
@@ -1169,8 +1162,7 @@ module Grammar = struct
     first :: rest
   ;;
 
-  let mk_binding implicit (names : string S.spanned list) bound
-    : S.preterm S.sbinder list
+  let mk_binding implicit (names : string S.spanned list) bound : S.preterm S.sbinder list
     =
     List.map
       (fun (n : string S.spanned) ->
@@ -1235,9 +1227,7 @@ module Grammar = struct
     then false
     else (
       match
-        ( buf.(i).Surface.value
-        , buf.(i + 1).Surface.value
-        , buf.(i + 2).Surface.value )
+        buf.(i).Surface.value, buf.(i + 1).Surface.value, buf.(i + 2).Surface.value
       with
       | Lexer.L_BRACKET, Lexer.IDENT _, Lexer.SYMBOL "=" -> true
       | _ -> false)
@@ -1325,7 +1315,10 @@ module Grammar = struct
               pos := i'
             done;
             let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            i', { S.ploc = span_of buf start (i' - 1); pnode = S.PRecord (List.rev !entries) }
+            ( i'
+            , { S.ploc = span_of buf start (i' - 1)
+              ; pnode = S.PRecord (List.rev !entries)
+              } )
           end
         end
         else begin
@@ -1372,27 +1365,27 @@ module Grammar = struct
   ;;
 
   type elim_header_data =
-    { head : string
-    ; intros : (string * bool) list
-    ; target : string
+    { head : string S.spanned
+    ; intros : (string S.spanned * bool) list
+    ; target : string S.spanned
     }
 
-  let p_intro_atom : (string * bool) t =
-    (let+ name = ident in
+  let p_intro_atom : (string S.spanned * bool) t =
+    (let+ name = ident_loc in
      name, false)
     ||
     let+ _ = tok C.T_LBRACKET
-    and+ name = ident
+    and+ name = ident_loc
     and+ _ = tok C.T_RBRACKET in
     name, true
   ;;
 
   let p_elim_header : elim_header_data t =
-    let+ head = ident
+    let+ head = ident_loc
     and+ intros = star p_intro_atom
     and+ _ = tok C.T_STACK_ARROW
     and+ _ = tok C.T_ELIM
-    and+ target = ident in
+    and+ target = ident_loc in
     { head; intros; target }
   ;;
 
@@ -1455,24 +1448,17 @@ module Grammar = struct
       ; value = S.Stack_def { name; params = bindings; signature = ty; moves; clauses }
       }
     | LB_Elim (opens, { head; intros; target }, clauses) ->
-      if not (String.equal head name.S.value)
+      if not (String.equal head.S.value name.S.value)
       then
         Reporter.fatalf
           Parse_error
           "elim-header head `%s` must match let name `%s`"
-          head
+          head.S.value
           name.S.value;
       { S.loc
       ; value =
           S.Elim_def
-            { name
-            ; params = bindings
-            ; signature = ty
-            ; opens
-            ; intros
-            ; target
-            ; clauses
-            }
+            { name; params = bindings; signature = ty; opens; intros; target; clauses }
       }
   ;;
 
@@ -1488,13 +1474,7 @@ module Grammar = struct
          name, params, ret, ctors)
     in
     let value =
-      S.Data
-        { name
-        ; params
-        ; deps = S.telescope ret
-        ; ind_ty = S.codomain ret
-        ; ctors
-        }
+      S.Data { name; params; deps = S.telescope ret; ind_ty = S.codomain ret; ctors }
     in
     { S.loc; value }
   ;;
@@ -1844,7 +1824,9 @@ let%expect_test "parse: single \\export line, no decls" =
   let m = parse_module_for_test "\\export foo bar\n" in
   Printf.printf
     "exports=[%s] tops=%d"
-    (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
+    (String.concat
+       ";"
+       (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| exports=[foo;bar] tops=0 |}]
 ;;
@@ -1980,7 +1962,11 @@ let%expect_test "lex dot in field projection context" =
 
 let%expect_test "parse: multiple \\export lines concatenated in source order" =
   let m = parse_module_for_test "\\export foo\n\\export bar baz\n" in
-  Printf.printf "exports=[%s]" (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports));
+  Printf.printf
+    "exports=[%s]"
+    (String.concat
+       ";"
+       (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports));
   [%expect {| exports=[foo;bar;baz] |}]
 ;;
 
@@ -1989,7 +1975,9 @@ let%expect_test "parse: imports then exports then tops" =
   Printf.printf
     "imports=%d exports=[%s] tops=%d"
     (List.length m.Surface.imports)
-    (String.concat ";" (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
+    (String.concat
+       ";"
+       (List.map (fun (e : string Surface.spanned) -> e.Surface.value) m.Surface.exports))
     (List.length m.Surface.tops);
   [%expect {| imports=1 exports=[id] tops=1 |}]
 ;;

@@ -9,6 +9,7 @@ type entry =
   ; kind : entry_kind
   ; loc : Asai.Range.t
   ; def_loc : Asai.Range.t option
+  ; def_target : Asai.Range.t option
   ; ty : Violet_kernel.Syntax.Core.value_ty option
   ; pp_ty : string option
   ; ctx : (string * string) list

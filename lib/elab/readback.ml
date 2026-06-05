@@ -104,9 +104,7 @@ let rec core_term_to_surface
         let ind_imps =
           match Context.S.resolve [ x ] with
           | Some (_, `Inductive info) ->
-            let pi =
-              List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params
-            in
+            let pi = List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params in
             let di = List.map (fun (d : _ Surface.sbinder) -> d.implicit) info.deps in
             Some (pi @ di)
           | _ -> None
@@ -190,7 +188,9 @@ let rec core_term_to_surface
       "elim: readback can't lower core term `%s` to surface"
       (Pretty.pp_term cv t)
   | Core.RecordIntro { name = _; fields } ->
-    at (Surface.RecordLit (List.map (fun (f, e) -> { Surface.loc; value = f }, rb e) fields))
+    at
+      (Surface.RecordLit
+         (List.map (fun (f, e) -> { Surface.loc; value = f }, rb e) fields))
   | Core.RecordProj { record; field } ->
     at (Surface.Proj (rb record, { Surface.loc; value = field }))
   | Core.IdAbsurd t -> at (Surface.IdAbsurd (rb t))

@@ -28,7 +28,11 @@ let handle (store : Doc_store.t) ~uri ~(position : Linol_lsp.Lsp.Types.Position.
     let filename = Linol_lsp.Lsp.Types.DocumentUri.to_path uri in
     let idx = !(d.snapshot).index in
     let line = position.line + 1 in
-    let col = position.character in
+    let col =
+      Encoding.utf16_to_byte
+        ~line_text:(Encoding.line_text ~doc:d.text ~line)
+        position.character
+    in
     (match Violet_interactive.Index.find_at ~source:filename ~line ~col idx with
      | Some { kind = Def; path; pp_ty; _ } | Some { kind = Use; path; pp_ty; _ } ->
        let name = String.concat "/" path in
@@ -39,8 +43,8 @@ let handle (store : Doc_store.t) ~uri ~(position : Linol_lsp.Lsp.Types.Position.
      | Some { kind = Goal; path; pp_target = None; _ } ->
        let name = String.concat "/" path in
        Some (mk_hover (render_type ~name ~ty:None))
-     | Some { kind = Binder; path; _ } ->
+     | Some { kind = Binder; path; pp_ty; _ } ->
        let name = String.concat "/" path in
-       Some (mk_hover (render_type ~name ~ty:None))
+       Some (mk_hover (render_type ~name ~ty:pp_ty))
      | None -> None)
 ;;

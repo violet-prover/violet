@@ -20,7 +20,7 @@ open Bwd
 type local_ctx =
   { env : Core.value bwd
   ; types : Core.value bwd
-  ; names : Syntax.binder_name bwd
+  ; names : Syntax.binder_name Surface.spanned bwd
   ; lvl : int
   }
 
@@ -28,7 +28,7 @@ let empty_ctx : local_ctx = { env = Emp; types = Emp; names = Emp; lvl = 0 }
 
 let extend
       (ctx : local_ctx)
-      (name : Syntax.binder_name)
+      (name : Syntax.binder_name Surface.spanned)
       (ty : Core.value)
       (value : Core.value)
   : local_ctx
@@ -41,10 +41,14 @@ let extend
 ;;
 
 let view_of_ctx (ctx : local_ctx) : Context_view.t =
-  Context_view.make ~names:(Bwd.map Syntax.Name.to_string ctx.names) ~lvl:ctx.lvl
+  Context_view.make
+    ~names:(Bwd.map (fun n -> Syntax.Name.to_string n.Surface.value) ctx.names)
+    ~lvl:ctx.lvl
 ;;
 
-let bind (ctx : local_ctx) (name : Syntax.binder_name) (ty : Core.value) : local_ctx =
+let bind (ctx : local_ctx) (name : Syntax.binder_name Surface.spanned) (ty : Core.value)
+  : local_ctx
+  =
   extend ctx name ty (Core.RigidLocal (ctx.lvl, Emp))
 ;;
 
@@ -54,10 +58,22 @@ let bind (ctx : local_ctx) (name : Syntax.binder_name) (ty : Core.value) : local
 let resolve_local (ctx : local_ctx) (x : string) : int option =
   let rec go i = function
     | Emp -> None
-    | Snoc (_, Syntax.Named n) when String.equal n x -> Some i
+    | Snoc (_, { Surface.value = Syntax.Named n; _ }) when String.equal n x -> Some i
     | Snoc (rest, _) -> go (i + 1) rest
   in
   go 0 ctx.names
+;;
+
+(* The source span of the local binder at de Bruijn INDEX [ix]. Same nth walk
+   as [local_type] but over [names], returning the binder's own [.loc]. *)
+let local_binder_loc (ctx : local_ctx) (ix : int) : Asai.Range.t =
+  let rec nth (env : Syntax.binder_name Surface.spanned bwd) i =
+    match env, i with
+    | Snoc (_, n), 0 -> n.Surface.loc
+    | Snoc (rest, _), k -> nth rest (k - 1)
+    | Emp, _ -> Reporter.fatalf Elab_error "local index %d out of range in names" ix
+  in
+  nth ctx.names ix
 ;;
 
 let resolve_universe_var (x : string) : Level.level option =
@@ -107,10 +123,10 @@ type goal =
   | KCheckBy_Infer of t * Core.value_ty
   | KApp_HaveFn of t * bool * Surface.preterm
   | KApp_HaveArg of t * Core.term * (Core.value -> Core.value) * bool
-  | KPi_HaveDom of t * Syntax.binder_name * bool * Surface.pretype
+  | KPi_HaveDom of t * Syntax.binder_name Surface.spanned * bool * Surface.pretype
   | KPi_HaveCod of t * Syntax.binder_name * bool * Core.term * Level.level
   | KLam_Body of t * Syntax.binder_name * bool
-  | KTypedLam_HaveDom of t * Syntax.binder_name * bool * Surface.preterm
+  | KTypedLam_HaveDom of t * Syntax.binder_name Surface.spanned * bool * Surface.preterm
   | KTypedLam_HaveBody of t * Syntax.binder_name * bool * Core.term * Core.value_ty
   | KMax_HaveLeft of t * Surface.preterm
   | KMax_HaveRight of t * Level.level
@@ -176,8 +192,8 @@ type goal =
       ; bindings : Surface.pretype Surface.sbinder list
       ; result_ty : Surface.pretype
       ; opens : string list
-      ; intros : (string * bool) list
-      ; target : string
+      ; intros : (string Surface.spanned * bool) list
+      ; target : string Surface.spanned
       ; clauses : Surface.clause list
       }
   | KTopElimDef_HaveType of
@@ -186,8 +202,8 @@ type goal =
       ; bindings : Surface.pretype Surface.sbinder list
       ; signature : Surface.pretype
       ; opens : string list
-      ; intros : (string * bool) list
-      ; target : string
+      ; intros : (string Surface.spanned * bool) list
+      ; target : string Surface.spanned
       ; clauses : Surface.clause list
       }
   | GTopRecord of t * Surface.top
@@ -342,7 +358,9 @@ let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
   Buffer.add_string buf (Printf.sprintf "%s/?%s\n" module_name name);
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
-  let names = List.map Syntax.Name.to_string (Bwd.to_list ctx.names) in
+  let names =
+    List.map (fun n -> Syntax.Name.to_string n.Surface.value) (Bwd.to_list ctx.names)
+  in
   let types = Bwd.to_list ctx.types in
   let pp_ctx =
     List.map2

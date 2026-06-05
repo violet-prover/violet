@@ -66,7 +66,7 @@ let recheck (t : t) ~uri : unit =
     in
     let last_good = if has_errors then prev_last_good else new_index in
     let lsp_diags =
-      List.map Diagnostics.lsp_of_asai
+      List.map (Diagnostics.lsp_of_asai ~text:d.text)
       @@ Violet_common.Diagnostic_collector.all diag_collector
     in
     d.snapshot
@@ -154,7 +154,7 @@ let%expect_test "recheck continues after first error and collects multiple diagn
   [%expect
     {|
     +checking [module] Multi (/tmp/Multi.vt)
-    diags=2 entries=7
+    diags=2 entries=9
     |}]
 ;;
 

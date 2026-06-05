@@ -7,12 +7,18 @@ let handle (store : Doc_store.t) ~uri ~(position : Linol_lsp.Lsp.Types.Position.
     let filename = Linol_lsp.Lsp.Types.DocumentUri.to_path uri in
     let idx = !(d.snapshot).index in
     let line = position.line + 1 in
-    let col = position.character in
+    let col =
+      Encoding.utf16_to_byte
+        ~line_text:(Encoding.line_text ~doc:d.text ~line)
+        position.character
+    in
     let refs = Violet_interactive.Query.find_references ~source:filename ~line ~col idx in
     List.map
       (fun (r : Violet_interactive.Query.reference) ->
+         (* References here live in the open doc; convert byte columns back to
+            UTF-16 using its text. *)
          Linol_lsp.Lsp.Types.Location.create
            ~uri
-           ~range:(Diagnostics.lsp_range_of_asai r.loc))
+           ~range:(Diagnostics.lsp_range_of_asai ~text:d.text r.loc))
       refs
 ;;

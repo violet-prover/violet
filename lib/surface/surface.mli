@@ -17,12 +17,16 @@ type 'a spanned =
   ; value : 'a
   }
 
-val pp_spanned : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a spanned -> unit
+val pp_spanned
+  :  (Format.formatter -> 'a -> unit)
+  -> Format.formatter
+  -> 'a spanned
+  -> unit
+
 val show_spanned : ('a -> string) -> 'a spanned -> string
 
 type preterm =
-  (preterm_record
-  [@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
+  (preterm_record[@printer fun fmt t -> fprintf fmt "%s" (show_preterm_node t.node)])
 
 and preterm_record =
   { loc : (Asai.Range.t[@opaque])
@@ -68,8 +72,7 @@ and soup_item =
 and pretype = preterm
 
 and pattern =
-  (pattern_record
-  [@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
+  (pattern_record[@printer fun fmt p -> fprintf fmt "%s" (show_pattern_node p.pnode)])
 
 and pattern_record =
   { ploc : (Asai.Range.t[@opaque])
@@ -142,8 +145,8 @@ type top =
       ; params : pretype sbinder list
       ; signature : pretype
       ; opens : string list
-      ; intros : (string * bool) list
-      ; target : string
+      ; intros : (string spanned * bool) list
+      ; target : string spanned
       ; clauses : clause list
       }
   | Operator_decl of

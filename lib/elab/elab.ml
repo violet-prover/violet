@@ -23,7 +23,7 @@ let try_insert_implicit_abstraction
          | _ -> true ->
     let body_ty = b (Core.RigidLocal (m.ctx.lvl, Bwd.Emp)) in
     save_ctx m;
-    m.ctx <- bind m.ctx pi_name a;
+    m.ctx <- bind m.ctx { Surface.loc; value = pi_name } a;
     push m (KLam_Body (loc, pi_name, true));
     push m (GCheck (term, body_ty));
     true
@@ -41,8 +41,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
     (match resolve_local m.ctx x with
      | Some i ->
        let ty = local_type m.ctx i in
+       let def_loc = Some (local_binder_loc m.ctx i) in
        let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
-       Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
+       Observer.emit (Use { path = [ x ]; loc; def_loc; ty; pp_ty });
        m.result <- Some (PTermType (Core.LocalVar i, ty))
      | None ->
        (match resolve_universe_var x with
@@ -89,15 +90,26 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | other ->
        Reporter.fatalf Elab_error "KEnsureUniverse: bad result %s" (produced_tag other))
   | GInfer { loc; node = Pi ({ name; bound = a; implicit }, b) } ->
-    push m (KPi_HaveDom (loc, name.Surface.value, implicit, b));
+    push m (KPi_HaveDom (loc, name, implicit, b));
     push m (GInferType a)
   | KPi_HaveDom (loc, name, implicit, body) ->
     (match take_result m with
      | PType (a_tm, l_a) ->
        let a_val = Evaluation.eval m.ctx.env a_tm in
+       (match name.Surface.value with
+        | Named n ->
+          let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) a_tm in
+          Observer.emit
+            (Binder
+               { path = [ n ]
+               ; loc = name.Surface.loc
+               ; ty = Some a_val
+               ; pp_ty = Some pp_ty
+               })
+        | Anon -> ());
        save_ctx m;
        m.ctx <- bind m.ctx name a_val;
-       push m (KPi_HaveCod (loc, name, implicit, a_tm, l_a));
+       push m (KPi_HaveCod (loc, name.Surface.value, implicit, a_tm, l_a));
        push m (GInferType body)
      | other ->
        Reporter.fatalf Elab_error "KPi_HaveDom: bad result %s" (produced_tag other))
@@ -118,9 +130,18 @@ let rec dispatch (m : machine) (g : goal) : unit =
        if lambda_mode <> pi_mode
        then Reporter.fatalf ~loc Elab_error "mode mismatching"
        else begin
+         (match name.Surface.value with
+          | Named n ->
+            let pp_ty =
+              Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a)
+            in
+            Observer.emit
+              (Binder
+                 { path = [ n ]; loc = name.Surface.loc; ty = Some a; pp_ty = Some pp_ty })
+          | Anon -> ());
          let body_ty = b (Core.RigidLocal (m.ctx.lvl, Bwd.Emp)) in
          save_ctx m;
-         m.ctx <- bind m.ctx name.Surface.value a;
+         m.ctx <- bind m.ctx name a;
          push m (KLam_Body (loc, name.Surface.value, lambda_mode));
          push m (GCheck (body, body_ty))
        end
@@ -134,15 +155,26 @@ let rec dispatch (m : machine) (g : goal) : unit =
        m.result <- Some (PTerm (Core.Lambda { name; bound = body_tm; implicit }))
      | other -> Reporter.fatalf Elab_error "KLam_Body: bad result %s" (produced_tag other))
   | GInfer { loc; node = TypedLambda ({ name; bound = ty; implicit }, body) } ->
-    push m (KTypedLam_HaveDom (loc, name.Surface.value, implicit, body));
+    push m (KTypedLam_HaveDom (loc, name, implicit, body));
     push m (GInferType ty)
   | KTypedLam_HaveDom (loc, name, implicit, body) ->
     (match take_result m with
      | PType (ty_tm, _) ->
        let ty_val = Evaluation.eval m.ctx.env ty_tm in
+       (match name.Surface.value with
+        | Named n ->
+          let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) ty_tm in
+          Observer.emit
+            (Binder
+               { path = [ n ]
+               ; loc = name.Surface.loc
+               ; ty = Some ty_val
+               ; pp_ty = Some pp_ty
+               })
+        | Anon -> ());
        save_ctx m;
        m.ctx <- bind m.ctx name ty_val;
-       push m (KTypedLam_HaveBody (loc, name, implicit, ty_tm, ty_val));
+       push m (KTypedLam_HaveBody (loc, name.Surface.value, implicit, ty_tm, ty_val));
        push m (GInfer body)
      | other ->
        Reporter.fatalf Elab_error "KTypedLam_HaveDom: bad result %s" (produced_tag other))
@@ -453,14 +485,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
   | GTopStackDef { loc; name; bindings; result_ty; moves; clauses } ->
     Elab_elim.handle_stack_def m ~loc ~name ~bindings ~result_ty ~moves ~clauses
   | KTopStackDef_HaveType { loc; name; bindings; signature; moves; clauses } ->
-    Elab_elim.handle_stack_def_have_type
-      m
-      ~loc
-      ~name
-      ~bindings
-      ~signature
-      ~moves
-      ~clauses
+    Elab_elim.handle_stack_def_have_type m ~loc ~name ~bindings ~signature ~moves ~clauses
   | GTopElimDef { loc; name; bindings; result_ty; opens; intros; target; clauses } ->
     Elab_elim.handle_elim_def
       m
@@ -523,7 +548,11 @@ and infer_type (ctx : local_ctx) (pretype : Surface.pretype) : Core.term * Level
   match drive m with
   | PType (tm, l) -> tm, l
   | other ->
-    Reporter.fatalf ~loc:pretype.Surface.loc Elab_error "infer_type: %s" (produced_tag other)
+    Reporter.fatalf
+      ~loc:pretype.Surface.loc
+      Elab_error
+      "infer_type: %s"
+      (produced_tag other)
 
 and check_type (ctx : local_ctx) (pretype : Surface.pretype) : Core.term =
   fst (infer_type ctx pretype)
@@ -624,7 +653,7 @@ let%expect_test "infer Var bound locally" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (dn (Syntax.Named "x")) (Core.Universe Level.LZero);
     push m (GInfer (d (Surface.Var [ "x" ])));
     let tm, ty =
       match drive m with
@@ -649,7 +678,7 @@ let%expect_test "user `_` binder is a normal name and can be referenced" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx (Syntax.Named "_") (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (dn (Syntax.Named "_")) (Core.Universe Level.LZero);
     push m (GInfer (d (Surface.Var [ "_" ])));
     let tm, ty =
       match drive m with
@@ -675,7 +704,7 @@ let%expect_test "var lookup of `_` ignores Anon binders" =
            ~goal_counter:(ref 0)
            ()
        in
-       m.ctx <- bind m.ctx Syntax.Anon (Core.Universe Level.LZero);
+       m.ctx <- bind m.ctx (dn Syntax.Anon) (Core.Universe Level.LZero);
        push m (GInfer (d (Surface.Var [ "_" ])));
        let _ = drive m in
        print_endline "UNEXPECTED: `_` resolved")
@@ -739,13 +768,13 @@ let%expect_test "infer App" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (dn (Syntax.Named "x")) (Core.Universe Level.LZero);
     let f_ty =
       Core.VPi
         ( { name = Named "a"; bound = Core.Universe Level.LZero; implicit = false }
         , fun _ -> Core.Universe Level.LZero )
     in
-    m.ctx <- bind m.ctx (Syntax.Named "f") f_ty;
+    m.ctx <- bind m.ctx (dn (Syntax.Named "f")) f_ty;
     push
       m
       (GInfer (d (Surface.App (false, d (Surface.Var [ "f" ]), d (Surface.Var [ "x" ])))));
@@ -772,8 +801,8 @@ let%expect_test "report named goal in check mode" =
         ~goal_counter:(ref 0)
         ()
     in
-    m.ctx <- bind m.ctx (Syntax.Named "A") (Core.Universe Level.LZero);
-    m.ctx <- bind m.ctx (Syntax.Named "x") (Core.RigidLocal (0, Bwd.Emp));
+    m.ctx <- bind m.ctx (dn (Syntax.Named "A")) (Core.Universe Level.LZero);
+    m.ctx <- bind m.ctx (dn (Syntax.Named "x")) (Core.RigidLocal (0, Bwd.Emp));
     push m (GCheck (d (Surface.Goal (Some "here")), Core.RigidLocal (0, Bwd.Emp)));
     ignore (drive m);
     flush_goal_reports m;
@@ -836,8 +865,7 @@ let check_top
       GTopLet { loc; name; bindings; result_ty; body }
     | Surface.Data _ as d -> GTopData (loc, d)
     | Surface.Stack_def { name; params; signature; moves; clauses } ->
-      GTopStackDef
-        { loc; name; bindings = params; result_ty = signature; moves; clauses }
+      GTopStackDef { loc; name; bindings = params; result_ty = signature; moves; clauses }
     | Surface.Elim_def { name; params; signature; opens; intros; target; clauses } ->
       GTopElimDef
         { loc
@@ -889,7 +917,9 @@ let check_module
   Context.clear_level_vars ();
   let exports_set =
     let h = Hashtbl.create 16 in
-    List.iter (fun (e : string Surface.spanned) -> Hashtbl.replace h e.value ()) file.exports;
+    List.iter
+      (fun (e : string Surface.spanned) -> Hashtbl.replace h e.value ())
+      file.exports;
     h
   in
   let is_exported name = Hashtbl.mem exports_set name in
@@ -959,11 +989,18 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
       ; deps = []
       ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          [ { name = dn (Named "zero")
+            ; bound = d (Surface.Var [ "Nat" ])
+            ; implicit = false
+            }
           ; { name = dn (Named "suc")
             ; bound =
-                d (Surface.Pi
-                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                d
+                  (Surface.Pi
+                     ( { name = dn Anon
+                       ; bound = d (Surface.Var [ "Nat" ])
+                       ; implicit = false
+                       }
                      , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
@@ -1005,11 +1042,18 @@ let%expect_test
       ; deps = []
       ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          [ { name = dn (Named "zero")
+            ; bound = d (Surface.Var [ "Nat" ])
+            ; implicit = false
+            }
           ; { name = dn (Named "suc")
             ; bound =
-                d (Surface.Pi
-                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                d
+                  (Surface.Pi
+                     ( { name = dn Anon
+                       ; bound = d (Surface.Var [ "Nat" ])
+                       ; implicit = false
+                       }
                      , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
@@ -1059,11 +1103,18 @@ let%expect_test
       ; deps = []
       ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          [ { name = dn (Named "zero")
+            ; bound = d (Surface.Var [ "Nat" ])
+            ; implicit = false
+            }
           ; { name = dn (Named "suc")
             ; bound =
-                d (Surface.Pi
-                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                d
+                  (Surface.Pi
+                     ( { name = dn Anon
+                       ; bound = d (Surface.Var [ "Nat" ])
+                       ; implicit = false
+                       }
                      , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
@@ -1103,7 +1154,8 @@ let%expect_test
                { name = dn "uses_proj"
                ; bindings = []
                ; result_ty =
-                   d (Surface.Pi
+                   d
+                     (Surface.Pi
                         ( { name = dn Anon
                           ; bound = d (Surface.Var [ "Point" ])
                           ; implicit = false
@@ -1137,11 +1189,18 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       ; deps = []
       ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          [ { name = dn (Named "zero")
+            ; bound = d (Surface.Var [ "Nat" ])
+            ; implicit = false
+            }
           ; { name = dn (Named "suc")
             ; bound =
-                d (Surface.Pi
-                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                d
+                  (Surface.Pi
+                     ( { name = dn Anon
+                       ; bound = d (Surface.Var [ "Nat" ])
+                       ; implicit = false
+                       }
                      , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
@@ -1213,11 +1272,18 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       ; deps = []
       ; ind_ty = d Surface.Universe
       ; ctors =
-          [ { name = dn (Named "zero"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
+          [ { name = dn (Named "zero")
+            ; bound = d (Surface.Var [ "Nat" ])
+            ; implicit = false
+            }
           ; { name = dn (Named "suc")
             ; bound =
-                d (Surface.Pi
-                     ( { name = dn Anon; bound = d (Surface.Var [ "Nat" ]); implicit = false }
+                d
+                  (Surface.Pi
+                     ( { name = dn Anon
+                       ; bound = d (Surface.Var [ "Nat" ])
+                       ; implicit = false
+                       }
                      , d (Surface.Var [ "Nat" ]) ))
             ; implicit = false
             }
@@ -1244,13 +1310,16 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       { name = dn "p"
       ; bindings = []
       ; result_ty =
-          d (Surface.App
+          d
+            (Surface.App
                ( false
-               , d (Surface.App
+               , d
+                   (Surface.App
                       (false, d (Surface.Var [ "Pair" ]), d (Surface.Var [ "Nat" ])))
                , d (Surface.Var [ "Nat" ]) ))
       ; body =
-          d (Surface.RecordLit
+          d
+            (Surface.RecordLit
                [ dn "fst", d (Surface.Var [ "Nat"; "zero" ])
                ; dn "snd", d (Surface.Var [ "Nat"; "zero" ])
                ])

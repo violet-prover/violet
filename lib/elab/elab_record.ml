@@ -53,7 +53,9 @@ let validate_record_fields
            ctx_label
            record_name)
     provided;
-  let provided_names = List.map (fun (f : string Surface.spanned) -> f.Surface.value) provided in
+  let provided_names =
+    List.map (fun (f : string Surface.spanned) -> f.Surface.value) provided
+  in
   if check_missing
   then
     List.iter
@@ -86,7 +88,6 @@ let walk_record_update_fields
       (fun ((f, _) : string Surface.spanned * Surface.preterm) ->
          String.equal f.Surface.value fname)
       overrides
-    |> Option.map snd
   in
   let rec go done_rev fields eval_env =
     match fields with
@@ -97,8 +98,19 @@ let walk_record_update_fields
     | (b : Core.typ Syntax.binder) :: rest_fields ->
       let fname = Syntax.Name.to_string b.name in
       (match find_override fname with
-       | Some expr ->
+       | Some (override_name, expr) ->
          let ty = Evaluation.eval eval_env b.Syntax.bound in
+         (* Only user-written override entries emit a Use; base-filled fields
+            (the None arm below) carry no source token. *)
+         let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+         Observer.emit
+           (Use
+              { path = [ r_name; override_name.Surface.value ]
+              ; loc = override_name.Surface.loc
+              ; def_loc = None
+              ; ty
+              ; pp_ty
+              });
          push
            m
            (KRecordUpdate_Field
@@ -161,10 +173,25 @@ let handle_check_record_lit
        m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields = [] }))
      | (fname0, expr0) :: rest_entries, t0 :: rest_term_types ->
        let ty0 = Evaluation.eval field_env t0.Syntax.bound in
+       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty0) in
+       Observer.emit
+         (Use
+            { path = [ r_name; fname0.Surface.value ]
+            ; loc = fname0.Surface.loc
+            ; def_loc = None
+            ; ty = ty0
+            ; pp_ty
+            });
        push
          m
          (KRecordLit_Field
-            (loc, r_name, [], fname0.Surface.value, rest_entries, rest_term_types, field_env));
+            ( loc
+            , r_name
+            , []
+            , fname0.Surface.value
+            , rest_entries
+            , rest_term_types
+            , field_env ));
        push m (GCheck (expr0, ty0))
      | _ ->
        Reporter.fatalf ~loc Elab_error "internal: record literal field count mismatch")
@@ -204,9 +231,18 @@ let handle_record_lit_field
      | [], [] ->
        let fields = List.rev done_rev' in
        m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields }))
-     | ((fname : string Surface.spanned), expr) :: rest_entries
-     , (t : Core.typ Syntax.binder) :: rest_term_types ->
+     | ( ((fname : string Surface.spanned), expr) :: rest_entries
+       , (t : Core.typ Syntax.binder) :: rest_term_types ) ->
        let ty = Evaluation.eval eval_env' t.Syntax.bound in
+       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       Observer.emit
+         (Use
+            { path = [ r_name; fname.Surface.value ]
+            ; loc = fname.Surface.loc
+            ; def_loc = None
+            ; ty
+            ; pp_ty
+            });
        push
          m
          (KRecordLit_Field
@@ -260,8 +296,7 @@ let handle_check_record_update
       ~ctx_label:"update"
       ~record_name:r_name
       ~expected_fields:field_names
-      ~provided:
-        (List.map (fun ((f, _) : string Surface.spanned * _) -> f) overrides)
+      ~provided:(List.map (fun ((f, _) : string Surface.spanned * _) -> f) overrides)
       ~check_missing:false;
     push m (KRecordUpdate_HaveBase (loc, r_name, overrides, field_terms, field_env));
     push m (GCheck (base, expected_ty))
@@ -371,6 +406,12 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
        let ty_after_params = List.fold_left apply_vpi companion_ty v_params in
        let v_record = Evaluation.eval m.ctx.env e_core in
        let result_ty = apply_vpi ty_after_params v_record in
+       (* loc is the projected field name's span (from KProj_HaveRec). *)
+       let pp_ty =
+         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl result_ty)
+       in
+       Observer.emit
+         (Use { path = [ r_name; f ]; loc; def_loc = None; ty = result_ty; pp_ty });
        m.result
        <- Some (PTermType (Core.RecordProj { record = e_core; field = f }, result_ty))
      | Core.Flex _ ->
@@ -446,7 +487,7 @@ let handle_top_record_have_type
         | (b : Surface.pretype Surface.sbinder) :: rest ->
           let qty_tm = check_type ctx b.bound in
           let qty_val = Evaluation.eval ctx.env qty_tm in
-          extend_params (bind ctx b.name.Surface.value qty_val) rest
+          extend_params (bind ctx b.name qty_val) rest
       in
       extend_params m.ctx params
     in
@@ -459,7 +500,18 @@ let handle_top_record_have_type
         (fun (acc, ctx_acc) (b : Surface.pretype Surface.sbinder) ->
            let fty_tm = check_type ctx_acc b.bound in
            let fty_val = Evaluation.eval ctx_acc.env fty_tm in
-           let ctx_acc' = bind ctx_acc b.name.Surface.value fty_val in
+           let fname = Syntax.Name.to_string b.name.Surface.value in
+           let pp_ty = Pretty.pp_term (view_of_ctx ctx_acc) fty_tm in
+           Observer.emit
+             (Def
+                { path = [ name; fname ]
+                ; module_path = String.split_on_char '/' m.module_name
+                ; loc = b.name.Surface.loc
+                ; name_loc = Some b.name.Surface.loc
+                ; ty = fty_val
+                ; pp_ty
+                });
+           let ctx_acc' = bind ctx_acc b.name fty_val in
            acc @ [ b.name.Surface.value, fty_tm ], ctx_acc')
         ([], ctx_with_params)
         fields
@@ -487,7 +539,8 @@ let handle_top_record_have_type
       in
       List.fold_right
         (fun (b : Surface.pretype Surface.sbinder) body ->
-           Core.Lambda { name = b.name.Surface.value; bound = body; implicit = b.implicit })
+           Core.Lambda
+             { name = b.name.Surface.value; bound = body; implicit = b.implicit })
         params
         record_ty_tm
     in
@@ -504,7 +557,7 @@ let handle_top_record_have_type
           (fun (ctx_acc, acc) (b : Surface.pretype Surface.sbinder) ->
              let qty_tm = check_type ctx_acc b.bound in
              let qty_val = Evaluation.eval ctx_acc.env qty_tm in
-             let ctx_acc' = bind ctx_acc b.name.Surface.value qty_val in
+             let ctx_acc' = bind ctx_acc b.name qty_val in
              ctx_acc', acc @ [ b.name.Surface.value, b.implicit, qty_tm ])
           (m.ctx, [])
           params
@@ -565,7 +618,7 @@ let handle_top_record_have_type
           (fun (ctx_acc, acc) (b : Surface.pretype Surface.sbinder) ->
              let fty_tm = check_type ctx_acc b.bound in
              let fty_val = Evaluation.eval ctx_acc.env fty_tm in
-             let ctx_acc' = bind ctx_acc b.name.Surface.value fty_val in
+             let ctx_acc' = bind ctx_acc b.name fty_val in
              ctx_acc', acc @ [ fty_tm ])
           (ctx_with_params, [])
           fields
@@ -833,7 +886,8 @@ let handle_top_record_have_type
               let i = n_fields - 1 - i_rev in
               let fty = shift_term 2 field_core_tys.(i) in
               ( Core.Pi
-                  ({ name = b.name.Surface.value; bound = fty; implicit = false }, acc_body)
+                  ( { name = b.name.Surface.value; bound = fty; implicit = false }
+                  , acc_body )
               , i_rev + 1 ))
            fields
            (m_applied, 0)

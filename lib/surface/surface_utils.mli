@@ -8,7 +8,9 @@ val peel_pi_surface : int -> Surface.pretype -> Surface.pretype
    For [t = Pi b1 (Pi b2 ... (Pi bn cod))]
    returns [([b1; ...; bn], cod)]; if [t] starts with a non-Pi the list is
    empty and [cod = t]. *)
-val linearize_pi : Surface.pretype -> Surface.pretype Surface.sbinder list * Surface.pretype
+val linearize_pi
+  :  Surface.pretype
+  -> Surface.pretype Surface.sbinder list * Surface.pretype
 
 (* The Pi-domain binders of [t] — the first projection of [linearize_pi]. *)
 val pi_domain : Surface.pretype -> Surface.pretype Surface.sbinder list

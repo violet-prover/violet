@@ -55,10 +55,12 @@ let elim_intro_test () =
   (match tops1 with
    | [ { Violet_surface.Surface.value =
            Violet_surface.Surface.Elim_def
-             { intros = [ ("x", false) ]
+             { intros = [ ({ Violet_surface.Surface.value = "x"; _ }, false) ]
              ; clauses =
                  [ { patterns =
-                       [ { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"; _ }
+                       [ { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"
+                         ; _
+                         }
                        ]
                    ; _
                    }
@@ -77,7 +79,13 @@ let elim_intro_test () =
   in
   (match tops2 with
    | [ { Violet_surface.Surface.value =
-           Violet_surface.Surface.Elim_def { intros = [ ("A", true); ("x", false) ]; _ }
+           Violet_surface.Surface.Elim_def
+             { intros =
+                 [ ({ Violet_surface.Surface.value = "A"; _ }, true)
+                 ; ({ Violet_surface.Surface.value = "x"; _ }, false)
+                 ]
+             ; _
+             }
        ; _
        }
      ] -> Format.printf "elim_intro_test OK  bracketed intros@."
@@ -93,10 +101,13 @@ let elim_intro_test () =
           Violet_surface.Surface.Elim_def
             { clauses =
                 [ { patterns =
-                      [ { Violet_surface.Surface.pnode = Violet_surface.Surface.PImpVar "A"
+                      [ { Violet_surface.Surface.pnode =
+                            Violet_surface.Surface.PImpVar "A"
                         ; _
                         }
-                      ; { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"; _ }
+                      ; { Violet_surface.Surface.pnode = Violet_surface.Surface.PVar "x"
+                        ; _
+                        }
                       ]
                   ; _
                   }
@@ -274,9 +285,7 @@ let record_lit_test () =
      (match peel body with
       | Violet_surface.Surface.Op_soup items ->
         (match items with
-         | [ Violet_surface.Surface.SI_Name f
-           ; Violet_surface.Surface.SI_Imp_arg inner
-           ]
+         | [ Violet_surface.Surface.SI_Name f; Violet_surface.Surface.SI_Imp_arg inner ]
            when key f = "f" ->
            let inner_str = Violet_surface.Surface.show_preterm inner in
            if String.equal inner_str "x"
@@ -364,9 +373,9 @@ let record_update_test () =
       | Some (_, [ (fx, xv) ])
         when key fx = "x"
              &&
-             (match peel xv with
-              | Violet_surface.Surface.Var [ "x" ] -> true
-              | _ -> false) -> Format.printf "record_update_test OK  pun@."
+             match peel xv with
+             | Violet_surface.Surface.Var [ "x" ] -> true
+             | _ -> false -> Format.printf "record_update_test OK  pun@."
       | _ ->
         Format.printf
           "record_update_test FAIL pun: body=%s@."
@@ -383,9 +392,9 @@ let record_update_test () =
       | Violet_surface.Surface.Op_soup items ->
         (match items with
          | [ Violet_surface.Surface.SI_Atom a ]
-           when (match peel a with
-                 | Violet_surface.Surface.RecordLit _ -> true
-                 | _ -> false) ->
+           when match peel a with
+                | Violet_surface.Surface.RecordLit _ -> true
+                | _ -> false ->
            Format.printf "record_update_test OK  regression-literal@."
          | _ ->
            Format.printf

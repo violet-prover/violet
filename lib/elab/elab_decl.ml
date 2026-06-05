@@ -18,7 +18,15 @@ let handle_universe_decl (m : machine) (names : string Surface.spanned list) =
        Context.declare_level_var name;
        let ty = Core.Universe (Level.LSuc (Level.LVar name)) in
        let pp_ty = Pretty.pp_level (Level.LSuc (Level.LVar name)) in
-       Observer.emit (Def { path = [ name ]; loc; name_loc = Some loc; ty; pp_ty }))
+       Observer.emit
+         (Def
+            { path = [ name ]
+            ; module_path = String.split_on_char '/' m.module_name
+            ; loc
+            ; name_loc = Some loc
+            ; ty
+            ; pp_ty
+            }))
     names;
   m.result <- Some PUnit
 ;;
@@ -67,6 +75,7 @@ let handle_top_let_have_body
     Observer.emit
       (Def
          { path = [ name.Surface.value ]
+         ; module_path = String.split_on_char '/' m.module_name
          ; loc
          ; name_loc = Some name.Surface.loc
          ; ty = typ_val

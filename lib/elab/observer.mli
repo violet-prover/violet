@@ -1,6 +1,7 @@
 type event =
   | Def of
       { path : string list
+      ; module_path : string list
       ; loc : Asai.Range.t
       ; name_loc : Asai.Range.t option
       ; ty : Violet_kernel.Syntax.Core.value_ty
@@ -23,6 +24,8 @@ type event =
   | Binder of
       { path : string list
       ; loc : Asai.Range.t
+      ; ty : Violet_kernel.Syntax.Core.value_ty option
+      ; pp_ty : string option
       }
 
 val emit : event -> unit

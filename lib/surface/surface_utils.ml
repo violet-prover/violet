@@ -94,7 +94,8 @@ let map_free_vars
       { t with Surface.node = Surface.App (impl, go scope f, go scope a) }
     | Surface.Lambda b ->
       { t with
-        Surface.node = Surface.Lambda { b with bound = go (enter_bn b.name scope) b.bound }
+        Surface.node =
+          Surface.Lambda { b with bound = go (enter_bn b.name scope) b.bound }
       }
     | Surface.TypedLambda (b, body) ->
       let bound' = go scope b.bound in
@@ -123,7 +124,8 @@ let map_free_vars
     | Surface.RecordUpdate (base, entries) ->
       { t with
         Surface.node =
-          Surface.RecordUpdate (go scope base, List.map (fun (f, e) -> f, go scope e) entries)
+          Surface.RecordUpdate
+            (go scope base, List.map (fun (f, e) -> f, go scope e) entries)
       }
     | Surface.Proj (e, f) -> { t with Surface.node = Surface.Proj (go scope e, f) }
     | Surface.Inline_elim _ -> t
