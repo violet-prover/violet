@@ -1,9 +1,9 @@
 type t =
-  { mutable rev_all : Reporter.Message.t Asai.Diagnostic.t list
+  { all : Reporter.Message.t Asai.Diagnostic.t Dynarray.t
   ; mutable has_errors : bool
   }
 
-let create () = { rev_all = []; has_errors = false }
+let create () = { all = Dynarray.create (); has_errors = false }
 
 let is_error (d : _ Asai.Diagnostic.t) =
   match d.severity with
@@ -12,11 +12,11 @@ let is_error (d : _ Asai.Diagnostic.t) =
 ;;
 
 let emit t (d : Reporter.Message.t Asai.Diagnostic.t) =
-  t.rev_all <- d :: t.rev_all;
+  Dynarray.add_last t.all d;
   if is_error d then t.has_errors <- true
 ;;
 
-let all t = List.rev t.rev_all
-let errors t = List.rev (List.filter is_error t.rev_all)
+let all t = Dynarray.to_list t.all
+let errors t = List.filter is_error (all t)
 let has_errors t = t.has_errors
-let latest_error t = List.find_opt is_error t.rev_all
+let latest_error t = Seq.find is_error (Dynarray.to_seq_rev t.all)
