@@ -306,24 +306,20 @@ type t =
   ; tops : top spanned list
   }
 
-(* The range from [a]'s start to [b]'s end. Locations on synthesized terms
-   are provenance tags, so [a] and [b] may come from different sources or
-   appear in either textual order; joining is only meaningful for
-   same-source ranges with [a] starting no later than [b] ends. Everything
-   else (including EOF views) falls back to [a]. *)
-let join_loc (a : Asai.Range.t) (b : Asai.Range.t) : Asai.Range.t =
-  match Asai.Range.view a, Asai.Range.view b with
-  | `Range (s, _), `Range (_, e) when s.source = e.source && s.offset <= e.offset ->
-    Asai.Range.make (s, e)
-  | _ -> a
-;;
-
-(* For whitebox tests and the REPL, where there is no source file. *)
-let dummy_loc : Asai.Range.t = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos)
+(* Re-exported from [Violet_common.Range] so Surface callers keep their
+   historical names. *)
+let join_loc = Violet_common.Range.join
+let dummy_loc = Violet_common.Range.dummy
 
 module Mk = struct
   let at (loc : Asai.Range.t) (node : preterm_node) : preterm = { loc; node }
   let re_loc (loc : Asai.Range.t) (t : preterm) : preterm = { t with loc }
+  let sn (loc : Asai.Range.t) (value : 'a) : 'a spanned = { loc; value }
+
+  (* Dummy-located constructors, for synthesized terms with no better
+     provenance (whitebox tests, REPL, builtin elaboration). *)
+  let d (node : preterm_node) : preterm = { loc = dummy_loc; node }
+  let dn (value : 'a) : 'a spanned = { loc = dummy_loc; value }
 end
 
 (* Cross to the kernel binder, dropping the name's location. *)
@@ -399,31 +395,4 @@ let%expect_test "applied spine" =
   let result = applied_spine (apply (v "a") [ v "b"; v "c" ]) in
   print_string @@ [%show: preterm list] result;
   [%expect {| [b; c] |}]
-;;
-
-(* join_loc is fed provenance locs on synthesized terms, which come in
-   arbitrary textual order and possibly from different files. It must be
-   total: out-of-order or cross-source pairs fall back to the first range
-   instead of raising (Asai.Range.make asserts start <= end). *)
-let%expect_test "join_loc: ordered, inverted, cross-file" =
-  let mk_range file b e : Asai.Range.t =
-    let pos cnum : Lexing.position =
-      { pos_fname = file; pos_lnum = 1; pos_bol = 0; pos_cnum = cnum }
-    in
-    Asai.Range.of_lex_range (pos b, pos e)
-  in
-  let show r =
-    match Asai.Range.view r with
-    | `Range (s, e) -> Printf.sprintf "[%d,%d)" s.Asai.Range.offset e.Asai.Range.offset
-    | `End_of_file _ -> "<eof>"
-  in
-  let early = mk_range "f.vt" 10 20 in
-  let late = mk_range "f.vt" 50 60 in
-  let other = mk_range "g.vt" 0 5 in
-  Printf.printf
-    "ordered=%s inverted=%s cross=%s"
-    (show (join_loc early late))
-    (show (join_loc late early))
-    (show (join_loc early other));
-  [%expect {| ordered=[10,60) inverted=[50,60) cross=[10,20) |}]
 ;;

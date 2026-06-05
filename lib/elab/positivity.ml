@@ -164,9 +164,8 @@ let check_strict_positivity
     ctors
 ;;
 
-let dloc = Surface.dummy_loc
-let d node = Surface.Mk.at dloc node
-let dn value : binder_name Surface.spanned = { Surface.loc = dloc; value }
+let d = Surface.Mk.d
+let dn = Surface.Mk.dn
 
 let%expect_test "SP: List-shaped clean ctor accepted" =
   (* data List (A : U) | cons : A -> List A -> List A *)

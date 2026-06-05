@@ -335,8 +335,8 @@ let merge_decl (decl : op_decl) (table : op_table) : op_table =
 ;;
 
 (* Dummy-loc helpers for inline tests. *)
-let d node = Surface.Mk.at Surface.dummy_loc node
-let dn s = { Surface.loc = Surface.dummy_loc; Surface.value = s }
+let d = Surface.Mk.d
+let dn = Surface.Mk.dn
 
 let%expect_test "parse_template: simple infix" =
   print_string @@ [%show: name_part list] (parse_template "\\x + \\y");

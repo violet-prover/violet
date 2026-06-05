@@ -133,8 +133,8 @@ let map_free_vars
   go scope t
 ;;
 
-let d node = Surface.Mk.at Surface.dummy_loc node
-let dn name = { Surface.loc = Surface.dummy_loc; Surface.value = name }
+let d = Surface.Mk.d
+let dn = Surface.Mk.dn
 
 let%expect_test "occurs_in: Var present" =
   let t = d (Surface.Var [ "Bad" ]) in

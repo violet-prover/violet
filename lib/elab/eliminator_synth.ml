@@ -12,8 +12,8 @@ open Surface_utils
 
 (* Synthesized Surface nodes inherit the location of the originating data
    declaration (threaded as [~loc], the declaration's [ind_ty.loc]). *)
-let at loc node : Surface.preterm = Surface.Mk.at loc node
-let sn loc value : binder_name Surface.spanned = { Surface.loc; value }
+let at = Surface.Mk.at
+let sn = Surface.Mk.sn
 
 (* Give anonymous binders unique names so they can be referenced later
    (e.g. as constructor arguments in the eliminator's spine). Leave named
@@ -152,8 +152,8 @@ let eliminator_type ~loc ~name ~params ~deps ~ind_ty ctors =
 ;;
 
 let dloc = Surface.dummy_loc
-let d node = Surface.Mk.at dloc node
-let dn value : binder_name Surface.spanned = { Surface.loc = dloc; value }
+let d = Surface.Mk.d
+let dn = Surface.Mk.dn
 
 let%expect_test "`data List (A : U) : U`, the generated eliminator will rely on A" =
   let result =

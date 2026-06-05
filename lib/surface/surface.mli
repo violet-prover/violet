@@ -175,6 +175,12 @@ val dummy_loc : Asai.Range.t
 module Mk : sig
   val at : Asai.Range.t -> preterm_node -> preterm
   val re_loc : Asai.Range.t -> preterm -> preterm
+  val sn : Asai.Range.t -> 'a -> 'a spanned
+
+  (* Dummy-located constructors, for synthesized terms with no better
+     provenance (whitebox tests, REPL, builtin elaboration). *)
+  val d : preterm_node -> preterm
+  val dn : 'a -> 'a spanned
 end
 
 val forget_binder : 't sbinder -> 't Violet_kernel.Syntax.binder

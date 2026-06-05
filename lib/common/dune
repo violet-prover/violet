@@ -1,6 +1,7 @@
 (library
  (name violet_common)
  (public_name violet_common)
+ (inline_tests)
  (preprocess
-  (pps ppx_deriving.show))
+  (pps ppx_deriving.show ppx_expect))
  (libraries asai))

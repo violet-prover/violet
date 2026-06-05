@@ -20,25 +20,9 @@ type entry =
 
 type t = { by_offset : entry list IntMap.t }
 
-let start_offset (r : Asai.Range.t) : int =
-  match Asai.Range.view r with
-  | `Range (s, _) -> s.offset
-  | `End_of_file p -> p.offset
-;;
-
+let start_offset = Violet_common.Range.start_offset
+let source_of_range = Violet_common.Range.source
 let empty = { by_offset = IntMap.empty }
-
-let source_of_range (r : Asai.Range.t) : string option =
-  match Asai.Range.view r with
-  | `Range (s, _) ->
-    (match s.source with
-     | `File f -> Some f
-     | `String _ -> None)
-  | `End_of_file s ->
-    (match s.source with
-     | `File f -> Some f
-     | `String _ -> None)
-;;
 
 (* The module path of a Def event (segments of the emitting module); other
    events carry no module path. *)
@@ -94,11 +78,7 @@ let entry_of_event : Violet_elab.Observer.event -> entry = function
     }
 ;;
 
-let is_multiline (r : Asai.Range.t) : bool =
-  match Asai.Range.view r with
-  | `Range (s, e) -> s.line_num <> e.line_num
-  | `End_of_file _ -> false
-;;
+let is_multiline = Violet_common.Range.is_multiline
 
 (* Resolve a Use/Goal whose own event carried no [def_loc] via the bare-path
    fallback. [candidates] are the (target_loc) of every Def registered under
@@ -192,21 +172,8 @@ let of_events evs =
   { by_offset }
 ;;
 
-let pos_in_range ~line ~col (r : Asai.Range.t) : bool =
-  match Asai.Range.view r with
-  | `Range (s, e) ->
-    let s_col = s.offset - s.start_of_line in
-    let e_col = e.offset - e.start_of_line in
-    (line > s.line_num || (line = s.line_num && col >= s_col))
-    && (line < e.line_num || (line = e.line_num && col <= e_col))
-  | `End_of_file _ -> false
-;;
-
-let range_width (r : Asai.Range.t) : int =
-  match Asai.Range.view r with
-  | `Range (s, e) -> e.offset - s.offset
-  | `End_of_file _ -> max_int
-;;
+let pos_in_range = Violet_common.Range.pos_in_range
+let range_width = Violet_common.Range.width
 
 let find_at ~source ~line ~col t =
   let best = ref None in

@@ -13,8 +13,8 @@ open Surface_utils
 
 (* Synthesized Surface nodes inherit a location from the nearest source
    artifact (the clause body/head or the declaration's loc). *)
-let at loc node : Surface.preterm = Surface.Mk.at loc node
-let sn loc value : binder_name Surface.spanned = { Surface.loc; value }
+let at = Surface.Mk.at
+let sn = Surface.Mk.sn
 
 (* Substitute a list of (name, replacement) pairs into a Surface preterm.
    Only replaces Var [name] for single-segment paths; does not capture-avoid

@@ -616,8 +616,8 @@ let with_handlers_emitting (k : unit -> 'a) : 'a =
 ;;
 
 let dloc = Surface.dummy_loc
-let d node = Surface.Mk.at dloc node
-let dn v = { Surface.loc = dloc; Surface.value = v }
+let d = Surface.Mk.d
+let dn = Surface.Mk.dn
 
 let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   with_handlers

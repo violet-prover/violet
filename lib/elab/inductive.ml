@@ -8,8 +8,8 @@ open Syntax
 open Surface_utils
 open Bwd
 
-let at loc node : Surface.preterm = Surface.Mk.at loc node
-let sn loc value : binder_name Surface.spanned = { Surface.loc; value }
+let at = Surface.Mk.at
+let sn = Surface.Mk.sn
 
 let drop_key (name : string) (assoc : (string * 'a) list) : (string * 'a) list =
   List.filter (fun (k, _) -> not (String.equal k name)) assoc
