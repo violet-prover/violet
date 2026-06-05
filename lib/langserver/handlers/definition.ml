@@ -1,20 +1,3 @@
-(* Get the full text of [file]: prefer the in-memory Doc_store copy if the file
-   is currently open, otherwise read it from disk. Returns [None] if neither is
-   available (e.g. the file was deleted). *)
-let text_of_file (store : Doc_store.t) ~file : string option =
-  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path file in
-  match Doc_store.find store ~uri with
-  | Some d -> Some d.text
-  | None ->
-    (try
-       let ic = open_in_bin file in
-       Fun.protect
-         ~finally:(fun () -> close_in_noerr ic)
-         (fun () -> Some (In_channel.input_all ic))
-     with
-     | Sys_error _ -> None)
-;;
-
 let handle
       (store : Doc_store.t)
       (_project_index : Project_index.t)
@@ -45,7 +28,7 @@ let handle
          match target_file with
          | Some f when f <> filename ->
            Checker.ensure_indexed checker ~file:f;
-           Linol_lsp.Lsp.Types.DocumentUri.of_path f, text_of_file store ~file:f
+           Linol_lsp.Lsp.Types.DocumentUri.of_path f, Doc_store.text_of_file store ~file:f
          | _ -> uri, Some d.text
        in
        (* Convert the target byte range back to UTF-16. If the target file's

@@ -31,6 +31,20 @@ let find (t : t) ~uri : doc option = Hashtbl.find_opt t uri
 let remove (t : t) ~uri : unit = Hashtbl.remove t uri
 let iter (t : t) (f : doc -> unit) : unit = Hashtbl.iter (fun _ d -> f d) t
 
+let text_of_file (t : t) ~file : string option =
+  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path file in
+  match find t ~uri with
+  | Some d -> Some d.text
+  | None ->
+    (try
+       let ic = open_in_bin file in
+       Fun.protect
+         ~finally:(fun () -> close_in_noerr ic)
+         (fun () -> Some (In_channel.input_all ic))
+     with
+     | Sys_error _ -> None)
+;;
+
 let%expect_test "create / update / find round-trip" =
   let t = create () in
   let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Foo.vt" in

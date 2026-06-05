@@ -1,5 +1,6 @@
 (test
  (name test_violet)
+ (modules test_violet)
  (deps
   (source_tree ../example)
   (source_tree fixtures))
@@ -21,8 +22,18 @@
 
 (test
  (name test_parser)
+ (modules test_parser)
  (libraries violet_surface violet_elab violet_kernel asai))
 
 (test
  (name test_interactive)
+ (modules test_interactive)
  (libraries violet_interactive violet_surface violet_elab violet_kernel asai))
+
+(library
+ (name test_langserver)
+ (modules test_langserver)
+ (inline_tests)
+ (preprocess
+  (pps ppx_expect))
+ (libraries violet_langserver linol.lsp))
