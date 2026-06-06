@@ -1,0 +1,8 @@
+23:14-23:22
+ap-hole/?ap-hole
+  --- context ---
+  m : Nat
+  n : Nat
+  p : m = n (i.e. Id m n)
+  --- target ---
+  m = n (i.e. Id m n)

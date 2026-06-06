@@ -1,0 +1,17 @@
+# Pi-domain unification must reject a `Bool -> Bool` function where
+# `Nat -> Bool` is expected. The unifier previously compared only Pi
+# codomains, silently accepting this.
+
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\data Bool : U
+  | true : Bool
+  | false : Bool
+
+\let notb : Bool -> Bool => \b -> b
+
+\let bad : Nat -> Bool => notb

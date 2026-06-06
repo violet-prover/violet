@@ -350,7 +350,13 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
          let v_proj = vrecord_proj t f in
          unify ~loc cv v_lit v_proj)
       r.fields
-  | VPi ({ name; _ }, b1), VPi (_, b2) ->
+  | ( VPi ({ name; bound = a1; implicit = i1 }, b1)
+    , VPi ({ bound = a2; implicit = i2; _ }, b2) )
+    when i1 = i2 ->
+    (* Domains first: this is also what solves `?A` in `?A -> ?B ?= Nat -> Nat`
+       (e.g. `ap f ?hole`, where nothing else mentions `{A}`). Skipping it
+       would accept `Bool -> Bool` at `Nat -> Bool`. *)
+    unify ~loc cv a1 a2;
     let x = Core.RigidLocal (Context_view.lvl cv, Emp) in
     unify ~loc (Context_view.extend cv (Syntax.Name.to_string name)) (b1 x) (b2 x)
   | VPi ({ implicit = true; name = pi_name; bound = a }, b), t
@@ -473,6 +479,61 @@ let%expect_test "Pi codomain mismatch rejects" =
   in
   print_endline result;
   [%expect {| FAILED |}]
+;;
+
+let%expect_test "Pi domain mismatch rejects" =
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let pi1 =
+    Core.VPi
+      ( { name = Named "x"; bound = Core.Universe Level.LZero; implicit = false }
+      , fun _ -> Core.Universe Level.LZero )
+  in
+  let pi2 =
+    Core.VPi
+      ( { name = Named "x"
+        ; bound = Core.Universe (Level.lsuc Level.LZero)
+        ; implicit = false
+        }
+      , fun _ -> Core.Universe Level.LZero )
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv pi1 pi2;
+    "ok"
+  in
+  print_endline result;
+  [%expect {| FAILED |}]
+;;
+
+let%expect_test "Pi domain solves a flex meta" =
+  (* `?A -> 𝓤₀ ?= 𝓤₀ -> 𝓤₀` must solve ?A := 𝓤₀; this is what lets
+     `ap f ?hole` infer `{A}` from `f`'s type alone. *)
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  let mv = Meta.fresh_metavar () in
+  let pi1 =
+    Core.VPi
+      ( { name = Named "x"; bound = Core.Flex (mv, Emp); implicit = false }
+      , fun _ -> Core.Universe Level.LZero )
+  in
+  let pi2 =
+    Core.VPi
+      ( { name = Named "x"; bound = Core.Universe Level.LZero; implicit = false }
+      , fun _ -> Core.Universe Level.LZero )
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    unify ~loc cv pi1 pi2;
+    match Meta.lookup_meta mv with
+    | Some (Core.Universe Level.LZero) -> "solved"
+    | Some _ -> "solved to something else"
+    | None -> "unsolved"
+  in
+  print_endline result;
+  [%expect {| solved |}]
 ;;
 
 let%expect_test "spine mismatch rejects cleanly" =

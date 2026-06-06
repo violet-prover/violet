@@ -1,0 +1,2 @@
+17:27-17:31
+cannot unify `Nat ?= Bool` (or verbose `Nat ?= Bool`)

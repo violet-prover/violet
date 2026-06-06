@@ -1,0 +1,23 @@
+# `ap f ?hole` must elaborate to a goal report: checking `f : Nat -> Nat`
+# against the inserted-implicit type `?A -> ?B` solves both metas via
+# Pi-domain unification. Previously only codomains were unified, so `{A}`
+# stayed orphaned and this file died with "cannot infer implicit {A}".
+
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+
+\operator "\x = \y" => Id x y
+  \associativity: \left
+
+\let ap {A : U} {B : U} (f : A -> B) {x y : A} : x = y -> (f x) = (f y) \where
+  ap f p <= \elim p
+  | ap f refl => refl
+
+\let lemma (m n : Nat) (p : m = n) : (Nat/suc m) = (Nat/suc n) =>
+  ap Nat/suc ?ap-hole

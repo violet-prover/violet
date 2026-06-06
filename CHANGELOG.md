@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- fix unification: Pi domains are now unified, not just codomains, hence `ap f ?hole` can infer `{A}` from `f`'s type
+- displays fold stuck eliminator spines back to the defining function: `n + m` (or `add n m`) instead of the unfolded `Nat/elim n …` spine
+- displays (goals, errors, hover, REPL) prefer user-defined operator notation: `a = b` instead of `Id a b`, with the raw term in a trailing `(i.e. …)`
+
 ## 0.6.1
 
 - fix: projecting a record field whose type contains an inserted meta no longer crashes with `LocalVarOutOfRange` (the field projector now re-spines inserted metas when prior-field binders collapse into `r`)
