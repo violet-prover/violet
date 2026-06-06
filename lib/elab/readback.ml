@@ -27,7 +27,7 @@ let rec peel_vpi (v : Core.value) (n : int) (start_lvl : int)
         Elab_error
         "elim: VPi peel ran out of binders (expected %d more), got `%s`"
         n
-        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 v)))
+        (Notation.pp_term Context_view.empty (Evaluation.quote 0 v)))
 ;;
 
 (* Build the ctor -> owner mapping used by [readback_value_to_surface] to
@@ -180,13 +180,13 @@ let rec core_term_to_surface
       ~loc
       Elab_error
       "elim: readback can't lower core term `%s` to surface"
-      (Pretty.pp_term cv t)
+      (Notation.pp_term cv t)
   | Core.RecordType { name = _; params = _; fields = _ } ->
     Reporter.fatalf
       ~loc
       Elab_error
       "elim: readback can't lower core term `%s` to surface"
-      (Pretty.pp_term cv t)
+      (Notation.pp_term cv t)
   | Core.RecordIntro { name = _; fields } ->
     at
       (Surface.RecordLit

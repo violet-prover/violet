@@ -692,7 +692,7 @@ let split_target_params_indices
       ~loc
       Elab_error
       "elim: target type is not an inductive value, got `%s`"
-      (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
+      (Notation.pp_term Context_view.empty (Evaluation.quote 0 other))
 ;;
 
 (* For a constructor, peel its core type past the data params and its own
@@ -759,7 +759,7 @@ let ctor_spine_and_flex
         Elab_error
         "elim: ctor `%s`'s peeled codomain is not an inductive: `%s`"
         ctor_name
-        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
+        (Notation.pp_term Context_view.empty (Evaluation.quote 0 other))
   in
   indices, flex_levels, flex_name_map
 ;;
@@ -954,8 +954,8 @@ let build_elim_body_unify
             `%s` ≟ `%s`"
            s.position
            ctor_name
-           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
-           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
+           (Notation.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
+           (Notation.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
        | _ -> ())
     ctor_outcomes;
   let normalize_pattern = make_normalize ctors in
@@ -1070,10 +1070,10 @@ let build_elim_body_unify
                 ind_head
                 ctor_name
                 k
-                (Pretty.pp_term
+                (Notation.pp_term
                    Context_view.empty
                    (Evaluation.quote (Context_view.lvl Context_view.empty) lhs))
-                (Pretty.pp_term
+                (Notation.pp_term
                    Context_view.empty
                    (Evaluation.quote (Context_view.lvl Context_view.empty) rhs))
             | None -> ());
@@ -1272,7 +1272,7 @@ let emit_pattern_hover_events
        | Some { Surface.pnode = Surface.PCon (cn, sub_pats); _ } ->
          (match Context.S.resolve [ ind_head; cn.Surface.value ] with
           | Some (ty, _) ->
-            let pp_ty = Pretty.pp_term pp_view (Evaluation.quote start_lvl ty) in
+            let pp_ty = Notation.pp_term pp_view (Evaluation.quote start_lvl ty) in
             Observer.emit
               (Observer.Use
                  { path = [ ind_head; cn.Surface.value ]
@@ -1291,7 +1291,7 @@ let emit_pattern_hover_events
          let emit_binder (p : Surface.pattern) fty =
            match p.Surface.pnode with
            | Surface.PVar n | Surface.PImpVar n ->
-             let pp_ty = Pretty.pp_term pp_view (Evaluation.quote start_lvl fty) in
+             let pp_ty = Notation.pp_term pp_view (Evaluation.quote start_lvl fty) in
              Observer.emit
                (Observer.Binder
                   { path = [ n ]
@@ -1784,7 +1784,7 @@ let build_inline_elim_dispatch
         Elab_error
         "nested `<= \\elim %s`: target's type is not an inductive, got `%s`"
         target_name
-        (Pretty.pp_term Context_view.empty (Evaluation.quote 0 other))
+        (Notation.pp_term Context_view.empty (Evaluation.quote 0 other))
   in
   let info : Context.ind_info =
     match Context.S.resolve [ ind_head ] with
@@ -1852,8 +1852,8 @@ let build_inline_elim_dispatch
            target_name
            s.position
            ctor_name
-           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
-           (Pretty.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
+           (Notation.pp_term Context_view.empty (Evaluation.quote 0 s.lhs))
+           (Notation.pp_term Context_view.empty (Evaluation.quote 0 s.rhs))
        | _ -> ())
     ctor_outcomes;
   let m_indices = List.length target_indices in

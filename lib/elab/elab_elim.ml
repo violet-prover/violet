@@ -85,7 +85,7 @@ let rec walk_params
          ~loc
          Elab_error
          "stack-def: fewer Pi-layers than params, got `%s`"
-         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
+         (Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
 ;;
 
 (* `signature` and `n_params` are unchanged across recursion; they're used at
@@ -145,7 +145,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= intro` needs a function type, got `%s`"
-         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
+         (Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
   | Surface.Split :: rest ->
     if rest <> []
     then
@@ -439,7 +439,7 @@ let rec walk_moves
            "`<= split` targets `%s : %s` which is a parameter; only arguments introduced \
             by `<= intro` after the parameters can be split on"
            (Syntax.Name.to_string target_name)
-           (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target_ty));
+           (Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target_ty));
        let target_type_surface : Surface.pretype =
          match List.nth_opt (pi_domain signature) sig_index with
          | Some b -> b.bound
@@ -460,7 +460,7 @@ let rec walk_moves
          ~loc
          Elab_error
          "`<= split`: target type must be an inductive or record type, got `%s`"
-         (Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
+         (Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl other)))
 ;;
 
 (* --- Dispatch handlers --- *)
@@ -647,7 +647,9 @@ let handle_elim_def_have_type
     (match intro_span_of target_str with
      | Some intro_loc ->
        let pp_ty =
-         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl target_type_value)
+         Notation.pp_term
+           (view_of_ctx m.ctx)
+           (Evaluation.quote m.ctx.lvl target_type_value)
        in
        Observer.emit
          (Use
@@ -661,7 +663,7 @@ let handle_elim_def_have_type
     (* Per-clause head Use: hovering a clause head shows the function's type;
        goto-def jumps to the `\let` name. Walked once here at the top level. *)
     let head_pp_ty =
-      Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+      Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
     in
     List.iter
       (fun (c : Surface.clause) ->
@@ -792,7 +794,9 @@ let handle_elim_def_have_body
     let name_loc = Some name.Surface.loc in
     let name = name.Surface.value in
     let term = rewrite_recursive_calls ~loc ~func_name ~target_pos term in
-    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
+    let pp_ty =
+      Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+    in
     Observer.emit
       (Def
          { path = [ name ]
@@ -806,6 +810,7 @@ let handle_elim_def_have_body
     let body_val = Evaluation.eval m.ctx.env term in
     publish_to_env ~exported [ name ] (body_val, `Defn);
     Env.register_definition name body_val;
+    Notation.register_fold ~fn:name ~is_elim_head (Evaluation.quote 0 body_val);
     let qname = m.module_name ^ "." ^ name in
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit

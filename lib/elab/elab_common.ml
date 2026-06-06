@@ -365,7 +365,7 @@ let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
   let pp_ctx =
     List.map2
       (fun n ty ->
-         let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ty) in
+         let pp_ty = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ty) in
          n, pp_ty)
       names
       types
@@ -373,7 +373,7 @@ let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
   List.iter
     (fun (n, pp_ty) -> Buffer.add_string buf (Printf.sprintf "  %s : %s\n" n pp_ty))
     pp_ctx;
-  let pp_target = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target) in
+  let pp_target = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl target) in
   Observer.emit (Goal { path = [ name ]; loc; ty = target; ctx = pp_ctx; pp_target });
   Buffer.add_string buf "  --- target ---\n";
   Buffer.add_string buf (Printf.sprintf "  %s" pp_target);
@@ -412,6 +412,14 @@ let publish_to_env ~exported path datum =
   then
     Env.S.include_singleton ~context_visible:`Visible ~context_export:`Export (path, datum)
   else Env.S.import_singleton ~context_visible:`Visible (path, datum)
+;;
+
+(* Is this core head name a registered eliminator in the current scope?
+   Used to gate Notation.register_fold at definition time. *)
+let is_elim_head (en : string) : bool =
+  match Context.S.resolve (String.split_on_char '/' en) with
+  | Some (_, `Eliminator) -> true
+  | _ -> false
 ;;
 
 (* Shift all free LocalVar indices in a Core.term by `n`.

@@ -102,7 +102,9 @@ let walk_record_update_fields
          let ty = Evaluation.eval eval_env b.Syntax.bound in
          (* Only user-written override entries emit a Use; base-filled fields
             (the None arm below) carry no source token. *)
-         let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+         let pp_ty =
+           Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
+         in
          Observer.emit
            (Use
               { path = [ r_name; override_name.Surface.value ]
@@ -173,7 +175,9 @@ let handle_check_record_lit
        m.result <- Some (PTerm (Core.RecordIntro { name = r_name; fields = [] }))
      | (fname0, expr0) :: rest_entries, t0 :: rest_term_types ->
        let ty0 = Evaluation.eval field_env t0.Syntax.bound in
-       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty0) in
+       let pp_ty =
+         Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty0)
+       in
        Observer.emit
          (Use
             { path = [ r_name; fname0.Surface.value ]
@@ -205,7 +209,7 @@ let handle_check_record_lit
       ~loc
       Elab_error
       "expected a record type for record literal, got %s"
-      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
+      (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
 ;;
 
 let handle_record_lit_field
@@ -234,7 +238,7 @@ let handle_record_lit_field
      | ( ((fname : string Surface.spanned), expr) :: rest_entries
        , (t : Core.typ Syntax.binder) :: rest_term_types ) ->
        let ty = Evaluation.eval eval_env' t.Syntax.bound in
-       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       let pp_ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
        Observer.emit
          (Use
             { path = [ r_name; fname.Surface.value ]
@@ -310,7 +314,7 @@ let handle_check_record_update
       ~loc
       Elab_error
       "expected a record type for record update, got %s"
-      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
+      (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
 ;;
 
 let handle_record_update_have_base
@@ -401,14 +405,14 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
            Reporter.fatalf
              Elab_error
              "KProj_HaveRec: companion type is not a Pi when applying params, got %s"
-             (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
+             (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
        in
        let ty_after_params = List.fold_left apply_vpi companion_ty v_params in
        let v_record = Evaluation.eval m.ctx.env e_core in
        let result_ty = apply_vpi ty_after_params v_record in
        (* loc is the projected field name's span (from KProj_HaveRec). *)
        let pp_ty =
-         Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl result_ty)
+         Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl result_ty)
        in
        Observer.emit
          (Use { path = [ r_name; f ]; loc; def_loc = None; ty = result_ty; pp_ty });
@@ -426,7 +430,7 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
          Type_error
          "expected a record type for projection `.%s`, got %s"
          f
-         (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
+         (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
   | other ->
     Reporter.fatalf Elab_error "KProj_HaveRec: bad result %s" (produced_tag other)
 ;;
@@ -501,7 +505,7 @@ let handle_top_record_have_type
            let fty_tm = check_type ctx_acc b.bound in
            let fty_val = Evaluation.eval ctx_acc.env fty_tm in
            let fname = Syntax.Name.to_string b.name.Surface.value in
-           let pp_ty = Pretty.pp_term (view_of_ctx ctx_acc) fty_tm in
+           let pp_ty = Notation.pp_term (view_of_ctx ctx_acc) fty_tm in
            Observer.emit
              (Def
                 { path = [ name; fname ]

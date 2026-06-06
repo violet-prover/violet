@@ -43,7 +43,7 @@ module PartialRenaming = struct
            Reporter.fatalf
              Elab_error
              "non-variable in spine: %s"
-             (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) other)))
+             (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) other)))
       sp_list;
     { dom = List.length sp_list; cod = Context_view.lvl cv; ren }
   ;;
@@ -215,13 +215,13 @@ module PartialRenaming = struct
           Elab_error
           "local `%s` escapes the solution of %s: it is not one of the meta's arguments, \
            so the solution may not mention it"
-          (Pretty.pp_term
+          (Notation.pp_term
              cv'
              (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
           (Pretty.pp_metavar m)
     in
     let solution = lams pr.dom rhs_tm in
-    Reporter.tracef "solution is: %s" (Pretty.pp_term Context_view.empty solution)
+    Reporter.tracef "solution is: %s" (Notation.pp_term Context_view.empty solution)
     @@ fun () -> eval Emp solution
   ;;
 end
@@ -232,7 +232,7 @@ let solve (cv : Context_view.t) (m : Core.metavar) (sp : Core.spine) (rhs : Core
   let spine_str =
     String.concat " <: "
     @@ List.map
-         (fun v -> Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v))
+         (fun v -> Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) v))
          (Bwd.to_list (Core.spine_values sp))
   in
   Reporter.tracef "spine: %s" spine_str
@@ -266,8 +266,8 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
   Reporter.tracef
     ~loc
     "unify `%s` and `%s`"
-    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
-    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
+    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
   @@ fun () ->
   (* force_head unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
@@ -359,7 +359,7 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
       Printf.sprintf
         "{%s : %s}"
         (Syntax.Name.to_string pi_name)
-        (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+        (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
     in
     let x = Meta.fresh_meta_value_with (Context_view.lvl cv) ~origin:{ loc; display } in
     unify ~loc cv (b x) t
@@ -370,10 +370,10 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
       ~loc
       Type_error
       "cannot unify `%s ?= %s` (or verbose `%s ?= %s`)"
-      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) expected))
-      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) actual))
-      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
-      (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
+      (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) expected))
+      (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) actual))
+      (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
+      (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
 
 and unify_spine ~loc (cv : Context_view.t) (xs : Core.spine) (ys : Core.spine) : unit =
   match xs, ys with
@@ -387,7 +387,7 @@ and unify_spine ~loc (cv : Context_view.t) (xs : Core.spine) (ys : Core.spine) :
       @@ Bwd.to_list
       @@ Bwd.map
            (fun (a : Core.arg) ->
-              Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
+              Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
            xs
     in
     let right =
@@ -395,7 +395,7 @@ and unify_spine ~loc (cv : Context_view.t) (xs : Core.spine) (ys : Core.spine) :
       @@ Bwd.to_list
       @@ Bwd.map
            (fun (a : Core.arg) ->
-              Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
+              Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a.tm))
            ys
     in
     Reporter.fatalf
@@ -637,7 +637,7 @@ let%expect_test "quote renders a local by binder name in a unify context" =
   let v1 : Core.value = Core.RigidLocal (1, Emp) in
   Printf.printf
     "%s, %s"
-    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v0))
-    (Pretty.pp_term cv (Evaluation.quote (Context_view.lvl cv) v1));
+    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) v0))
+    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) v1));
   [%expect {| n, x |}]
 ;;

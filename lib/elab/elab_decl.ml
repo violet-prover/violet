@@ -71,7 +71,9 @@ let handle_top_let_have_body
   =
   match take_result m with
   | PTerm term ->
-    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
+    let pp_ty =
+      Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+    in
     Observer.emit
       (Def
          { path = [ name.Surface.value ]
@@ -86,6 +88,10 @@ let handle_top_let_have_body
     let body_val = Evaluation.eval m.ctx.env term in
     publish_to_env ~exported [ name.Surface.value ] (body_val, `Defn);
     Env.register_definition name.Surface.value body_val;
+    Notation.register_fold
+      ~fn:name.Surface.value
+      ~is_elim_head
+      (Evaluation.quote 0 body_val);
     let qname = m.module_name ^ "." ^ name.Surface.value in
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit

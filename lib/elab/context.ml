@@ -122,7 +122,7 @@ module Handler = struct
   ;;
 
   let pp_item fmt (x, tag) =
-    let s = Pretty.pp_value Context_view.empty x in
+    let s = Notation.pp_value Context_view.empty x in
     match tag with
     | `Imported -> Format.fprintf fmt "%s (imported)" s
     | `Defn -> Format.fprintf fmt "%s (defn)" s

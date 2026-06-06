@@ -42,7 +42,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | Some i ->
        let ty = local_type m.ctx i in
        let def_loc = Some (local_binder_loc m.ctx i) in
-       let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       let pp_ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
        Observer.emit (Use { path = [ x ]; loc; def_loc; ty; pp_ty });
        m.result <- Some (PTermType (Core.LocalVar i, ty))
      | None ->
@@ -50,21 +50,21 @@ let rec dispatch (m : machine) (g : goal) : unit =
         | Some l ->
           let ty = Core.Universe (Level.lsuc l) in
           let pp_ty =
-            Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
+            Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
           in
           Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
           m.result <- Some (PTermType (Core.Universe l, ty))
         | None ->
           let ty = Context.lookup x in
           let pp_ty =
-            Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
+            Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)
           in
           Observer.emit (Use { path = [ x ]; loc; def_loc = None; ty; pp_ty });
           m.result <- Some (PTermType (Core.Var x, ty))))
   | GInfer { loc; node = Var path } ->
     let ty = Context.lookup_path path in
     let joined = String.concat "/" path in
-    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+    let pp_ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
     Observer.emit (Use { path; loc; def_loc = None; ty; pp_ty });
     m.result <- Some (PTermType (Core.Var joined, ty))
   | GInferType { loc; node = Goal name_opt } ->
@@ -85,8 +85,8 @@ let rec dispatch (m : machine) (g : goal) : unit =
             ~loc
             Type_error
             "expected a type, but got `%s : %s`"
-            (Pretty.pp_term (view_of_ctx m.ctx) tm)
-            (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
+            (Notation.pp_term (view_of_ctx m.ctx) tm)
+            (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf Elab_error "KEnsureUniverse: bad result %s" (produced_tag other))
   | GInfer { loc; node = Pi ({ name; bound = a; implicit }, b) } ->
@@ -98,7 +98,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let a_val = Evaluation.eval m.ctx.env a_tm in
        (match name.Surface.value with
         | Named n ->
-          let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) a_tm in
+          let pp_ty = Notation.pp_term (view_of_ctx m.ctx) a_tm in
           Observer.emit
             (Binder
                { path = [ n ]
@@ -133,7 +133,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          (match name.Surface.value with
           | Named n ->
             let pp_ty =
-              Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a)
+              Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a)
             in
             Observer.emit
               (Binder
@@ -146,7 +146,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          push m (GCheck (body, body_ty))
        end
      | _ ->
-       let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+       let ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
        Reporter.fatalf ~loc Elab_error "Lambda checked against non-Pi: %s" ty)
   | KLam_Body (_loc, name, implicit) ->
     (match take_result m with
@@ -163,7 +163,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
        let ty_val = Evaluation.eval m.ctx.env ty_tm in
        (match name.Surface.value with
         | Named n ->
-          let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) ty_tm in
+          let pp_ty = Notation.pp_term (view_of_ctx m.ctx) ty_tm in
           Observer.emit
             (Binder
                { path = [ n ]
@@ -209,7 +209,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
               Printf.sprintf
                 "{%s : %s}"
                 (Syntax.Name.to_string pi_name)
-                (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
+                (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
             in
             let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
             let meta_val = Evaluation.eval m.ctx.env meta_tm in
@@ -223,14 +223,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
               ~loc
               Elab_error
               "Bad apply at %s"
-              (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
+              (Notation.pp_term (view_of_ctx m.ctx) f_tm)
         | ty ->
-          let ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+          let ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
           Reporter.fatalf
             ~loc
             Type_error
             "cannot apply to `(%s) : %s`"
-            (Pretty.pp_term (view_of_ctx m.ctx) f_tm)
+            (Notation.pp_term (view_of_ctx m.ctx) f_tm)
             ty)
      | other ->
        Reporter.fatalf Elab_error "KApp_HaveFn: bad result %s" (produced_tag other))
@@ -334,7 +334,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Type_error
          "operands of `⊔` must be universes, got `%s`"
-         (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
+         (Notation.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
        Reporter.fatalf Elab_error "KMax_HaveLeft: bad result %s" (produced_tag other))
   | KMax_HaveRight (loc, l_a) ->
@@ -347,7 +347,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
          ~loc
          Type_error
          "operands of `⊔` must be universes, got `%s`"
-         (Pretty.pp_term (view_of_ctx m.ctx) other_tm)
+         (Notation.pp_term (view_of_ctx m.ctx) other_tm)
      | other ->
        Reporter.fatalf Elab_error "KMax_HaveRight: bad result %s" (produced_tag other))
   | GInfer { loc; node = IdAbsurd p } ->
@@ -411,14 +411,14 @@ let rec dispatch (m : machine) (g : goal) : unit =
                ~loc
                Elab_error
                "\\absurd-id: expected Id of distinct-ctor-headed values, got `Id _ %s %s`"
-               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl l))
-               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl r)))
+               (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl l))
+               (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl r)))
         | other ->
           Reporter.fatalf
             ~loc
             Elab_error
             "\\absurd-id: argument is not Id-typed, got `%s`"
-            (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
+            (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
      | other ->
        Reporter.fatalf Elab_error "KIdAbsurd_HaveArg: bad result %s" (produced_tag other))
   | GCheck (({ loc; node = Var [ x ] } as term), expected)
@@ -450,7 +450,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
              Printf.sprintf
                "{%s : %s}"
                (Syntax.Name.to_string pi_name)
-               (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
+               (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl a))
            in
            let meta_tm = Meta.meta_fresh_with m.ctx.lvl ~origin:{ loc; display } in
            let meta_val = Evaluation.eval m.ctx.env meta_tm in
@@ -639,8 +639,8 @@ let%expect_test "infer Universe" =
   let tm, ty = infer_for_test (d Surface.Universe) in
   Printf.printf
     "%s : %s"
-    (Pretty.pp_term Context_view.empty tm)
-    (Pretty.pp_term Context_view.empty (Evaluation.quote 0 ty));
+    (Notation.pp_term Context_view.empty tm)
+    (Notation.pp_term Context_view.empty (Evaluation.quote 0 ty));
   [%expect {| universe 𝓤₀ : universe S 0 |}]
 ;;
 
@@ -662,8 +662,8 @@ let%expect_test "infer Var bound locally" =
     in
     Printf.printf
       "%s : %s"
-      (Pretty.pp_term (view_of_ctx m.ctx) tm)
-      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
+      (Notation.pp_term (view_of_ctx m.ctx) tm)
+      (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
   [%expect {| x : universe 𝓤₀ |}]
 ;;
 
@@ -687,8 +687,8 @@ let%expect_test "user `_` binder is a normal name and can be referenced" =
     in
     Printf.printf
       "%s : %s"
-      (Pretty.pp_term (view_of_ctx m.ctx) tm)
-      (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
+      (Notation.pp_term (view_of_ctx m.ctx) tm)
+      (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)));
   [%expect {| _ : universe 𝓤₀ |}]
 ;;
 
@@ -723,8 +723,8 @@ let%expect_test "infer Pi" =
   let tm, ty = infer_for_test p in
   Printf.printf
     "%s : %s"
-    (Pretty.pp_term Context_view.empty tm)
-    (Pretty.pp_term Context_view.empty (Evaluation.quote 0 ty));
+    (Notation.pp_term Context_view.empty tm)
+    (Notation.pp_term Context_view.empty (Evaluation.quote 0 ty));
   [%expect {| (x : universe 𝓤₀) -> universe 𝓤₀ : universe (S 0) ⊔ (S 0) |}]
 ;;
 
@@ -753,7 +753,7 @@ let%expect_test "check Lambda against Pi" =
       | PTerm t -> t
       | _ -> failwith "wrong shape"
     in
-    Printf.printf "%s" (Pretty.pp_term (view_of_ctx m.ctx) tm));
+    Printf.printf "%s" (Notation.pp_term (view_of_ctx m.ctx) tm));
   [%expect {| (fun x => x) |}]
 ;;
 
@@ -782,8 +782,8 @@ let%expect_test "infer App" =
     | PTermType (tm, ty) ->
       Printf.printf
         "tm: %s\nty: %s"
-        (Pretty.pp_term (view_of_ctx m.ctx) tm)
-        (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty))
+        (Notation.pp_term (view_of_ctx m.ctx) tm)
+        (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty))
     | _ -> failwith "wrong shape");
   [%expect
     {|
@@ -912,6 +912,8 @@ let check_module
   in
   let module_name = String.concat "/" module_path in
   let file = Violet_surface.Op_resolver.resolve_module ~module_name file in
+  Notation.run ~module_name
+  @@ fun () ->
   Eio.traceln "checking [module] %s (%s)" module_name file.name;
   let kernel_module = Violet_kernel.Module.create () in
   Context.clear_level_vars ();
@@ -967,7 +969,7 @@ let check_module
        match Context.S.resolve [ name ] with
        | Some (ty, _) ->
          let cv = Violet_kernel.Context_view.make ~names:Bwd.Emp ~lvl:0 in
-         let pp_ty = Pretty.pp_term cv (Evaluation.quote 0 ty) in
+         let pp_ty = Notation.pp_term cv (Evaluation.quote 0 ty) in
          Observer.emit (Use { path = [ name ]; loc; def_loc = None; ty; pp_ty })
        | None -> ())
     file.exports;
@@ -1354,7 +1356,7 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       p_let);
   (match Violet_kernel.Module.lookup kernel_module "test.p" with
    | Some (Violet_kernel.Module.Let { body; _ }) ->
-     Printf.printf "body: %s\n" (Pretty.pp_term Context_view.empty body)
+     Printf.printf "body: %s\n" (Notation.pp_term Context_view.empty body)
    | _ -> Printf.printf "not found or wrong decl kind\n");
   [%expect {| body: Pair{ fst = Nat/zero, snd = Nat/zero } |}]
 ;;

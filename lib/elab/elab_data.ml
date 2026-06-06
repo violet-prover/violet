@@ -51,7 +51,7 @@ let bind_constructor
   let ctor_typ = complete_ctor_type params typ in
   let ctor_typ_tm = check_type ctx ctor_typ in
   let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
-  let pp_ty = Pretty.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
+  let pp_ty = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
   Observer.emit
     (Def
        { path = [ ind_name; name ]
@@ -120,7 +120,7 @@ let handle_top_data_have_type
           Elab_error
           "data type `%s`'s spine should end in a Universe, got `%s`"
           name
-          (Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
+          (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other))
     in
     let user_sort = final_sort_of_val m.ctx.lvl typ_val in
     let inferred_sort =
@@ -167,7 +167,9 @@ let handle_top_data_have_type
     let ind_info : Context.ind_info =
       { params; deps; ind_ty; ctors; infos; param_polarity }
     in
-    let pp_ty = Pretty.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val) in
+    let pp_ty =
+      Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
+    in
     Observer.emit
       (Def
          { path = [ name ]

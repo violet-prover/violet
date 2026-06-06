@@ -382,7 +382,7 @@ let vapp (t : Core.value) (u : Core.value) : Core.value =
     Reporter.fatalf
       Elab_error
       "ι-reduction: cannot apply %s"
-      (Pretty.pp_term Context_view.empty (Evaluation.quote 0 v))
+      (Notation.pp_term Context_view.empty (Evaluation.quote 0 v))
 ;;
 
 let vapp_list t args = List.fold_left vapp t args
@@ -537,7 +537,7 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
    @@
    match reducer spine with
    | None -> "None"
-   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
+   | Some v -> "(Some " ^ Notation.pp_value Context_view.empty v ^ ")");
   [%expect {| (Some cz) |}]
 ;;
 
@@ -561,7 +561,7 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
    @@
    match reducer spine with
    | None -> "None"
-   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
+   | Some v -> "(Some " ^ Notation.pp_value Context_view.empty v ^ ")");
   [%expect {| (Some cs n (Nat/elim n M cz cs)) |}]
 ;;
 
@@ -642,6 +642,6 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
    @@
    match reducer spine with
    | None -> "None"
-   | Some v -> "(Some " ^ Pretty.pp_value Context_view.empty v ^ ")");
+   | Some v -> "(Some " ^ Notation.pp_value Context_view.empty v ^ ")");
   [%expect {| (Some ccons k x xs (Vec/elim A k xs M cnil ccons)) |}]
 ;;

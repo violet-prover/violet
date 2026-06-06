@@ -334,6 +334,91 @@ let merge_decl (decl : op_decl) (table : op_table) : op_table =
   | None -> { decls = decl :: table.decls }
 ;;
 
+(* ===========================================================================
+   2b. Invertibility — printing-side inverse of operator lowering
+   ===========================================================================
+   An operator can be printed back (core spine → notation) iff its body is a
+   head name applied to exactly the template's holes, each used once, in any
+   order — or a bare ident (positional-application sugar). The inv_entry's
+   key is the head path joined with "/", which is exactly the string the
+   elaborator stores in `Core.Var` and the kernel printer shows as the head. *)
+
+type inv_part =
+  | Inv_lit of string
+  | Inv_slot of int (* index into the operator's explicit argument spine *)
+[@@deriving show]
+
+type inv_entry =
+  { inv_head : string
+  ; inv_arity : int
+  ; inv_parts : inv_part list
+  }
+[@@deriving show]
+
+let invert_decl (decl : op_decl) : inv_entry option =
+  let rec collect (t : Surface.preterm) acc =
+    match t.Surface.node with
+    | Surface.App (false, f, x) -> collect f (x :: acc)
+    | _ -> t, acc
+  in
+  let head_t, args = collect decl.body [] in
+  let is_hole n = List.exists (String.equal n) decl.hole_names in
+  let index_of h names =
+    let rec go i = function
+      | [] -> None
+      | x :: _ when String.equal x h -> Some i
+      | _ :: rest -> go (i + 1) rest
+    in
+    go 0 names
+  in
+  match head_t.Surface.node with
+  | Surface.Var [ n ] when is_hole n -> None
+  | Surface.Var path ->
+    let arity = List.length decl.hole_names in
+    (* names.(i) is the hole carried by spine position i *)
+    let slot_names =
+      match args with
+      (* bare-ident sugar: holes are applied positionally in template order *)
+      | [] -> Some decl.hole_names
+      | _ ->
+        let arg_holes =
+          List.map
+            (fun (a : Surface.preterm) ->
+               match a.Surface.node with
+               | Surface.Var [ n ] when is_hole n -> Some n
+               | _ -> None)
+            args
+        in
+        if List.exists Option.is_none arg_holes
+        then None
+        else (
+          let names = List.filter_map Fun.id arg_holes in
+          let distinct = List.sort_uniq String.compare names in
+          if List.length names = arity && List.length distinct = arity
+          then Some names
+          else None)
+    in
+    (match slot_names with
+     | None -> None
+     | Some names ->
+       let parts =
+         List.map
+           (function
+             | Lit s -> Some (Inv_lit s)
+             | Hole h -> Option.map (fun i -> Inv_slot i) (index_of h names))
+           decl.template
+       in
+       if List.exists Option.is_none parts
+       then None
+       else
+         Some
+           { inv_head = String.concat "/" path
+           ; inv_arity = arity
+           ; inv_parts = List.filter_map Fun.id parts
+           })
+  | _ -> None
+;;
+
 (* Dummy-loc helpers for inline tests. *)
 let d = Surface.Mk.d
 let dn = Surface.Mk.dn
@@ -1558,6 +1643,11 @@ let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
    importer's starting table. Conflicts (same template, different bodies)
    error at import time. *)
 let module_op_tables : (string, op_table) Hashtbl.t = Hashtbl.create 32
+
+let lookup_table ~(module_name : string) : op_table option =
+  Hashtbl.find_opt module_op_tables module_name
+;;
+
 let module_name_of_path (p : Yuujinchou.Trie.path) : string = String.concat "/" p
 
 (* Merge another table's decls into ours. Duplicate-template across modules
@@ -1699,6 +1789,96 @@ let%expect_test "resolve_module: diamond import of common library does not dupli
   let _ = resolve_module c in
   print_string "ok";
   [%expect {| ok |}]
+;;
+
+(* --- invertibility tests ------------------------------------------------ *)
+
+let mk_app f x = d (Surface.App (false, f, x))
+let mk_var n = d (Surface.Var [ n ])
+
+let%expect_test "invert_decl: head applied to holes in template order" =
+  let body = mk_app (mk_app (mk_var "Id") (mk_var "x")) (mk_var "y") in
+  let decl = make_op_decl ~template:"\\x = \\y" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect
+    {|
+    (Some { Op_resolver.inv_head = "Id"; inv_arity = 2;
+            inv_parts =
+            [(Op_resolver.Inv_slot 0); (Op_resolver.Inv_lit "=");
+              (Op_resolver.Inv_slot 1)]
+            })
+    |}]
+;;
+
+let%expect_test "invert_decl: permuted holes map slots correctly" =
+  (* \x >= \y => le y x : spine position 0 carries hole y, position 1 hole x *)
+  let body = mk_app (mk_app (mk_var "le") (mk_var "y")) (mk_var "x") in
+  let decl = make_op_decl ~template:"\\x >= \\y" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect
+    {|
+    (Some { Op_resolver.inv_head = "le"; inv_arity = 2;
+            inv_parts =
+            [(Op_resolver.Inv_slot 1); (Op_resolver.Inv_lit ">=");
+              (Op_resolver.Inv_slot 0)]
+            })
+    |}]
+;;
+
+let%expect_test "invert_decl: bare-ident sugar is positional" =
+  let decl = make_op_decl ~template:"\\x + \\y" ~body:(mk_var "add") ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect
+    {|
+    (Some { Op_resolver.inv_head = "add"; inv_arity = 2;
+            inv_parts =
+            [(Op_resolver.Inv_slot 0); (Op_resolver.Inv_lit "+");
+              (Op_resolver.Inv_slot 1)]
+            })
+    |}]
+;;
+
+let%expect_test "invert_decl: qualified head joins with slash" =
+  let body = mk_app (d (Surface.Var [ "Nat"; "add" ])) (mk_var "x") in
+  let decl = make_op_decl ~template:"\\x !" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect
+    {|
+    (Some { Op_resolver.inv_head = "Nat/add"; inv_arity = 1;
+            inv_parts = [(Op_resolver.Inv_slot 0); (Op_resolver.Inv_lit "!")] })
+    |}]
+;;
+
+let%expect_test "invert_decl: lambda body is not invertible" =
+  let body =
+    d
+      (Surface.Lambda
+         { name = dn (Surface.Named "z"); bound = mk_var "f"; implicit = false })
+  in
+  let decl = make_op_decl ~template:"twice \\f" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect {| None |}]
+;;
+
+let%expect_test "invert_decl: hole used twice is not invertible" =
+  let body = mk_app (mk_app (mk_var "f") (mk_var "x")) (mk_var "x") in
+  let decl = make_op_decl ~template:"\\x ++ \\y" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect {| None |}]
+;;
+
+let%expect_test "invert_decl: hole-headed body is not invertible" =
+  let body = mk_app (mk_var "f") (mk_var "x") in
+  let decl = make_op_decl ~template:"\\x apply \\f" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect {| None |}]
+;;
+
+let%expect_test "invert_decl: non-hole argument is not invertible" =
+  let body = mk_app (mk_app (mk_var "f") (mk_var "x")) (mk_var "zero") in
+  let decl = make_op_decl ~template:"\\x ++ \\y" ~body ~options:[] in
+  print_string @@ [%show: inv_entry option] (invert_decl decl);
+  [%expect {| None |}]
 ;;
 
 let%expect_test "resolve_module: same template from two distinct modules still conflicts" =

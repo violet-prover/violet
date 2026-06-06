@@ -728,6 +728,39 @@ let test_elim_header_hover () =
     ()
 ;;
 
+(* Hover types display through user-defined operator notation, with the raw
+   form in a trailing `(i.e. …)`. *)
+let notation_src =
+  {|\universe U
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+\operator "\x = \y" => Id x y
+  \associativity: \left
+\let z : Nat => zero
+\let lemma (p : z = z) : Nat => zero
+|}
+;;
+
+let test_notation_hover () =
+  let filename = "test_notation.vt" in
+  let idx = check_module_collecting ~filename notation_src in
+  let open Violet_interactive.Index in
+  (* let-param binder `p` in `(p : z = z)` — line 10, col 12 *)
+  assert_at
+    ~idx
+    ~source:filename
+    ~label:"hover notation-binder"
+    ~line:10
+    ~col:12
+    ~kind:Binder
+    ~pp_ty:"z = z (i.e. Id z z)"
+    ~path:[ "p" ]
+    ()
+;;
+
 let () =
   test_elim_header_hover ();
   test_collector_roundtrip ();
@@ -739,6 +772,7 @@ let () =
   test_find_references ();
   test_goal_events ();
   test_hover_events ();
+  test_notation_hover ();
   test_find_at_tiebreak ();
   Format.printf "all interactive tests passed@."
 ;;

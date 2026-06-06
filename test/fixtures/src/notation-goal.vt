@@ -1,0 +1,19 @@
+# Goal targets display through user-defined operator notation (`zero = zero`
+# instead of `Id zero zero`); see also bad/bad-notation-display.vt which pins
+# the error-message rendering.
+
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+
+\operator "\x = \y" => Id x y
+  \associativity: \left
+
+\let z : Nat => zero
+
+\let lemma : z = z => ?here

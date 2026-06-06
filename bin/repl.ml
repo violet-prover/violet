@@ -137,6 +137,8 @@ let with_repl_reporter (k : unit -> unit) : unit =
 let handle_eval ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
+  Violet_elab.Notation.run ~module_name
+  @@ fun () ->
   let tm, ty = ElabREPL.infer_expression ~module_name p in
   let v = Evaluation.eval Bwd.Emp tm in
   Printf.printf
@@ -148,6 +150,8 @@ let handle_eval ~(module_name : string) (src : string) : unit =
 let handle_type ~(module_name : string) (src : string) : unit =
   let p = Parser.parse_expression_string ~source:"<repl>" src in
   let p = Op_resolver.resolve_preterm_for_module ~module_name p in
+  Violet_elab.Notation.run ~module_name
+  @@ fun () ->
   let _, ty = ElabREPL.infer_expression ~module_name p in
   Printf.printf "%s\n%!" (ElabREPL.pretty_repl_value ty)
 ;;
