@@ -1,0 +1,38 @@
+# std/id.vt with every proof body replaced by a goal — the goldens pin how
+# each context/target renders (operator notation, verbose copies).
+
+\universe 𝓤
+
+\data Id {A : 𝓤} (x : A) : A -> 𝓤
+  | refl : Id x x
+
+\operator "\x = \y" => Id x y
+  \associativity: \left
+
+\let sym {A : 𝓤} {x y : A} : x = y -> y = x \where
+  sym p <= \elim p
+  | sym refl => ?sym-refl
+
+\let trans {A : 𝓤} {x y z : A} : x = y -> y = z -> x = z \where
+  trans p q <= \elim p
+  | trans refl q => ?trans-refl
+
+\let ap {A : 𝓤} {B : 𝓤} (f : A -> B) {x y : A} : x = y -> (f x) = (f y) \where
+  ap f p <= \elim p
+  | ap f refl => ?ap-refl
+
+\let transport {A : 𝓤} (P : A -> 𝓤) (x y : A) : x = y -> (px : P x) -> P y \where
+  transport P x y p px <= \elim p
+  | transport P x y refl px => ?transport-refl
+
+\let qed {A : 𝓤} (a : A) : a = a => ?qed-body
+\operator "\x ∎" => qed x
+
+\let step {A : 𝓤} (x : A) {y z : A} (p : x = y) (q : y = z) : x = z => ?step-body
+\let step-refl {A : 𝓤} (x : A) {y : A} : x = y -> x = y => ?step-refl-body
+
+\operator "\x =⟨ \p ⟩ \rest" => step x p rest
+  \associativity: \right
+
+\operator "\x =⟨⟩ \rest" => step-refl x rest
+  \associativity: \right

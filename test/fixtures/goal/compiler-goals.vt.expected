@@ -1,0 +1,50 @@
+31:21-31:32
+compiler-goals/?literal-ok
+  --- context ---
+  n : Nat
+  σ : StackShape
+  stk : Stack σ
+  --- target ---
+  (exec ((PUSH n) ⍮ empty) stk) = (cons n stk) (i.e. Id (exec (prepend (PUSH n) empty) stk) (cons n stk))
+
+39:12-39:23
+compiler-goals/?add-step-1
+  --- context ---
+  x : ImplementedNat
+  y : ImplementedNat
+  σ : StackShape
+  stk : Stack σ
+  --- target ---
+  (exec ((y.prog) ⍮* ((x.prog) ⍮* (ADD ⍮ empty))) stk) = (exec ((x.prog) ⍮* (ADD ⍮ empty)) (exec (y.prog) stk)) (i.e. Id (exec (concat-program (y.prog) (concat-program (x.prog) (prepend ADD empty))) stk) (exec (concat-program (x.prog) (prepend ADD empty)) (exec (y.prog) stk)))
+
+43:12-43:23
+compiler-goals/?add-step-3
+  --- context ---
+  x : ImplementedNat
+  y : ImplementedNat
+  σ : StackShape
+  stk : Stack σ
+  --- target ---
+  (Stack/elim (cons Nat (cons Nat σ)) (exec (x.prog) (exec (y.prog) stk)) ((fun i' => (fun stk => (p : i' = (cons Nat (cons Nat σ))) -> Stack (cons Nat σ)))) ((fun p => absurd id-absurd p)) ((fun {s'} => (fun n1 => (fun stk => (fun ih-stk => (fun p => Stack/elim (cons Nat σ) (transport ((fun __v => Stack __v)) s' (cons Nat σ) (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p) stk) ((fun i' => (fun stk => (p' : i' = (cons Nat σ)) -> Stack (cons Nat σ)))) ((fun p' => absurd id-absurd p')) ((fun {s''} => (fun n2 => (fun stk => (fun ih-stk => (fun p' => cons (n1 + n2) (transport ((fun __v => Stack __v)) s'' σ (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p') stk))))))) refl)))))) refl) = (Stack/elim (cons Nat (cons Nat σ)) (exec (x.prog) (cons (y.value) stk)) ((fun i' => (fun stk => (p : i' = (cons Nat (cons Nat σ))) -> Stack (cons Nat σ)))) ((fun p => absurd id-absurd p)) ((fun {s'} => (fun n1 => (fun stk => (fun ih-stk => (fun p => Stack/elim (cons Nat σ) (transport ((fun __v => Stack __v)) s' (cons Nat σ) (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p) stk) ((fun i' => (fun stk => (p' : i' = (cons Nat σ)) -> Stack (cons Nat σ)))) ((fun p' => absurd id-absurd p')) ((fun {s''} => (fun n2 => (fun stk => (fun ih-stk => (fun p' => cons (n1 + n2) (transport ((fun __v => Stack __v)) s'' σ (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p') stk))))))) refl)))))) refl) (i.e. Id (Stack/elim (cons Nat (cons Nat σ)) (exec (x.prog) (exec (y.prog) stk)) ((fun i' => (fun stk => (p : Id i' (cons Nat (cons Nat σ))) -> Stack (cons Nat σ)))) ((fun p => absurd id-absurd p)) ((fun {s'} => (fun n1 => (fun stk => (fun ih-stk => (fun p => Stack/elim (cons Nat σ) (transport ((fun __v => Stack __v)) s' (cons Nat σ) (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p) stk) ((fun i' => (fun stk => (p' : Id i' (cons Nat σ)) -> Stack (cons Nat σ)))) ((fun p' => absurd id-absurd p')) ((fun {s''} => (fun n2 => (fun stk => (fun ih-stk => (fun p' => cons (add n1 n2) (transport ((fun __v => Stack __v)) s'' σ (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p') stk))))))) refl)))))) refl) (Stack/elim (cons Nat (cons Nat σ)) (exec (x.prog) (cons (y.value) stk)) ((fun i' => (fun stk => (p : Id i' (cons Nat (cons Nat σ))) -> Stack (cons Nat σ)))) ((fun p => absurd id-absurd p)) ((fun {s'} => (fun n1 => (fun stk => (fun ih-stk => (fun p => Stack/elim (cons Nat σ) (transport ((fun __v => Stack __v)) s' (cons Nat σ) (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p) stk) ((fun i' => (fun stk => (p' : Id i' (cons Nat σ)) -> Stack (cons Nat σ)))) ((fun p' => absurd id-absurd p')) ((fun {s''} => (fun n2 => (fun stk => (fun ih-stk => (fun p' => cons (add n1 n2) (transport ((fun __v => Stack __v)) s'' σ (ap ((fun __sh => StackShape/elim __sh ((fun _ => StackShape)) empty ((fun _0 => (fun _1 => (fun ih-_1 => _1)))))) p') stk))))))) refl)))))) refl))
+
+54:21-54:28
+compiler-goals/?mul-ok
+  --- context ---
+  x : ImplementedNat
+  y : ImplementedNat
+  σ : StackShape
+  stk : Stack σ
+  --- target ---
+  (exec ((y.prog) ⍮* ((x.prog) ⍮* (MUL ⍮ empty))) stk) = (cons ((x.value) * (y.value)) stk) (i.e. Id (exec (concat-program (y.prog) (concat-program (x.prog) (prepend MUL empty))) stk) (cons (mul (x.value) (y.value)) stk))
+
+60:26-60:38
+compiler-goals/?compile-add
+  --- context ---
+  T : universe U
+  t : Term T
+  t : Term Nat
+  compile t : ImplementedNat
+  u : Term Nat
+  compile u : ImplementedNat
+  --- target ---
+  ImplementedNat

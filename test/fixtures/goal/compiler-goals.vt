@@ -1,0 +1,61 @@
+# compiler-correctness/src/compiler.vt with goals in every proof position:
+# record-literal proof fields, equational-reasoning chain steps, and an
+# inline-elim clause body. The goldens pin that stack/program operators
+# (◁, ⍮, ⍮*), arithmetic (+, *), equations (=, =⟨ ⟩, ∎) and eliminator
+# folding (exec, add, mul, concat-program) all display readably in goals.
+#
+# Chain steps 2 and 4 keep their real proofs: two ADJACENT hollow steps leave
+# the step's implicit `y` uninferable (nothing anchors the middle term), so
+# goals alternate with real steps.
+
+\import std/id
+\import std/nat
+\import stack
+\import program
+
+\universe U
+
+\data Term : U -> U
+  | eta : (n : Nat) -> Term Nat
+  | add : Term Nat -> Term Nat -> Term Nat
+  | mul : Term Nat -> Term Nat -> Term Nat
+
+\record ImplementedNat : U
+  | value  : Nat
+  | prog    : {σ : StackShape} -> Prog σ (Nat ◅ σ)
+  | prog-ok : {σ : StackShape} -> (stk : Stack σ) -> exec prog stk = (value ◁ stk)
+
+\let literalImpl (n : Nat) : ImplementedNat => {
+  value = n,
+  prog = (Instr/PUSH n) ⍮ empty,
+  prog-ok = \stk -> ?literal-ok
+}
+
+\let addImpl (x y : ImplementedNat) : ImplementedNat => {
+  value = x.value + y.value,
+  prog = y.prog ⍮* x.prog ⍮* ADD ⍮ Prog/empty,
+  prog-ok = \stk ->
+    (exec (y.prog ⍮* (x.prog ⍮* (ADD ⍮ Prog/empty))) stk)
+      =⟨ ?add-step-1 ⟩
+    (exec (x.prog ⍮* (ADD ⍮ Prog/empty)) (exec y.prog stk))
+      =⟨ exec-program x.prog (ADD ⍮ Prog/empty) (exec y.prog stk) ⟩
+    (exec (ADD ⍮ Prog/empty) (exec x.prog (exec y.prog stk)))
+      =⟨ ?add-step-3 ⟩
+    (exec (ADD ⍮ Prog/empty) (exec x.prog (y.value ◁ stk)))
+      =⟨ ap (\s -> exec (ADD ⍮ Prog/empty) s)
+            (x.prog-ok (y.value ◁ stk)) ⟩
+    (exec (ADD ⍮ Prog/empty) (x.value ◁ y.value ◁ stk)) =⟨⟩
+    ((x.value + y.value) ◁ stk) ∎
+}
+
+\let mulImpl (x y : ImplementedNat) : ImplementedNat => {
+  value = x.value * y.value,
+  prog = y.prog ⍮* x.prog ⍮* MUL ⍮ Prog/empty ,
+  prog-ok = \stk -> ?mul-ok
+}
+
+\let compile {T : U} : Term T -> ImplementedNat \where
+  compile t <= \elim t
+  | compile (eta n) => literalImpl n
+  | compile (add t u) => ?compile-add
+  | compile (mul t u) => mulImpl (compile t) (compile u)

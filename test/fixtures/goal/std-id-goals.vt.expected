@@ -1,0 +1,76 @@
+14:17-14:26
+std-id-goals/?sym-refl
+  --- context ---
+  A : universe 𝓤
+  x : A
+  y : A
+  p : x = y (i.e. Id x y)
+  --- target ---
+  x = x (i.e. Id x x)
+
+18:21-18:32
+std-id-goals/?trans-refl
+  --- context ---
+  A : universe 𝓤
+  x : A
+  y : A
+  z : A
+  p : x = y (i.e. Id x y)
+  q : y = z (i.e. Id y z)
+  q : x = z (i.e. Id x z)
+  --- target ---
+  x = z (i.e. Id x z)
+
+22:18-22:26
+std-id-goals/?ap-refl
+  --- context ---
+  A : universe 𝓤
+  B : universe 𝓤
+  f : (_ : A) -> B
+  x : A
+  y : A
+  p : x = y (i.e. Id x y)
+  --- target ---
+  (f x) = (f x) (i.e. Id (f x) (f x))
+
+26:32-26:47
+std-id-goals/?transport-refl
+  --- context ---
+  A : universe 𝓤
+  P : (_ : A) -> universe 𝓤
+  x : A
+  y : A
+  p : x = y (i.e. Id x y)
+  px : P x
+  px : P x
+  --- target ---
+  P x
+
+28:40-28:49
+std-id-goals/?qed-body
+  --- context ---
+  A : universe 𝓤
+  a : A
+  --- target ---
+  a = a (i.e. Id a a)
+
+31:75-31:85
+std-id-goals/?step-body
+  --- context ---
+  A : universe 𝓤
+  x : A
+  y : A
+  z : A
+  p : x = y (i.e. Id x y)
+  q : y = z (i.e. Id y z)
+  --- target ---
+  x = z (i.e. Id x z)
+
+32:63-32:78
+std-id-goals/?step-refl-body
+  --- context ---
+  A : universe 𝓤
+  x : A
+  y : A
+  --- target ---
+  (_ : x = y) -> x = y (i.e. (_ : Id x y) -> Id x y)

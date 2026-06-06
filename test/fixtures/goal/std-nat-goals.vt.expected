@@ -1,0 +1,63 @@
+15:19-15:28
+std-nat-goals/?add-zero
+  --- context ---
+  m : Nat
+  n : Nat
+  n : Nat
+  --- target ---
+  Nat
+
+16:22-16:30
+std-nat-goals/?add-suc
+  --- context ---
+  m : Nat
+  n : Nat
+  m : Nat
+  add m : (n : Nat) -> Nat
+  n : Nat
+  --- target ---
+  Nat
+
+23:19-23:28
+std-nat-goals/?mul-zero
+  --- context ---
+  m : Nat
+  n : Nat
+  n : Nat
+  --- target ---
+  Nat
+
+24:22-24:30
+std-nat-goals/?mul-suc
+  --- context ---
+  m : Nat
+  n : Nat
+  m : Nat
+  mul m : (n : Nat) -> Nat
+  n : Nat
+  --- target ---
+  Nat
+
+30:55-30:70
+std-nat-goals/?add-zero-right
+  --- context ---
+  m : Nat
+  --- target ---
+  (m + zero) = m (i.e. Id (add m zero) m)
+
+32:73-32:87
+std-nat-goals/?add-suc-lemma
+  --- context ---
+  n : Nat
+  m : Nat
+  --- target ---
+  (suc (n + m)) = (n + (suc m)) (i.e. Id (suc (add n m)) (add n (suc m)))
+
+34:65-34:73
+std-nat-goals/?distrib
+  --- context ---
+  a : Nat
+  b : Nat
+  c : Nat
+  --- target ---
+  (a * (b + c)) = ((a * b) + (a * c)) (i.e. Id (mul a (add b c)) (add (mul a b) (mul a c)))

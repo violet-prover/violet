@@ -1,0 +1,54 @@
+\import std/id
+\import std/nat
+\import std/empty
+\import stack
+
+\export Instr Prog exec exec-program concat-program
+
+\universe U
+
+\data Instr : StackShape -> StackShape -> U
+  | PUSH : {s : StackShape} -> Nat -> Instr s (Nat ◅ s)
+  | ADD  : {s : StackShape} ->
+           Instr (Nat ◅ Nat ◅ s) (Nat ◅ s)
+  | MUL  : {s : StackShape} ->
+           Instr (Nat ◅ Nat ◅ s) (Nat ◅ s)
+
+\data Prog : StackShape -> StackShape -> U
+  | empty  : {s : StackShape} -> Prog s s
+  | prepend : {s1 s2 s3 : StackShape} -> Instr s1 s2 -> Prog s2 s3 -> Prog s1 s3
+
+\operator "\i ⍮ \p" => Prog/prepend i p
+  \associativity: \right
+
+\let exec-instr {s1 s2 : StackShape}
+  : (i : Instr s1 s2) -> (stk : Stack s1) -> Stack s2 \where
+  exec-instr i stk <= \elim i
+  | exec-instr (PUSH s n) stk => n ◁ stk
+  | exec-instr (ADD s)    stk <= \elim stk
+  | exec-instr (ADD s)    (cons n1 stk) <= \elim stk
+  | exec-instr (ADD s)    (cons n1 (cons n2 stk)) => (n1 + n2) ◁ stk
+  | exec-instr (MUL s)    stk <= \elim stk
+  | exec-instr (MUL s)    (cons n1 stk) <= \elim stk
+  | exec-instr (MUL s)    (cons n1 (cons n2 stk)) => (n1 * n2) ◁ stk
+
+\let exec {s1 s2 : StackShape} : Prog s1 s2 -> Stack s1 -> Stack s2 \where
+  exec prog stk <= \elim prog
+  | exec empty         stk => stk
+  | exec (prepend i p) stk => exec p (exec-instr i stk)
+
+\let concat-program {s1 s2 s3 : StackShape} : Prog s1 s2 -> Prog s2 s3 -> Prog s1 s3 \where
+  concat-program p q <= \elim p
+  | concat-program empty         q => q
+  | concat-program (prepend i p) q => prepend i (concat-program p q)
+
+\operator "\p ⍮* \q" => concat-program p q
+  \associativity: \right
+  \weaker_than: ⍮
+
+\let exec-program {s1 s2 s3 : StackShape} :
+  (p : Prog s1 s2) -> (q : Prog s2 s3) -> (stk : Stack s1) ->
+  exec (p ⍮* q) stk = exec q (exec p stk) \where
+  exec-program p q stk <= \elim p
+  | exec-program empty         q stk => refl
+  | exec-program (prepend i p) q stk => exec-program p q (exec-instr i stk)

@@ -13,6 +13,12 @@
    - Files under test/fixtures/src/ and ../example/src/ must elaborate Ok.
    - Files under test/fixtures/bad/ must FAIL, and the rendered explanation
      must byte-equal a committed golden `<fixture>.vt.expected` file.
+   - Files under test/fixtures/goal/ must elaborate (unresolved goals are
+     warnings, not errors), and the rendered GOAL REPORTS — every `?hole`'s
+     context + target display, in elaboration order — must byte-equal a
+     committed golden `<fixture>.vt.expected` file. These pin the
+     pretty-printer's behavior (operator notation, eliminator folding) across
+     real-world proof contexts.
    - Companion modules whose basename starts with `_` are imported by other
      fixtures and are NOT run as standalone entries (skipped in discovery).
 
@@ -21,6 +27,7 @@
 
 type outcome =
   [ `Ok
+  | `Ok_with of string (* successful elaboration + collected goal reports *)
   | `Fail of string
   | `Hung
   ]
@@ -118,8 +125,10 @@ let render_loc : Asai.Range.t option -> string = function
 
 (* In the child: silence stdout/stderr (to keep the test log clean), then
    run the elaborator. On fatal error, render the diagnostic's explanation
-   to `msg_file` and exit 1. The parent reads `msg_file` after waitpid. *)
-let run_check_in_child filename ~msg_file =
+   to `msg_file` and exit 1. With [goals] and no error, write every rendered
+   Goal_report to `msg_file` instead (still exit 0). The parent reads
+   `msg_file` after waitpid. *)
+let run_check_in_child ?(goals = false) filename ~msg_file =
   let devnull = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
   Unix.dup2 devnull Unix.stdout;
   Unix.dup2 devnull Unix.stderr;
@@ -163,7 +172,27 @@ let run_check_in_child filename ~msg_file =
         close_out oc
       with
       | _ -> ())
-   | None -> ());
+   | None ->
+     if goals
+     then begin
+       let reports =
+         Violet_common.Diagnostic_collector.all diag_collector
+         |> List.filter (fun (d : _ Asai.Diagnostic.t) ->
+           match d.message with
+           | Violet_common.Reporter.Message.Goal_report -> true
+           | _ -> false)
+         |> List.map (fun (d : _ Asai.Diagnostic.t) ->
+           (* NOT string_of_text — that replaces the report's newlines with
+              spaces, flattening the context/target layout the golden pins. *)
+           render_loc d.explanation.loc ^ "\n" ^ Format.asprintf "%t" d.explanation.value)
+       in
+       try
+         let oc = open_out msg_file in
+         output_string oc (String.concat "\n\n" reports);
+         close_out oc
+       with
+       | _ -> ()
+     end);
   exit !exit_code
 ;;
 
@@ -179,12 +208,12 @@ let read_msg_file path : string =
   | _ -> ""
 ;;
 
-let outcome_of filename : outcome =
+let outcome_of ?(goals = false) filename : outcome =
   let msg_file = Filename.temp_file "violet-test-" ".txt" in
   flush stdout;
   let result =
     match Unix.fork () with
-    | 0 -> run_check_in_child filename ~msg_file
+    | 0 -> run_check_in_child ~goals filename ~msg_file
     | pid ->
       let prev_handler =
         Sys.signal
@@ -203,7 +232,7 @@ let outcome_of filename : outcome =
       let _ = Unix.alarm 0 in
       Sys.set_signal Sys.sigalrm prev_handler;
       (match status with
-       | Unix.WEXITED 0 -> `Ok
+       | Unix.WEXITED 0 -> if goals then `Ok_with (read_msg_file msg_file) else `Ok
        | Unix.WSIGNALED s when s = Sys.sigkill -> `Hung
        | _ -> `Fail (read_msg_file msg_file))
   in
@@ -214,6 +243,7 @@ let outcome_of filename : outcome =
 
 let outcome_str = function
   | `Ok -> "OK"
+  | `Ok_with _ -> "OK"
   | `Fail _ -> "FAIL"
   | `Hung -> "HUNG"
 ;;
@@ -285,7 +315,7 @@ let () =
   List.iter
     (fun vt ->
        match outcome_of vt with
-       | `Ok ->
+       | `Ok | `Ok_with _ ->
          Printf.printf "%s: got OK, expected FAIL\n" vt;
          incr mismatches
        | `Hung ->
@@ -318,6 +348,52 @@ let () =
            end
          end)
     bads;
+  (* goal/ must elaborate (unresolved goals are warnings), and the rendered
+     goal reports must match the committed golden — these pin the pretty
+     printer (operator notation, eliminator folding) across real contexts. *)
+  let goal_entries =
+    if Sys.file_exists "./fixtures/goal" then vt_entries "./fixtures/goal" else []
+  in
+  List.iter
+    (fun vt ->
+       match outcome_of ~goals:true vt with
+       | `Hung ->
+         Printf.printf "%s: got HUNG, expected goal reports\n" vt;
+         incr mismatches
+       | `Fail msg ->
+         Printf.printf "%s: got FAIL, expected goal reports\n--- error ---\n%s\n" vt msg;
+         incr mismatches
+       | `Ok ->
+         (* unreachable: ~goals:true always returns `Ok_with on success *)
+         Printf.printf "%s: unexpected bare OK in goal mode\n" vt;
+         incr mismatches
+       | `Ok_with msg ->
+         let msg = String.trim msg in
+         if promote
+         then begin
+           let oc = open_out (golden_path vt) in
+           output_string oc (msg ^ "\n");
+           close_out oc;
+           Printf.printf "%s: golden written\n" vt
+         end
+         else begin
+           let want =
+             String.trim
+               (try read_file (golden_path vt) with
+                | _ -> "")
+           in
+           if String.equal msg want
+           then Printf.printf "%s: OK (goal reports match)\n" vt
+           else begin
+             Printf.printf
+               "%s: goal-report mismatch\n--- want ---\n%s\n--- got ---\n%s\n"
+               vt
+               want
+               msg;
+             incr mismatches
+           end
+         end)
+    goal_entries;
   if !mismatches > 0
   then begin
     Printf.printf "\n%d mismatch(es)\n" !mismatches;

@@ -1,0 +1,34 @@
+# std/nat.vt with clause bodies replaced by goals, plus equation lemmas whose
+# targets exercise eliminator folding (`add n m` instead of `Nat/elim …`) and
+# operator notation (`n + m`).
+
+\import std/id
+
+\universe 𝓤
+
+\data Nat : 𝓤
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let add : (m n : Nat) -> Nat \where
+  add m n <= \elim m
+  | add zero n => ?add-zero
+  | add (suc m) n => ?add-suc
+
+\operator "\x + \y" => add x y
+  \associativity: \left
+
+\let mul : (m n : Nat) -> Nat \where
+  mul m n <= \elim m
+  | mul zero n => ?mul-zero
+  | mul (suc m) n => ?mul-suc
+
+\operator "\x * \y" => mul x y
+  \associativity: \left
+  \stronger_than: +
+
+\let add-zero-right (m : Nat) : (m + Nat/zero) = m => ?add-zero-right
+
+\let add-suc-lemma (n m : Nat) : (Nat/suc (n + m)) = (n + Nat/suc m) => ?add-suc-lemma
+
+\let distrib (a b c : Nat) : (a * (b + c)) = (a * b + a * c) => ?distrib

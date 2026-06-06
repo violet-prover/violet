@@ -1,0 +1,22 @@
+\import std/id
+\import std/nat
+\import std/empty
+
+\export StackShape Stack
+
+\universe U V
+
+\data StackShape : U
+  | empty : StackShape
+  | cons : U -> StackShape -> StackShape
+
+\operator "\x ◅ \y" => StackShape/cons x y
+  \associativity: \right
+
+\data Stack : StackShape -> U
+  | nil  : Stack StackShape/empty
+  | cons : {s : StackShape} -> Nat -> Stack s -> Stack (Nat ◅ s)
+
+\operator "\x ◁ \y" => Stack/cons x y
+  \associativity: \right
+  \weaker_than: +
