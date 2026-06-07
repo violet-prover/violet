@@ -80,13 +80,13 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | PTermType (tm, ty) ->
        (match Evaluation.force_head ty with
         | Core.Universe l -> m.result <- Some (PType (tm, l))
-        | other ->
+        | _ ->
           Reporter.fatalf
             ~loc
             Type_error
             "expected a type, but got `%s : %s`"
             (Notation.pp_term (view_of_ctx m.ctx) tm)
-            (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl other)))
+            (Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty)))
      | other ->
        Reporter.fatalf Elab_error "KEnsureUniverse: bad result %s" (produced_tag other))
   | GInfer { loc; node = Pi ({ name; bound = a; implicit }, b) } ->
@@ -224,8 +224,10 @@ let rec dispatch (m : machine) (g : goal) : unit =
               Elab_error
               "Bad apply at %s"
               (Notation.pp_term (view_of_ctx m.ctx) f_tm)
-        | ty ->
-          let ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
+        | _ ->
+          let ty =
+            Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl f_ty)
+          in
           Reporter.fatalf
             ~loc
             Type_error

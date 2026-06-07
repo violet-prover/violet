@@ -1,0 +1,17 @@
+# A non-type in type position errors with the type the user WROTE: `g`'s
+# type displays as the alias `Fn`, not its force_head unfolding
+# `(x : Nat) -> Nat`. (Display discipline: inspect forced, print original.
+# An alias of an inductive would not exercise this — eval already inlines
+# those heads — so the alias body here is a Pi, which eval keeps folded.)
+
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let Fn : U => Nat -> Nat
+
+\let g : Fn => \x -> x
+
+\let h (y : g) : U => U

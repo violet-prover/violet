@@ -210,15 +210,17 @@ module PartialRenaming = struct
     let pr = invert cv sp in
     let rhs_tm =
       try rename m cv pr rhs with
-      | Escaping (l, cv') ->
-        Reporter.fatalf
-          Elab_error
-          "local `%s` escapes the solution of %s: it is not one of the meta's arguments, \
-           so the solution may not mention it"
-          (Notation.pp_term
-             cv'
-             (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
-          (Pretty.pp_metavar m)
+      | Escaping _ ->
+        (try rename m cv (invert cv sp) (force_head rhs) with
+         | Escaping (l, cv') ->
+           Reporter.fatalf
+             Elab_error
+             "local `%s` escapes the solution of %s: it is not one of the meta's \
+              arguments, so the solution may not mention it"
+             (Notation.pp_term
+                cv'
+                (Evaluation.quote (Context_view.lvl cv') (RigidLocal (l, Emp))))
+             (Pretty.pp_metavar m))
     in
     let solution = lams pr.dom rhs_tm in
     Reporter.tracef "solution is: %s" (Notation.pp_term Context_view.empty solution)
@@ -370,7 +372,8 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     let x = Meta.fresh_meta_value_with (Context_view.lvl cv) ~origin:{ loc; display } in
     unify ~loc cv (b x) t
   | Flex (m1, sp1), Flex (m2, sp2) when m1 = m2 -> unify_spine ~loc cv sp1 sp2
-  | t, Flex (m, sp) | Flex (m, sp), t -> solve cv m sp t
+  | _, Flex (m, sp) -> solve cv m sp (Evaluation.force a)
+  | Flex (m, sp), _ -> solve cv m sp (Evaluation.force b)
   | expected, actual ->
     Reporter.fatalf
       ~loc
@@ -534,6 +537,37 @@ let%expect_test "Pi domain solves a flex meta" =
   in
   print_endline result;
   [%expect {| solved |}]
+;;
+
+let%expect_test "meta solution keeps defined heads folded" =
+  (* `?m ?= myid zero` where `myid` has a definition must store the solution
+     as the user-visible `myid zero`, not the force_head'd unfolding `zero`.
+     Display (goal targets, error messages) quotes solutions verbatim, so a
+     forced solution leaks delta-unfolded eliminator spines to the user. *)
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  Env.register_definition
+    "myid-fold-test"
+    (Core.VLambda { name = Named "x"; implicit = false; bound = (fun v -> v) });
+  let mv = Meta.fresh_metavar () in
+  let rhs : Core.value =
+    Core.Var ("myid-fold-test", Snoc (Emp, Core.explicit_arg (Core.Var ("zero", Emp))))
+  in
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    Env.S.run
+      ~shadow:Env.Handler.shadow
+      ~not_found:Env.Handler.not_found
+      ~hook:Env.Handler.hook
+    @@ fun () ->
+    unify ~loc cv (Core.Flex (mv, Emp)) rhs;
+    match Meta.lookup_meta mv with
+    | Some v -> Notation.pp_term cv (Evaluation.quote 0 v)
+    | None -> "unsolved"
+  in
+  print_endline result;
+  [%expect {| myid-fold-test zero |}]
 ;;
 
 let%expect_test "spine mismatch rejects cleanly" =

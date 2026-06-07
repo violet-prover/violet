@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- goal reporting better, displays never show unfolded definitions
 - fix unification: Pi domains are now unified, not just codomains, hence `ap f ?hole` can infer `{A}` from `f`'s type
 - displays fold stuck eliminator spines back to the defining function: `n + m` (or `add n m`) instead of the unfolded `Nat/elim n …` spine
 - displays (goals, errors, hover, REPL) prefer user-defined operator notation: `a = b` instead of `Id a b`, with the raw term in a trailing `(i.e. …)`
