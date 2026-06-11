@@ -52,6 +52,13 @@ let bind_constructor
   let ctor_typ_tm = check_type ctx ctor_typ in
   let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
   let pp_ty = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
+  let ctor_flat = ind_name ^ "/" ^ name in
+  (* A constructor inherits its inductive's axiom deps (via the explicit
+     [ind_name] ref) plus any axioms mentioned directly in its own type. *)
+  Axiom_deps.register_def
+    [ ind_name; name ]
+    ~refs:(Axiom_deps.refs_in_term ctor_typ_tm @ [ [ ind_name ] ]);
+  let ctor_axiom_deps = Axiom_deps.display_deps_of [ ind_name; name ] in
   Observer.emit
     (Def
        { path = [ ind_name; name ]
@@ -60,8 +67,8 @@ let bind_constructor
        ; name_loc
        ; ty = ctor_typ
        ; pp_ty
+       ; axiom_deps = ctor_axiom_deps
        });
-  let ctor_flat = ind_name ^ "/" ^ name in
   (* Context: multi-segment for type-directed surface resolution *)
   publish_to_context ~exported [ ind_name; name ] (ctor_typ, `Constructor);
   (* Env: flat key matching the kernel's E.lookup string.
@@ -170,6 +177,8 @@ let handle_top_data_have_type
     let pp_ty =
       Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
     in
+    Axiom_deps.register_def [ name ] ~refs:(Axiom_deps.refs_in_term typ_tm);
+    let ind_axiom_deps = Axiom_deps.display_deps_of [ name ] in
     Observer.emit
       (Def
          { path = [ name ]
@@ -178,6 +187,7 @@ let handle_top_data_have_type
          ; name_loc
          ; ty = typ_val
          ; pp_ty
+         ; axiom_deps = ind_axiom_deps
          });
     let exported = m.is_exported name in
     publish_to_context ~exported [ name ] (typ_val, `Inductive ind_info);

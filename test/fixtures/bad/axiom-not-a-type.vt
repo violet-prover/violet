@@ -1,0 +1,12 @@
+# An axiom whose annotation is a term (not a type) must be rejected with a
+# clean "expected a type" diagnostic — not a crash.
+
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let z : Nat => zero
+
+\axiom bad : z

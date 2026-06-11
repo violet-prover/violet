@@ -1,4 +1,4 @@
 (library
  (name violet_interactive)
  (public_name violet_interactive)
- (libraries violet_common violet_elab violet_kernel asai))
+ (libraries violet_common violet_elab violet_kernel asai yuujinchou))

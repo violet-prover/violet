@@ -101,13 +101,13 @@ let lookup (x : string) : Core.value_ty =
          (List.hd owners))
 ;;
 
-let lookup_path (xs : string list) : Core.value_ty =
+let lookup_path (xs : Trie.path) : Core.value_ty =
   match S.resolve xs with
   | Some (v, _) -> v
   | None -> Reporter.fatalf NoVar_error "`%s` is not defined" (String.concat "/" xs)
 ;;
 
-let has_path (xs : string list) : bool = Option.is_some (S.resolve xs)
+let has_path (xs : Trie.path) : bool = Option.is_some (S.resolve xs)
 
 module Handler = struct
   let pp_path fmt = function

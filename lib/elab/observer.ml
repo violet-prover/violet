@@ -1,28 +1,31 @@
+module Trie = Yuujinchou.Trie
+
 type event =
   | Def of
-      { path : string list
-      ; module_path : string list
+      { path : Trie.path
+      ; module_path : Trie.path
       ; loc : Asai.Range.t
       ; name_loc : Asai.Range.t option
       ; ty : Violet_kernel.Syntax.Core.value_ty
       ; pp_ty : string
+      ; axiom_deps : Trie.path list
       }
   | Use of
-      { path : string list
+      { path : Trie.path
       ; loc : Asai.Range.t
       ; def_loc : Asai.Range.t option
       ; ty : Violet_kernel.Syntax.Core.value_ty
       ; pp_ty : string
       }
   | Goal of
-      { path : string list
+      { path : Trie.path
       ; loc : Asai.Range.t
       ; ty : Violet_kernel.Syntax.Core.value_ty
       ; ctx : (string * string) list
       ; pp_target : string
       }
   | Binder of
-      { path : string list
+      { path : Trie.path
       ; loc : Asai.Range.t
       ; ty : Violet_kernel.Syntax.Core.value_ty option
       ; pp_ty : string option

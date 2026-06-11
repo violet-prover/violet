@@ -495,6 +495,10 @@ let handle_top_record_have_type
       in
       extend_params m.ctx params
     in
+    (* Register the record type under its bare name first, from the refs in its
+       type term, so each field can inherit the record's axiom deps. The record
+       registration is then widened (below) to also include field-type refs. *)
+    Axiom_deps.register_def [ name ] ~refs:(Axiom_deps.refs_in_term typ_tm);
     (* Check field types accumulating the local context.
        These Core terms have correct LocalVar indices: since m.ctx.lvl = 0 at
        top-level, params in ctx_with_params are at LocalVar (k-1-i), the same
@@ -506,6 +510,11 @@ let handle_top_record_have_type
            let fty_val = Evaluation.eval ctx_acc.env fty_tm in
            let fname = Syntax.Name.to_string b.name.Surface.value in
            let pp_ty = Notation.pp_term (view_of_ctx ctx_acc) fty_tm in
+           (* A field inherits its record's axiom deps plus any in its own type. *)
+           Axiom_deps.register_def
+             [ name; fname ]
+             ~refs:(Axiom_deps.refs_in_term fty_tm @ [ [ name ] ]);
+           let field_axiom_deps = Axiom_deps.display_deps_of [ name; fname ] in
            Observer.emit
              (Def
                 { path = [ name; fname ]
@@ -514,12 +523,22 @@ let handle_top_record_have_type
                 ; name_loc = Some b.name.Surface.loc
                 ; ty = fty_val
                 ; pp_ty
+                ; axiom_deps = field_axiom_deps
                 });
            let ctx_acc' = bind ctx_acc b.name fty_val in
            acc @ [ b.name.Surface.value, fty_tm ], ctx_acc')
         ([], ctx_with_params)
         fields
     in
+    (* Widen the record's registration to include every field type's refs, so a
+       definition that uses the record type reports axioms mentioned in fields. *)
+    Axiom_deps.register_def
+      [ name ]
+      ~refs:
+        (Axiom_deps.refs_in_term typ_tm
+         @ List.concat_map
+             (fun (_, fty_tm) -> Axiom_deps.refs_in_term fty_tm)
+             field_ty_terms);
     let n_params = List.length params in
     let n_fields = List.length fields in
     let field_names =

@@ -160,6 +160,11 @@ type top =
       ; ind_ty : pretype
       ; fields : pretype sbinder list
       }
+  | Axiom of
+      { name : string spanned
+      ; bindings : pretype sbinder list
+      ; result_ty : pretype
+      }
 [@@deriving show]
 
 type t =

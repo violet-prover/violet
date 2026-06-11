@@ -1,0 +1,13 @@
+27:31-27:45
+axiom-elim-stack-deps/?use-elim-body
+  --- axioms: a ---
+  --- context ---
+  --- target ---
+  Box
+
+35:33-35:48
+axiom-elim-stack-deps/?use-stack-body
+  --- axioms: a ---
+  --- context ---
+  --- target ---
+  Box

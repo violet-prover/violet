@@ -17,6 +17,8 @@ module Syntax = struct
   module Surface = Surface
 end
 
+module Trie = Yuujinchou.Trie
+
 module C : sig
   type tag =
     | T_DATA
@@ -55,6 +57,7 @@ module C : sig
     | T_NONE
     | T_EXPORT
     | T_RECORD
+    | T_AXIOM
     | T_DOT
 
   type t
@@ -110,6 +113,7 @@ end = struct
     | T_NONE
     | T_EXPORT
     | T_RECORD
+    | T_AXIOM
     | T_DOT
 
   let tag_index = function
@@ -150,6 +154,7 @@ end = struct
     | T_EXPORT -> 34
     | T_RECORD -> 35
     | T_DOT -> 36
+    | T_AXIOM -> 37
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -189,13 +194,14 @@ end = struct
     | Lexer.RIGHT -> T_RIGHT
     | Lexer.NONE -> T_NONE
     | Lexer.RECORD -> T_RECORD
+    | Lexer.AXIOM -> T_AXIOM
     | Lexer.DOT -> T_DOT
   ;;
 
   type t = int
 
-  (* 37 tags (indices 0–36) → mask of 37 bits *)
-  let mask = (1 lsl 37) - 1
+  (* 38 tags (indices 0–37) → mask of 38 bits *)
+  let mask = (1 lsl 38) - 1
   let empty = 0
   let top = mask
   let one t = 1 lsl tag_index t
@@ -479,7 +485,7 @@ module Grammar = struct
     { tp = p.tp; parse }
   ;;
 
-  let p_qname : string list t =
+  let p_qname : Trie.path t =
     let+ first = ident
     and+ rest =
       star
@@ -490,7 +496,7 @@ module Grammar = struct
     first :: rest
   ;;
 
-  let p_import : string list t =
+  let p_import : Trie.path t =
     let+ _ = tok C.T_IMPORT
     and+ path = p_qname in
     path
@@ -1609,8 +1615,21 @@ module Grammar = struct
     { S.loc; value = S.Operator_decl { template; body; options } }
   ;;
 
+  let p_axiom_top : S.top S.spanned t =
+    let+ loc, (name, bindings, ty) =
+      with_full_range
+        (let+ _ = tok C.T_AXIOM
+         and+ name = ident_loc
+         and+ bindings = p_bindings_flat
+         and+ _ = tok C.T_COLON
+         and+ ty = p_term in
+         name, bindings, ty)
+    in
+    { S.loc; value = S.Axiom { name; bindings; result_ty = ty } }
+  ;;
+
   let p_top : S.top S.spanned t =
-    p_let_top || p_data_top || p_record_top || p_operator_top
+    p_let_top || p_axiom_top || p_data_top || p_record_top || p_operator_top
   ;;
 
   let p_tops_loop : S.top S.spanned list t =
@@ -2056,4 +2075,19 @@ let%expect_test "span: typed lambda `\\(x : U) -> x` starts at col 0" =
   let t = parse_expression_string ~source:"<test>" "\\(x : U) -> x" in
   Printf.printf "left_col=%d" (span_left_col t);
   [%expect {| left_col=0 |}]
+;;
+
+let%expect_test "parse \\axiom top form" =
+  print_string
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\axiom ua {A : U} : A -> A\n");
+  [%expect
+    {|
+    [Surface.Axiom {name = "ua";
+       bindings =
+       [{ Surface.name = (Violet_kernel.Syntax.Named "A"); bound = <soup:[N(U)]>;
+          implicit = true }
+         ];
+       result_ty = Π(_ : <soup:[N(A)]>) -> <soup:[N(A)]>}
+      ]
+    |}]
 ;;

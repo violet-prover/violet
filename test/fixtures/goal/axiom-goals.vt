@@ -1,0 +1,20 @@
+# Goal reports list the ambient axioms the enclosing definition depends on.
+# `ua` is an opaque constant of type U; any definition whose type or body
+# mentions it (directly or through a data/record that does) reports it on the
+# `--- axioms: … ---` header line of its goal report.
+
+\universe U
+
+\axiom ua : U
+
+# `direct` uses `ua` in its type, so its goal body reports `ua`.
+\let direct : ua -> ua => ?direct-body
+
+# A data type whose constructor mentions `ua`. `use-box`'s TYPE is just `Box`
+# (no `ua`), so the ONLY path to `ua` is transitively through the constructor
+# `wrap : ua -> Box` applied in its body. The goal `?use-box-body` thus has
+# target `ua` yet still reports `ua` on its ambient header.
+\data Box : U
+  | wrap : ua -> Box
+
+\let use-box : Box => Box/wrap ?use-box-body

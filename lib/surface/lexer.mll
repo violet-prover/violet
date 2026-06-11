@@ -21,6 +21,7 @@ type token =
   | RIGHT [@printer fun fmt () -> fprintf fmt "\\right"]
   | NONE [@printer fun fmt () -> fprintf fmt "\\none"]
   | RECORD [@printer fun fmt () -> fprintf fmt "\\record"]
+  | AXIOM [@printer fun fmt () -> fprintf fmt "\\axiom"]
   | ARROW [@printer fun fmt () -> fprintf fmt "->"]
   | STACK_ARROW [@printer fun fmt () -> fprintf fmt "<="]
   | FAT_ARROW [@printer fun fmt () -> fprintf fmt "=>"]
@@ -114,6 +115,7 @@ rule token =
   | "\\right" { return lexbuf @@ RIGHT }
   | "\\none" { return lexbuf @@ NONE }
   | "\\record" { return lexbuf @@ RECORD }
+  | "\\axiom" { return lexbuf @@ AXIOM }
   | "->" { return lexbuf @@ ARROW }
   | "<=" { return lexbuf @@ STACK_ARROW }
   | "=>" { return lexbuf @@ FAT_ARROW }

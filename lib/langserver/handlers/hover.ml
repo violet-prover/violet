@@ -1,7 +1,17 @@
-let render_type ~name ~ty =
-  match ty with
-  | Some t -> Printf.sprintf "```violet\n%s : %s\n```" name t
-  | None -> Printf.sprintf "```violet\n%s\n```" name
+let render_type ?(axiom_deps = []) ~name ~ty () =
+  let head =
+    match ty with
+    | Some t -> Printf.sprintf "```violet\n%s : %s\n```" name t
+    | None -> Printf.sprintf "```violet\n%s\n```" name
+  in
+  match axiom_deps with
+  | [] -> head
+  | deps ->
+    (* each dep is a complete id path; render it "/"-joined *)
+    Printf.sprintf
+      "%s\n\ndepends on axioms: %s"
+      head
+      (String.concat ", " (List.map (String.concat "/") deps))
 ;;
 
 let render_goal ~name ~ctx ~target =
@@ -34,17 +44,20 @@ let handle (store : Doc_store.t) ~uri ~(position : Linol_lsp.Lsp.Types.Position.
         position.character
     in
     (match Violet_interactive.Index.find_at ~source:filename ~line ~col idx with
-     | Some { kind = Def; path; pp_ty; _ } | Some { kind = Use; path; pp_ty; _ } ->
+     (* Use entries always carry [axiom_deps = []], so the deps line shows only
+        at Def sites; uses inherit the empty list and render no extra line. *)
+     | Some { kind = Def; path; pp_ty; axiom_deps; _ }
+     | Some { kind = Use; path; pp_ty; axiom_deps; _ } ->
        let name = String.concat "/" path in
-       Some (mk_hover (render_type ~name ~ty:pp_ty))
+       Some (mk_hover (render_type ~axiom_deps ~name ~ty:pp_ty ()))
      | Some { kind = Goal; path; ctx; pp_target = Some target; _ } ->
        let name = String.concat "/" path in
        Some (mk_hover (render_goal ~name ~ctx ~target))
      | Some { kind = Goal; path; pp_target = None; _ } ->
        let name = String.concat "/" path in
-       Some (mk_hover (render_type ~name ~ty:None))
+       Some (mk_hover (render_type ~name ~ty:None ()))
      | Some { kind = Binder; path; pp_ty; _ } ->
        let name = String.concat "/" path in
-       Some (mk_hover (render_type ~name ~ty:pp_ty))
+       Some (mk_hover (render_type ~name ~ty:pp_ty ()))
      | None -> None)
 ;;

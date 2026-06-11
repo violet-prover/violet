@@ -1,5 +1,7 @@
+module Trie = Yuujinchou.Trie
+
 type definition_result =
-  { path : string list
+  { path : Trie.path
   ; loc : Asai.Range.t
   }
 

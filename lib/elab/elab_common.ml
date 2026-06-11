@@ -162,6 +162,16 @@ type goal =
       ; typ_tm : Core.term
       ; typ_val : Core.value_ty
       }
+  | GTopAxiom of
+      { loc : t
+      ; name : string Surface.spanned
+      ; bindings : Surface.pretype Surface.sbinder list
+      ; result_ty : Surface.pretype
+      }
+  | KTopAxiom_HaveType of
+      { loc : t
+      ; name : string Surface.spanned
+      }
   | KTopElimDef_HaveBody of
       { loc : t
       ; name : string Surface.spanned
@@ -352,10 +362,19 @@ let emit_goal_report
      :: m.deferred_goal_reports
 ;;
 
-let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
+let render_goal_report ~(module_name : string) ?(def_name = "") (g : deferred_goal) : unit
+  =
   let { dg_loc = loc; dg_name = name; dg_ctx = ctx; dg_target = target } = g in
   let buf = Buffer.create 128 in
   Buffer.add_string buf (Printf.sprintf "%s/?%s\n" module_name name);
+  (match Axiom_deps.display_deps_of [ def_name ] with
+   | [] -> ()
+   | deps ->
+     Buffer.add_string
+       buf
+       (Printf.sprintf
+          "  --- axioms: %s ---\n"
+          (String.concat ", " (List.map (String.concat "/") deps))));
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
   let names =
@@ -380,9 +399,9 @@ let render_goal_report ~(module_name : string) (g : deferred_goal) : unit =
   Reporter.emitf ~loc Goal_report "%s" (Buffer.contents buf)
 ;;
 
-let flush_goal_reports (m : machine) : unit =
+let flush_goal_reports ?(def_name = "") (m : machine) : unit =
   List.iter
-    (render_goal_report ~module_name:m.module_name)
+    (render_goal_report ~module_name:m.module_name ~def_name)
     (List.rev m.deferred_goal_reports);
   m.deferred_goal_reports <- []
 ;;
@@ -395,6 +414,7 @@ let name_of_top : Surface.top -> string = function
   | Surface.Universe_decl _ -> "<universe_decl>"
   | Surface.Operator_decl _ -> "<operator_decl>"
   | Surface.Record { name; _ } -> name.Surface.value
+  | Surface.Axiom { name; _ } -> name.Surface.value
 ;;
 
 let publish_to_context ~exported path datum =

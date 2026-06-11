@@ -1,0 +1,13 @@
+11:27-11:39
+axiom-goals/?direct-body
+  --- axioms: ua ---
+  --- context ---
+  --- target ---
+  (_ : ua) -> ua
+
+20:32-20:45
+axiom-goals/?use-box-body
+  --- axioms: ua ---
+  --- context ---
+  --- target ---
+  ua

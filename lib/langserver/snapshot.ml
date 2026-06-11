@@ -1,5 +1,7 @@
+module Trie = Yuujinchou.Trie
+
 type t =
-  { module_path : string list
+  { module_path : Trie.path
   ; diagnostics : Linol_lsp.Lsp.Types.Diagnostic.t list
   ; index : Violet_interactive.Index.t
   ; last_good_index : Violet_interactive.Index.t

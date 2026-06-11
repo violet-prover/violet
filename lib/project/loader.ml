@@ -1,3 +1,5 @@
+module Trie = Yuujinchou.Trie
+
 type mode =
   | Project of Resolve.project
   | Single_file of string
@@ -51,7 +53,7 @@ type modules = (string, Violet_surface.Surface.t) Hashtbl.t
 let rec prepare_dependencies
           ?(text_override = fun _ -> None)
           (mode : mode)
-          (prefix_segs : string list)
+          (prefix_segs : Trie.path)
           (mods : modules)
           (deps : dependencies)
           (key : string)

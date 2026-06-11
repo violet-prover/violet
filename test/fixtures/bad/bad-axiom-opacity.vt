@@ -1,0 +1,10 @@
+# Axioms are opaque: two distinct axioms NEVER unify, even at the same type.
+# `a` and `b` are both rigid neutrals; using `a` where `b` is expected must
+# fail to unify, NOT silently unfold to anything.
+
+\universe U
+
+\axiom a : U
+\axiom b : U
+
+\let coerce (x : a) : b => x

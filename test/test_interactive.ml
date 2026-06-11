@@ -761,6 +761,47 @@ let test_notation_hover () =
     ()
 ;;
 
+(* \axioms command logic: deps_of filtered to exclude self.
+   Elaborate a module with an axiom `axd_ua` and a let `axd_foo` that uses it,
+   then assert the dependency tracking matches what handle_axioms relies on. *)
+let test_axiom_deps () =
+  Violet_elab.Axiom_deps.reset ();
+  let src =
+    {|\universe U
+\axiom axd_ua : U
+\let axd_foo : U => axd_ua
+|}
+  in
+  let _idx = check_module_collecting ~filename:"test_axiom_deps.vt" src in
+  (* names are complete Yuujinchou id paths; render "/"-joined for messages *)
+  let show ps = String.concat ", " (List.map (String.concat "/") ps) in
+  (* axd_foo depends on axd_ua (the axiom) *)
+  let foo_deps = Violet_elab.Axiom_deps.deps_of [ "axd_foo" ] in
+  if List.mem [ "axd_ua" ] foo_deps
+  then Format.printf "axiom_deps OK  axd_foo depends on axd_ua@."
+  else begin
+    Format.printf "axiom_deps FAIL  axd_foo deps: [%s]@." (show foo_deps);
+    exit 1
+  end;
+  (* handle_axioms display: filter out self — so display set for axd_foo excludes axd_foo *)
+  let foo_display = Violet_elab.Axiom_deps.display_deps_of [ "axd_foo" ] in
+  if foo_display = [ [ "axd_ua" ] ]
+  then Format.printf "axiom_deps OK  axd_foo display set is [axd_ua]@."
+  else begin
+    Format.printf "axiom_deps FAIL  axd_foo display set: [%s]@." (show foo_display);
+    exit 1
+  end;
+  (* axd_ua is an axiom: deps_of returns [axd_ua]; display excludes self => empty *)
+  let ua_display = Violet_elab.Axiom_deps.display_deps_of [ "axd_ua" ] in
+  if ua_display = []
+  then
+    Format.printf "axiom_deps OK  axd_ua display set is empty (no axiom dependencies)@."
+  else begin
+    Format.printf "axiom_deps FAIL  axd_ua display set: [%s]@." (show ua_display);
+    exit 1
+  end
+;;
+
 let () =
   test_elim_header_hover ();
   test_collector_roundtrip ();
@@ -774,5 +815,6 @@ let () =
   test_hover_events ();
   test_notation_hover ();
   test_find_at_tiebreak ();
+  test_axiom_deps ();
   Format.printf "all interactive tests passed@."
 ;;

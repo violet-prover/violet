@@ -18,4 +18,5 @@
   linol
   linol.lsp
   linol-eio
-  tsort))
+  tsort
+  yuujinchou))

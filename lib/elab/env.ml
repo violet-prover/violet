@@ -40,7 +40,7 @@ let lookup (x : string) : Core.value =
       (String.concat "/" [ x ])
 ;;
 
-let lookup_path (xs : string list) : Core.value =
+let lookup_path (xs : Trie.path) : Core.value =
   match S.resolve xs with
   | Some (v, _) -> v
   | None ->
