@@ -42,3 +42,8 @@ let accept_elim m ~loc ~name ~ty ~reducer =
   try Check.accept_elim m ~name ~ty ~reducer with
   | Violet_kernel.Error.Kernel_error err -> report_rejection ~loc ~name err
 ;;
+
+let accept_axiom m ~loc ~name ~ty =
+  try Check.accept_axiom m ~name ~ty with
+  | Violet_kernel.Error.Kernel_error err -> report_rejection ~loc ~name err
+;;

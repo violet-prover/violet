@@ -797,6 +797,9 @@ let handle_elim_def_have_body
     let pp_ty =
       Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
     in
+    let refs = Axiom_deps.refs_in_term typ_tm @ Axiom_deps.refs_in_term term in
+    Axiom_deps.register_def [ name ] ~refs;
+    let axiom_deps = Axiom_deps.display_deps_of [ name ] in
     Observer.emit
       (Def
          { path = [ name ]
@@ -805,6 +808,7 @@ let handle_elim_def_have_body
          ; name_loc
          ; ty = typ_val
          ; pp_ty
+         ; axiom_deps
          });
     let exported = m.is_exported name in
     let body_val = Evaluation.eval m.ctx.env term in

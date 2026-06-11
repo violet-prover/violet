@@ -1,0 +1,65 @@
+# Univalence as an opaque axiom, exercised against std's eliminator-based `Id`.
+# An axiom has a type but never reduces.
+#
+# Univalence is `(A ≃ B) -> Id A B`: the premise is an EQUIVALENCE, not a bare
+# function `A -> B` (that would be a far stronger, INCONSISTENT statement). The
+# choice of how to encode `≃` matters, so we test TWO standard encodings:
+#
+#   1. quasi-inverse (`Equiv`): a map with a two-sided inverse. Simple, but
+#      `is-qinv` is NOT a mere proposition.
+#   2. bi-invertible (`BiInv`): a map with a (possibly distinct) left and right
+#      inverse. `is-biinv` IS a mere proposition — which is why HoTT prefers it
+#      (or the half-adjoint form) as the "correct" notion of equivalence.
+#
+# Both are logically equivalent to real univalence; testing both confirms the
+# axiom machinery is agnostic to the equivalence encoding.
+#
+# (`Id {A}` / `Id {B}` give std's implicit type argument explicitly: a record
+# field whose type applies an inductive with an *inferred* implicit currently
+# trips a kernel bug — see the separately-filed report. Writing the implicit
+# is legitimate surface syntax and keeps this fixture honest.)
+
+\import std/id
+
+\universe U
+
+# --- 1. quasi-inverse ------------------------------------------------------
+
+\record Equiv (A B : U) : U
+  | to : A -> B
+  | from : B -> A
+  | from-to : (a : A) -> Id {A} (from (to a)) a
+  | to-from : (b : B) -> Id {B} (to (from b)) b
+
+\axiom ua {A B : U} : Equiv A B -> Id A B
+
+# Univalence turns an equivalence into an identification of types.
+\let path-of {A B : U} (e : Equiv A B) : Id A B => ua e
+
+# Compatibility with `transport`: coerce along the identification `ua` yields.
+# Because `ua` is opaque the result is a well-typed STUCK term — exactly how a
+# postulated (non-cubical) univalence behaves: the eliminator-based `transport`
+# happily accepts an axiom-produced path but never computes it away.
+\let coe {A B : U} (e : Equiv A B) : A -> B =>
+  transport (\X -> X) A B (ua e)
+
+# Compatibility with `sym`: the identification reverses like any other `Id`.
+\let path-of-inv {A B : U} (e : Equiv A B) : Id B A => sym (ua e)
+
+# --- 2. bi-invertible ------------------------------------------------------
+
+\record BiInv (A B : U) : U
+  | fwd : A -> B
+  | bwd-l : B -> A
+  | is-linv : (a : A) -> Id {A} (bwd-l (fwd a)) a
+  | bwd-r : B -> A
+  | is-rinv : (b : B) -> Id {B} (fwd (bwd-r b)) b
+
+\axiom ua-biinv {A B : U} : BiInv A B -> Id A B
+
+\let path-of-biinv {A B : U} (e : BiInv A B) : Id A B => ua-biinv e
+
+\let coe-biinv {A B : U} (e : BiInv A B) : A -> B =>
+  transport (\X -> X) A B (ua-biinv e)
+
+\let path-of-biinv-inv {A B : U} (e : BiInv A B) : Id B A => sym (ua-biinv e)

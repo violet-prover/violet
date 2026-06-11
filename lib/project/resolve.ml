@@ -1,3 +1,5 @@
+module Trie = Yuujinchou.Trie
+
 type project =
   { root : string (* absolute path to project root *)
   ; manifest : Manifest.t
@@ -214,7 +216,7 @@ let%expect_test "path dep resolves to absolute root" =
 
 (* Resolve an import path that has already crossed a dep boundary. Only the
    dep's local_segments are visible — the dep's own deps are private. *)
-let resolve_in_dep (proj : project) (path : string list) : string =
+let resolve_in_dep (proj : project) (path : Trie.path) : string =
   match path with
   | [] -> raise (Project_error "empty import path")
   | first :: _ when List.mem first proj.local_segments ->
@@ -231,7 +233,7 @@ let resolve_in_dep (proj : project) (path : string list) : string =
    `None` when the import stays local to `proj`. Callers thread the prefix to
    build a canonical module path so the same physical file gets a single key
    regardless of which consumer's spelling reached it. *)
-let resolve_import_in (proj : project) (path : string list)
+let resolve_import_in (proj : project) (path : Trie.path)
   : project * string option * string
   =
   match path with
@@ -255,7 +257,7 @@ let resolve_import_in (proj : project) (path : string list)
           (Project_error (Printf.sprintf "unresolved import: %s" (String.concat "/" path))))
 ;;
 
-let resolve_import (proj : project) (path : string list) : string =
+let resolve_import (proj : project) (path : Trie.path) : string =
   let _, _, fp = resolve_import_in proj path in
   fp
 ;;

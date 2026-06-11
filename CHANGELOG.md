@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `\axiom` statement to claim opaque axiom
 - goal reporting better, displays never show unfolded definitions
 - fix unification: Pi domains are now unified, not just codomains, hence `ap f ?hole` can infer `{A}` from `f`'s type
 - displays fold stuck eliminator spines back to the defining function: `n + m` (or `add n m`) instead of the unfolded `Nat/elim n …` spine

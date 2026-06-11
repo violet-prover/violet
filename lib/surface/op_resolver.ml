@@ -26,6 +26,14 @@
    Literal parts may not start with `\`, which is reserved for hole markers
    and language keywords. *)
 
+(* Yuujinchou.Trie plus a [pp_path], so `Trie.path` fields can sit inside the
+   `[@@deriving show]` types below (ppx looks up `Trie.pp_path`). *)
+module Trie = struct
+  include Yuujinchou.Trie
+
+  let pp_path fmt (p : path) = Format.pp_print_string fmt (String.concat "/" p)
+end
+
 type name_part =
   | Hole of string
   | Lit of string
@@ -210,7 +218,7 @@ let parse_template (template : string) : name_part list =
 
 (* The literal parts of a template, in order, used as the cross-reference
    name path for `\weaker_than:` / `\stronger_than:` / `\same_as:`. *)
-let ref_path_of_parts (parts : name_part list) : string list =
+let ref_path_of_parts (parts : name_part list) : Trie.path =
   List.filter_map
     (function
       | Lit s -> Some s
@@ -235,9 +243,9 @@ let hole_names_of_parts (parts : name_part list) : string list =
    derived shape, associativity, body, and the raw precedence constraints. *)
 
 type op_constraint =
-  | C_Weaker_than of string list
-  | C_Stronger_than of string list
-  | C_Same_as of string list
+  | C_Weaker_than of Trie.path
+  | C_Stronger_than of Trie.path
+  | C_Same_as of Trie.path
 [@@deriving show]
 
 type op_decl =
@@ -246,7 +254,7 @@ type op_decl =
   ; assoc : Surface.op_assoc
   ; body : Surface.preterm
   ; hole_names : string list
-  ; ref_path : string list
+  ; ref_path : Trie.path
   ; constraints : op_constraint list
   ; raw_template : string (* original string, for diagnostics *)
   ; origin : string
@@ -598,11 +606,11 @@ module Path_set = Set.Make (struct
 
 (* Union-find over ref_paths. *)
 module UF = struct
-  type t = { mutable parent : string list Path_map.t }
+  type t = { mutable parent : Trie.path Path_map.t }
 
   let create () : t = { parent = Path_map.empty }
 
-  let rec find (uf : t) (x : string list) : string list =
+  let rec find (uf : t) (x : Trie.path) : Trie.path =
     match Path_map.find_opt x uf.parent with
     | None ->
       uf.parent <- Path_map.add x x uf.parent;
@@ -614,7 +622,7 @@ module UF = struct
       r
   ;;
 
-  let union (uf : t) (a : string list) (b : string list) : unit =
+  let union (uf : t) (a : Trie.path) (b : Trie.path) : unit =
     let ra = find uf a in
     let rb = find uf b in
     if ra <> rb then uf.parent <- Path_map.add ra rb uf.parent
@@ -634,13 +642,13 @@ let make_graph () : prec_graph =
   { uf = UF.create (); edges = Path_map.empty; known_paths = Path_set.empty }
 ;;
 
-let add_node (g : prec_graph) (p : string list) : unit =
+let add_node (g : prec_graph) (p : Trie.path) : unit =
   let _ = UF.find g.uf p in
   g.known_paths <- Path_set.add p g.known_paths
 ;;
 
 (* Add a tighter → looser edge between class representatives. *)
-let add_edge (g : prec_graph) ~(tighter : string list) ~(looser : string list) : unit =
+let add_edge (g : prec_graph) ~(tighter : Trie.path) ~(looser : Trie.path) : unit =
   add_node g tighter;
   add_node g looser;
   let t = UF.find g.uf tighter in
@@ -649,7 +657,7 @@ let add_edge (g : prec_graph) ~(tighter : string list) ~(looser : string list) :
   g.edges <- Path_map.add t (Path_set.add l cur) g.edges
 ;;
 
-let unite (g : prec_graph) (a : string list) (b : string list) : unit =
+let unite (g : prec_graph) (a : Trie.path) (b : Trie.path) : unit =
   add_node g a;
   add_node g b;
   UF.union g.uf a b
@@ -685,11 +693,11 @@ let build_graph (table : op_table) : prec_graph =
 
 (* Detect a directed cycle. Returns Some (path) on the first cycle found,
    None if acyclic. Walks class representatives only. *)
-let detect_cycle (g : prec_graph) : string list list option =
+let detect_cycle (g : prec_graph) : Trie.path list option =
   let on_stack = Hashtbl.create 16 in
   let visited = Hashtbl.create 16 in
   let result = ref None in
-  let rec dfs (path : string list list) (n : string list) =
+  let rec dfs (path : Trie.path list) (n : Trie.path) =
     if !result <> None
     then ()
     else if Hashtbl.mem on_stack n
@@ -1622,6 +1630,12 @@ let lower_top_with (table : op_table) : Surface.top -> Surface.top = function
       ; intros
       ; target
       ; clauses = List.map (lower_clause table) clauses
+      }
+  | Surface.Axiom { name; bindings; result_ty } ->
+    Surface.Axiom
+      { name
+      ; bindings = lower_binders table bindings
+      ; result_ty = lower_preterm table result_ty
       }
   | Surface.Universe_decl _ as u -> u
   | Surface.Operator_decl _ ->

@@ -26,6 +26,7 @@ let handle_universe_decl (m : machine) (names : string Surface.spanned list) =
             ; name_loc = Some loc
             ; ty
             ; pp_ty
+            ; axiom_deps = []
             }))
     names;
   m.result <- Some PUnit
@@ -74,6 +75,9 @@ let handle_top_let_have_body
     let pp_ty =
       Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)
     in
+    let refs = Axiom_deps.refs_in_term typ_tm @ Axiom_deps.refs_in_term term in
+    Axiom_deps.register_def [ name.Surface.value ] ~refs;
+    let axiom_deps = Axiom_deps.display_deps_of [ name.Surface.value ] in
     Observer.emit
       (Def
          { path = [ name.Surface.value ]
@@ -82,6 +86,7 @@ let handle_top_let_have_body
          ; name_loc = Some name.Surface.loc
          ; ty = typ_val
          ; pp_ty
+         ; axiom_deps
          });
     let exported = m.is_exported name.Surface.value in
     publish_to_context ~exported [ name.Surface.value ] (typ_val, `Defn);
@@ -97,4 +102,46 @@ let handle_top_let_have_body
     m.result <- Some PUnit
   | other ->
     Reporter.fatalf Elab_error "KTopLet_HaveBody: bad result %s" (produced_tag other)
+;;
+
+let handle_top_axiom (m : machine) ~loc ~name ~bindings ~result_ty =
+  let typ : Surface.pretype =
+    List.fold_right
+      (fun (binding : Surface.pretype Surface.sbinder) return_ty ->
+         { Surface.loc = return_ty.Surface.loc; node = Surface.Pi (binding, return_ty) })
+      bindings
+      result_ty
+  in
+  push m (KTopAxiom_HaveType { loc; name });
+  push m (GInferType typ)
+;;
+
+let handle_top_axiom_have_type (m : machine) ~loc ~(name : string Surface.spanned) =
+  match take_result m with
+  | PType (typ_tm, _) ->
+    let typ_val = Evaluation.eval m.ctx.env typ_tm in
+    let pp_ty = Notation.pp_term (view_of_ctx m.ctx) typ_tm in
+    let nm = name.Surface.value in
+    (* Opaque: register as an axiom and publish a stuck neutral. Crucially we
+       do NOT call Env.register_definition, so the unifier never unfolds it. *)
+    Axiom_deps.register_axiom [ nm ];
+    let display_deps = Axiom_deps.display_deps_of [ nm ] in
+    Observer.emit
+      (Def
+         { path = [ nm ]
+         ; module_path = String.split_on_char '/' m.module_name
+         ; loc
+         ; name_loc = Some name.Surface.loc
+         ; ty = typ_val
+         ; pp_ty
+         ; axiom_deps = display_deps
+         });
+    let exported = m.is_exported nm in
+    publish_to_context ~exported [ nm ] (typ_val, `Defn);
+    publish_to_env ~exported [ nm ] (Core.Var (nm, Bwd.Emp), `Defn);
+    let qname = m.module_name ^ "." ^ nm in
+    Kernel_accept.accept_axiom m.kernel_module ~loc ~name:qname ~ty:typ_tm;
+    m.result <- Some PUnit
+  | other ->
+    Reporter.fatalf Elab_error "KTopAxiom_HaveType: bad result %s" (produced_tag other)
 ;;

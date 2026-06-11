@@ -221,6 +221,34 @@ let%expect_test "find-references resolves each location to its own file's uri an
     |}]
 ;;
 
+let axiom_deps_source =
+  String.concat
+    "\n"
+    [ {|\universe U|} (* L0 *)
+    ; {|\axiom ua : U|} (* L1 *)
+    ; {|\let foo : U => ua|} (* L2 *)
+    ; ""
+    ]
+;;
+
+let%expect_test "hover on a def that depends on an axiom shows depends-on line" =
+  let store, _pi, _c, uri = setup axiom_deps_source ~module_name:"AxiomDeps" in
+  (* [foo] is declared at LSP line 2, col 5 (\let foo ...). *)
+  let pos = Linol_lsp.Lsp.Types.Position.create ~line:2 ~character:5 in
+  (match Hover.handle store ~uri ~position:pos with
+   | None -> Printf.printf "no-hover"
+   | Some h ->
+     (match h.contents with
+      | `MarkupContent mc ->
+        Printf.printf "has-dep-line=%b" (contains ~affix:"depends on axioms: ua" mc.value)
+      | _ -> Printf.printf "other"));
+  [%expect
+    {|
+    +checking [module] AxiomDeps (/tmp/AxiomDeps.vt)
+    has-dep-line=true
+    |}]
+;;
+
 let%expect_test "goto-definition across modules returns the target file's uri" =
   let store, pi, c, main_uri, dep_path, _main_path = setup_cross_file () in
   (* Goto-def of the [f] use in main.vt (LSP line 2, col 22). Its definition is

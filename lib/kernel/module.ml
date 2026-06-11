@@ -17,12 +17,14 @@ type decl =
       { ty : Core.term
       ; reducer : Core.elim_head
       }
+  | Axiom of { ty : Core.term }
 
 let show_decl = function
   | Let _ -> "let"
   | Data _ -> "data"
   | Ctor _ -> "ctor"
   | Elim _ -> "elim"
+  | Axiom _ -> "axiom"
 ;;
 
 type t = (string, decl) Hashtbl.t
@@ -77,4 +79,14 @@ let%expect_test "two independent modules don't collide" =
    | Some _, Some _ -> print_string "both present"
    | _ -> print_string "missing");
   [%expect {| both present |}]
+;;
+
+let%expect_test "declare an axiom then look it up" =
+  let m = create () in
+  let u : Core.term = Core.Universe Level.LZero in
+  declare m "ua" (Axiom { ty = u });
+  (match lookup m "ua" with
+   | Some d -> Printf.printf "found: %s" (show_decl d)
+   | None -> Printf.printf "not found");
+  [%expect {| found: axiom |}]
 ;;

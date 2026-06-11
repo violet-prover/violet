@@ -1,0 +1,35 @@
+# Axiom dependency tracking reaches THROUGH `<= \elim` (Elim_def) and `where`
+# (Stack_def) definitions. Both kinds of definition emit a Def whose
+# `axiom_deps` must reflect the axioms their signature/clause bodies touch;
+# previously the elim-def Def site hardcoded none, so a downstream user that
+# reached an axiom *only* through such a definition silently reported none.
+
+\universe U
+
+\data Unit : U
+  | tt : Unit
+
+# `a` is an opaque postulated `Unit`.
+\axiom a : Unit
+
+\data Box : U
+  | box : Box
+
+# An `<= \elim` definition. Its TYPE is `Box -> Unit` (no `a`); the only path to
+# `a` is the clause body. Tracking must register `elimf`'s axiom set so a
+# downstream user inherits it.
+\let elimf : (b : Box) -> Unit \where
+  elimf b <= \elim b
+  | elimf box => a
+
+# `use-elim`'s type is `Unit`; its body reaches `a` ONLY through `elimf`. The
+# goal `?use-elim-body` therefore reports `a` on its ambient header.
+\let use-elim : Unit => elimf ?use-elim-body
+
+# A `where` stack-def, same shape: type `Box -> Unit`, body reaches `a`.
+\let stackf : (b : Box) -> Unit \where
+  <= \intro
+  | stackf b => a
+
+# `use-stack`'s type is `Unit`; its body reaches `a` ONLY through `stackf`.
+\let use-stack : Unit => stackf ?use-stack-body

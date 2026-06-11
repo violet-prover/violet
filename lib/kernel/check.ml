@@ -66,4 +66,9 @@ module Make (M : Views.META_VIEW) = struct
     check_term 0 ty;
     Module.declare m name (Module.Elim { ty; reducer })
   ;;
+
+  let accept_axiom m ~name ~ty =
+    check_term 0 ty;
+    Module.declare m name (Module.Axiom { ty })
+  ;;
 end

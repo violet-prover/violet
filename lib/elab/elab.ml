@@ -475,6 +475,9 @@ let rec dispatch (m : machine) (g : goal) : unit =
     Elab_decl.handle_top_let_have_type m ~loc ~name ~body ~bindings
   | KTopLet_HaveBody { loc; name; typ_tm; typ_val } ->
     Elab_decl.handle_top_let_have_body m ~loc ~name ~typ_tm ~typ_val
+  | GTopAxiom { loc; name; bindings; result_ty } ->
+    Elab_decl.handle_top_axiom m ~loc ~name ~bindings ~result_ty
+  | KTopAxiom_HaveType { loc; name } -> Elab_decl.handle_top_axiom_have_type m ~loc ~name
   | KTopElimDef_HaveBody { loc; name; typ_tm; typ_val; func_name; target_pos } ->
     Elab_elim.handle_elim_def_have_body
       m
@@ -879,6 +882,8 @@ let check_top
         ; target
         ; clauses
         }
+    | Surface.Axiom { name; bindings; result_ty } ->
+      GTopAxiom { loc; name; bindings; result_ty }
     | Surface.Operator_decl _ ->
       Reporter.fatalf
         ~loc
@@ -888,7 +893,7 @@ let check_top
   in
   push m g;
   ignore (drive m);
-  flush_goal_reports m;
+  flush_goal_reports ~def_name:(name_of_top top) m;
   if !(m.pending_goals) > 0
   then
     Reporter.emitf

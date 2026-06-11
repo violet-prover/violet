@@ -1,4 +1,5 @@
 module IntMap = Map.Make (Int)
+module Trie = Yuujinchou.Trie
 
 type entry_kind =
   | Def
@@ -7,7 +8,7 @@ type entry_kind =
   | Binder
 
 type entry =
-  { path : string list
+  { path : Trie.path
   ; kind : entry_kind
   ; loc : Asai.Range.t
   ; def_loc : Asai.Range.t option
@@ -16,6 +17,7 @@ type entry =
   ; pp_ty : string option
   ; ctx : (string * string) list
   ; pp_target : string option
+  ; axiom_deps : Trie.path list
   }
 
 type t = { by_offset : entry list IntMap.t }
@@ -26,13 +28,14 @@ let empty = { by_offset = IntMap.empty }
 
 (* The module path of a Def event (segments of the emitting module); other
    events carry no module path. *)
-let module_path_of_event : Violet_elab.Observer.event -> string list = function
+let module_path_of_event : Violet_elab.Observer.event -> Trie.path = function
   | Violet_elab.Observer.Def { module_path; _ } -> module_path
   | _ -> []
 ;;
 
 let entry_of_event : Violet_elab.Observer.event -> entry = function
-  | Violet_elab.Observer.Def { path; module_path = _; loc; name_loc; ty; pp_ty } ->
+  | Violet_elab.Observer.Def
+      { path; module_path = _; loc; name_loc; ty; pp_ty; axiom_deps } ->
     { path
     ; kind = Def
     ; loc
@@ -42,6 +45,7 @@ let entry_of_event : Violet_elab.Observer.event -> entry = function
     ; pp_ty = Some pp_ty
     ; ctx = []
     ; pp_target = None
+    ; axiom_deps
     }
   | Violet_elab.Observer.Use { path; loc; def_loc; ty; pp_ty } ->
     { path
@@ -53,6 +57,7 @@ let entry_of_event : Violet_elab.Observer.event -> entry = function
     ; pp_ty = Some pp_ty
     ; ctx = []
     ; pp_target = None
+    ; axiom_deps = []
     }
   | Violet_elab.Observer.Goal { path; loc; ty; ctx; pp_target } ->
     { path
@@ -64,6 +69,7 @@ let entry_of_event : Violet_elab.Observer.event -> entry = function
     ; pp_ty = None
     ; ctx
     ; pp_target = Some pp_target
+    ; axiom_deps = []
     }
   | Violet_elab.Observer.Binder { path; loc; ty; pp_ty } ->
     { path
@@ -75,6 +81,7 @@ let entry_of_event : Violet_elab.Observer.event -> entry = function
     ; pp_ty
     ; ctx = []
     ; pp_target = None
+    ; axiom_deps = []
     }
 ;;
 

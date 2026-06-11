@@ -8,12 +8,13 @@ module Evaluation = Violet_elab.Wiring.Eval
 module Reporter = Violet_surface.Reporter
 module Context = Violet_elab.Context
 module Env = Violet_elab.Env
+module Trie = Yuujinchou.Trie
 module Tty = Asai.Tty.Make (Reporter.Message)
 
 let prompt = "> "
 let history_file = Filename.concat (Sys.getenv "HOME") ".violet_history"
 
-let apply_visibility ~(module_path : string list) ~(imports : string list list) =
+let apply_visibility ~(module_path : Trie.path) ~(imports : Trie.path list) =
   let open Yuujinchou.Language in
   let expose path =
     Context.S.modify_visible (union [ all; renaming path [] ]);
@@ -51,7 +52,7 @@ let print_browse () =
   Printf.printf "%!"
 ;;
 
-let commands = [ "\\quit"; "\\type"; "\\browse"; "\\normalize"; "\\open" ]
+let commands = [ "\\quit"; "\\type"; "\\browse"; "\\normalize"; "\\open"; "\\axioms" ]
 
 (* Identifier characters in Violet match the parser's `ident` token: anything
    that isn't whitespace, brackets, or a path separator boundary. The token
@@ -104,6 +105,7 @@ type action =
   | Eval of string
   | Type_of of string
   | Open of string list
+  | Axioms of string
   | Unknown of string
 
 let parse_command (line : string) : action option =
@@ -119,6 +121,7 @@ let parse_command (line : string) : action option =
     | "\\type" -> Some (Type_of rest)
     | "\\normalize" -> Some (Eval rest)
     | "\\open" -> Some (Open (String.split_on_char '/' rest))
+    | "\\axioms" -> Some (Axioms rest)
     | other -> Some (Unknown other)
   end
   else Some (Eval trimmed)
@@ -156,7 +159,7 @@ let handle_type ~(module_name : string) (src : string) : unit =
   Printf.printf "%s\n%!" (ElabREPL.pretty_repl_value ty)
 ;;
 
-let handle_open (path : string list) : unit =
+let handle_open (path : Trie.path) : unit =
   match path with
   | [] | [ "" ] -> Printf.printf "usage: \\open PATH (e.g. \\open std/nat)\n%!"
   | _ ->
@@ -164,6 +167,15 @@ let handle_open (path : string list) : unit =
     Context.S.modify_visible (union [ all; renaming path [] ]);
     Env.S.modify_visible (union [ all; renaming path [] ]);
     Printf.printf "opened %s\n%!" (String.concat "/" path)
+;;
+
+let handle_axioms (name : string) : unit =
+  match Violet_elab.Axiom_deps.display_deps_of (String.split_on_char '/' name) with
+  | [] -> Printf.printf "no axiom dependencies\n%!"
+  | deps ->
+    Printf.printf
+      "depends on axioms: %s\n%!"
+      (String.concat ", " (List.map (String.concat "/") deps))
 ;;
 
 let run ~(entry_module : Surface.t) : unit =
@@ -176,7 +188,7 @@ let run ~(entry_module : Surface.t) : unit =
   let _ = LNoise.history_set ~max_length:1000 in
   Printf.printf
     "Violet REPL — loaded `%s`. \\quit to exit, \\browse to list names, \\type EXPR for \
-     the type, \\open PATH to open a namespace.\n\
+     the type, \\open PATH to open a namespace, \\axioms NAME to list axiom dependencies.\n\
      %!"
     module_name;
   let rec loop () =
@@ -201,6 +213,9 @@ let run ~(entry_module : Surface.t) : unit =
          with_repl_reporter (fun () ->
            handle_open path;
            names := visible_names ());
+         loop ()
+       | Some (Axioms name) ->
+         with_repl_reporter (fun () -> handle_axioms name);
          loop ()
        | Some (Unknown cmd) ->
          Printf.printf "unknown command: %s\n%!" cmd;
