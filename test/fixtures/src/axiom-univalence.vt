@@ -14,10 +14,9 @@
 # Both are logically equivalent to real univalence; testing both confirms the
 # axiom machinery is agnostic to the equivalence encoding.
 #
-# (`Id {A}` / `Id {B}` give std's implicit type argument explicitly: a record
-# field whose type applies an inductive with an *inferred* implicit currently
-# trips a kernel bug — see the separately-filed report. Writing the implicit
-# is legitimate surface syntax and keeps this fixture honest.)
+# The field types below apply std's `Id` with its type argument left implicit
+# (e.g. `Id (from (to a)) a`); the elaborator infers it. This used to trip a
+# kernel `UnboundLocal` when building the field projector — now fixed.
 
 \import std/id
 
@@ -28,8 +27,8 @@
 \record Equiv (A B : U) : U
   | to : A -> B
   | from : B -> A
-  | from-to : (a : A) -> Id {A} (from (to a)) a
-  | to-from : (b : B) -> Id {B} (to (from b)) b
+  | from-to : (a : A) -> Id (from (to a)) a
+  | to-from : (b : B) -> Id (to (from b)) b
 
 \axiom ua {A B : U} : Equiv A B -> Id A B
 
@@ -51,9 +50,9 @@
 \record BiInv (A B : U) : U
   | fwd : A -> B
   | bwd-l : B -> A
-  | is-linv : (a : A) -> Id {A} (bwd-l (fwd a)) a
+  | is-linv : (a : A) -> Id (bwd-l (fwd a)) a
   | bwd-r : B -> A
-  | is-rinv : (b : B) -> Id {B} (fwd (bwd-r b)) b
+  | is-rinv : (b : B) -> Id (fwd (bwd-r b)) b
 
 \axiom ua-biinv {A B : U} : BiInv A B -> Id A B
 

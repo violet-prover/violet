@@ -1,0 +1,14 @@
+\universe U
+
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+
+# Regression: a record field whose type references an inductive with an
+# *inferred* implicit argument (`Id a a`, with `{A}` solved by unification).
+# The projector `Box/g` is built by re-indexing the field type into the
+# `{params} -> (r : R) -> _` telescope; the `InsertedMeta` carrying the
+# solved implicit must be expanded at the term's true local depth
+# (n_params + n_before + extra_depth). Omitting n_params produced a
+# `LocalVar (-1)` that the kernel rejected as `UnboundLocal -1`.
+\record Box (A : U) (a : A) : U
+  | g : Id a a

@@ -739,6 +739,54 @@ module Grammar = struct
       let atom_no_bracket : S.preterm t =
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
+      (* A lambda written *as a record-field value* (`{ f = \x -> body, … }`)
+         must have its body stop at the record separators `,`/`}`/`|`. The
+         generic `p_atom_lambda` parses its body with the unrestricted `term`,
+         which treats `,` as an operator and swallows the following entries.
+         These record-scoped lambdas parse the body with `p_record_value`
+         (the same terminator-aware spine used for the field value itself),
+         tied back through `record_value_ref`. For a body richer than that
+         restricted grammar (e.g. a bare `->` type), parenthesize. *)
+      let record_value_ref = ref P.fail.parse in
+      let record_value_body : S.preterm t =
+        let tp =
+          Tp.
+            { null = false
+            ; first =
+                C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA; C.T_SYMBOL ]
+            ; follow = C.empty
+            }
+        in
+        { tp; parse = (fun buf i -> !record_value_ref buf i) }
+      in
+      let lambda_untyped_rv : S.preterm t =
+        relocate_full
+          (let+ _ = tok C.T_LAMBDA
+           and+ names = p_idents_loc
+           and+ _ = tok C.T_ARROW
+           and+ body = record_value_body in
+           S.lambda names body)
+      in
+      let lambda_typed_rv : S.preterm t =
+        relocate_full
+          (let+ _ = tok C.T_LAMBDA
+           and+ binders = p_bindings_flat
+           and+ _ = tok C.T_ARROW
+           and+ body = record_value_body in
+           S.typed_lambda binders body)
+      in
+      let p_atom_lambda_rv : S.preterm t =
+        let tp = Tp.{ null = false; first = C.one C.T_LAMBDA; follow = C.empty } in
+        let parse (buf : P.token_buf) i =
+          if peek_is_typed_lambda buf i
+          then lambda_typed_rv.parse buf i
+          else lambda_untyped_rv.parse buf i
+        in
+        { tp; parse }
+      in
+      let atom_no_bracket_rv : S.preterm t =
+        ident_atom || goal_atom || p_atom_lparen || p_atom_lambda_rv
+      in
       (* RECORD LITERAL: `{ field = expr , … }` or `{ field , … }` (pun) or `{}`.
          All variants start with T_LBRACKET. Disambiguation from the binder form `{x : T} -> body` is done by peek_is_record_lit. *)
       let p_record_value : S.preterm t =
@@ -819,7 +867,7 @@ module Grammar = struct
                   | Lexer.IDENT s -> s
                   | _ -> assert false
                 in
-                let i2, var = atom_no_bracket.parse buf i in
+                let i2, var = atom_no_bracket_rv.parse buf i in
                 let i3, projected = apply_proj_loop i i2 var in
                 if i3 > i2
                 then Some (i3, S.SI_Atom projected)
@@ -827,7 +875,7 @@ module Grammar = struct
                 then Some (i2, S.SI_Name { S.loc; value = first_name })
                 else Some (i2, S.SI_Atom var)
               | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
-                let i2, a = atom_no_bracket.parse buf i in
+                let i2, a = atom_no_bracket_rv.parse buf i in
                 let i3, a = apply_proj_loop i i2 a in
                 Some (i3, S.SI_Atom a)
               | _ -> None)
@@ -852,6 +900,9 @@ module Grammar = struct
         in
         { tp; parse }
       in
+      (* Tie the knot: record-field-value lambdas parse their body with the
+         restricted field-value parser above. *)
+      let () = record_value_ref := p_record_value.parse in
       (* One field entry: `name = value` (explicit) or `name` (pun). *)
       let p_record_entry : (string S.spanned * S.preterm) t =
         let tp = Tp.{ null = false; first = C.one C.T_IDENT; follow = C.empty } in
@@ -1921,6 +1972,22 @@ let%expect_test "parse: op soup in record field value" =
     {|
     [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
        body = <soup:[A({ val = <soup:[N(a); N(⊕); N(b)]> })]>}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: lambda field value stops at record separator" =
+  (* Regression: a bare lambda field value must not let its body (parsed as a
+     term) swallow the following `, field = …` entries. Both `to` and `from`
+     must survive as separate entries. *)
+  print_string
+  @@ [%show: Surface.top list]
+       (parse_tops_for_test "\\let r : T => { to = \\x -> x, from = \\y -> y }\n");
+  [%expect
+    {|
+    [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
+       body =
+       <soup:[A({ to = <soup:[A(fun x => <soup:[N(x)]>)]>, from = <soup:[A(fun y => <soup:[N(y)]>)]> })]>}
       ]
     |}]
 ;;

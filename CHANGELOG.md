@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix parser: a bare lambda as a record-literal field value (`{ f = \x -> x, g = … }`) no longer swallows the following entries; its body stops at the field separators `,`/`}`/`|`
+- fix: record definition causes kernel crash with message `UnboundLocal -1`; the field projector now inserted metas at the term's true local depth
 - `\axiom` statement to claim opaque axiom
 - goal reporting better, displays never show unfolded definitions
 - fix unification: Pi domains are now unified, not just codomains, hence `ap f ?hole` can infer `{A}` from `f`'s type

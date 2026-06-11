@@ -1,0 +1,17 @@
+\universe U
+
+\data Id {A : U} (x : A) : A -> U
+  | refl : Id x x
+
+# Regression: a bare (unparenthesized) lambda as a non-final record-literal
+# field value used to let its body — parsed by the unrestricted term parser —
+# swallow the following `, field = ...` entries, so later fields were reported
+# as "missing". Record-field-value lambdas now parse their body with the
+# terminator-aware field-value parser, stopping at `,`/`}`/`|`.
+\record Equiv (A : U) (B : U) : U
+  | to : A -> B
+  | from : B -> A
+  | sect : (b : B) -> Id {B} (to (from b)) b
+
+\let id-equiv {A : U} : Equiv A A =>
+  { to = \x -> x, from = \x -> x, sect = \b -> refl }

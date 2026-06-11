@@ -751,8 +751,9 @@ let handle_top_record_have_type
              the single `r` changes those locals, so we cannot keep it opaque:
              expand the implicit spine into explicit applications and remap each
              argument through `go`.  At this node the term's local depth is
-             `n_before + extra_depth`, so level L sits at index depth-1-L. *)
-          let depth = n_before + extra_depth in
+             `n_params + n_before + extra_depth` (record params are the
+             outermost binders), so level L sits at index depth-1-L. *)
+          let depth = n_params + n_before + extra_depth in
           let rec build acc lv =
             if lv >= lvl
             then acc
