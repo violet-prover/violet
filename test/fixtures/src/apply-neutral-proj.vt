@@ -16,4 +16,4 @@
 \record Wrap : U
   | v : Nat
 
-\let mk (b : Box) : Wrap => { v = (b.f) Nat/zero }
+\let mk (b : Box) : Wrap => { v => (b.f) Nat/zero }

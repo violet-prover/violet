@@ -4,14 +4,13 @@
   | refl : Id x x
 
 # Regression: a bare (unparenthesized) lambda as a non-final record-literal
-# field value used to let its body — parsed by the unrestricted term parser —
-# swallow the following `, field = ...` entries, so later fields were reported
-# as "missing". Record-field-value lambdas now parse their body with the
-# terminator-aware field-value parser, stopping at `,`/`}`/`|`.
+# field value. Field values are parsed by the full `term` parser, which stops
+# at the reserved separator `|` and at `}` — so the lambda body does not
+# swallow the following `| field => ...` entries.
 \record Equiv (A : U) (B : U) : U
   | to : A -> B
   | from : B -> A
   | sect : (b : B) -> Id {B} (to (from b)) b
 
 \let id-equiv {A : U} : Equiv A A =>
-  { to = \x -> x, from = \x -> x, sect = \b -> refl }
+  { to => \x -> x | from => \x -> x | sect => \b -> refl }

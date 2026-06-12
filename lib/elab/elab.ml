@@ -1270,7 +1270,7 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
 
 let%expect_test "check-mode record literal elaboration produces RecordIntro" =
   (* Set up: Nat data + Pair record + a let that uses a record literal.
-     Verifies that { fst = Nat/zero, snd = Nat/zero } : Pair Nat Nat
+     Verifies that { fst => Nat/zero | snd => Nat/zero } : Pair Nat Nat
      elaborates to RecordIntro { name = "Pair"; fields = [("fst", ...); ("snd", ...)] }.
   *)
   let dummy_loc = dloc in
@@ -1313,7 +1313,7 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
           ]
       }
   in
-  (* \let p : Pair Nat Nat => { fst = Nat/zero, snd = Nat/zero } *)
+  (* \let p : Pair Nat Nat => { fst => Nat/zero | snd => Nat/zero } *)
   let p_let : Surface.top =
     Surface.Let
       { name = dn "p"
@@ -1365,5 +1365,5 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
    | Some (Violet_kernel.Module.Let { body; _ }) ->
      Printf.printf "body: %s\n" (Notation.pp_term Context_view.empty body)
    | _ -> Printf.printf "not found or wrong decl kind\n");
-  [%expect {| body: Pair{ fst = Nat/zero, snd = Nat/zero } |}]
+  [%expect {| body: Pair{ fst => Nat/zero | snd => Nat/zero } |}]
 ;;

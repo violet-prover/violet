@@ -9,4 +9,4 @@
 # (= Nat/suc Nat/zero) into `B fst` so `snd` is checked against
 # `Vec Nat (Nat/suc Nat/zero)`.
 \let dep : Sigma Nat (\n -> Vec Nat n) =>
-  { fst = Nat/suc Nat/zero, snd = Vec/cons Nat/zero Vec/nil }
+  { fst => Nat/suc Nat/zero | snd => Vec/cons Nat/zero Vec/nil }

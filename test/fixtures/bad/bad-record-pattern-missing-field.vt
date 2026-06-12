@@ -9,4 +9,4 @@
 \let swap (A : U) (B : U) : Pair A B -> Pair B A \where
   <= \intro
   <= \split
-  | swap A B { fst = a } => { fst = Nat/zero, snd = a }
+  | swap A B { fst => a } => { fst => Nat/zero | snd => a }

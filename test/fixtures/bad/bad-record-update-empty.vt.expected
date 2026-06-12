@@ -1,2 +1,2 @@
-11:28-11:35
-empty record update `{ _ | }`; use `p` directly instead
+11:28-11:39
+empty record update `{ _ \with }`; use the record directly instead

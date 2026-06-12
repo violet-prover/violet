@@ -6,5 +6,5 @@
   | x : Nat
   | y : Nat
 
-\let p : Point => { x = Nat/zero, y = Nat/zero }
+\let p : Point => { x => Nat/zero | y => Nat/zero }
 \let bad : Nat => p.z

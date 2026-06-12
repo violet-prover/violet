@@ -288,7 +288,7 @@ let handle_check_record_update
        Reporter.fatalf
          ~loc
          Elab_error
-         "empty record update `{ _ | }`; use `p` directly instead"
+         "empty record update `{ _ \\with }`; use the record directly instead"
      | _ -> ());
     let field_names =
       List.map

@@ -1,4 +1,4 @@
-31:21-31:32
+31:18-31:29
 compiler-goals/?literal-ok
   --- context ---
   n : Nat
@@ -27,7 +27,7 @@ compiler-goals/?add-step-3
   --- target ---
   (exec (ADD ⍮ empty) (exec (x.prog) (exec (y.prog) stk))) = (exec (ADD ⍮ empty) (exec (x.prog) (cons (y.value) stk))) (i.e. Id (exec (prepend ADD empty) (exec (x.prog) (exec (y.prog) stk))) (exec (prepend ADD empty) (exec (x.prog) (cons (y.value) stk))))
 
-54:21-54:28
+54:22-54:29
 compiler-goals/?mul-ok
   --- context ---
   x : ImplementedNat

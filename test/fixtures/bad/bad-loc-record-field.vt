@@ -8,4 +8,4 @@
 | fst : Nat
 | snd : Nat
 
-\let bad : P => { fst = zero, snd = suc }
+\let bad : P => { fst => zero | snd => suc }

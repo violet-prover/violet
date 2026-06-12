@@ -276,7 +276,7 @@ let%expect_test "eval RecordIntro" =
   in
   let v = Test.eval Bwd.Emp tm in
   print_string @@ show_value v;
-  [%expect {| Point{ x = zero, y = one } |}]
+  [%expect {| Point{ x => zero | y => one } |}]
 ;;
 
 let%expect_test "RecordProj on RecordIntro reduces" =

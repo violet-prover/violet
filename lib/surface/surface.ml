@@ -127,18 +127,18 @@ and preterm_node =
         fmt
         "{ %s }"
         (String.concat
-           ", "
-           (List.map (fun (f, e) -> f.value ^ " = " ^ show_preterm e) aentries))]
+           " | "
+           (List.map (fun (f, e) -> f.value ^ " => " ^ show_preterm e) aentries))]
   | RecordUpdate of preterm * (string spanned * preterm) list
   [@printer
     fun fmt (base, entries) ->
       fprintf
         fmt
-        "{ %s | %s }"
+        "{ %s \\with %s }"
         (show_preterm base)
         (String.concat
-           ", "
-           (List.map (fun (f, e) -> f.value ^ " = " ^ show_preterm e) entries))]
+           " | "
+           (List.map (fun (f, e) -> f.value ^ " => " ^ show_preterm e) entries))]
   | Proj of preterm * string spanned
   [@printer fun fmt (e, f) -> fprintf fmt "%s.%s" (show_preterm e) f.value]
   (* Builtin disjointness primitive: `\absurd-id <p>` where `p` has type

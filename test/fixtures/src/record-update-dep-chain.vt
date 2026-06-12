@@ -14,11 +14,11 @@
   | c : Vec Nat b
 
 \let base : Triple =>
-  { a = Nat/zero, b = Nat/zero, c = Vec/nil }
+  { a => Nat/zero | b => Nat/zero | c => Vec/nil }
 
 # Override b → c's type becomes Vec Nat 1.
 # - a : projected from base
 # - b : suspended (override), then resumed
 # - c : suspended (override), its type is checked against the new b's value
 \let updated : Triple =>
-  { base | b = Nat/suc Nat/zero, c = Vec/cons Nat/zero Vec/nil }
+  { base \with b => Nat/suc Nat/zero | c => Vec/cons Nat/zero Vec/nil }

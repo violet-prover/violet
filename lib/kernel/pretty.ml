@@ -107,8 +107,8 @@ let rec pp_value ?notation (cv : Context_view.t) (v : Core.value) : string =
   | Core.VRecordIntro { name; fields } ->
     let fs =
       String.concat
-        ", "
-        (List.map (fun (f, v) -> f ^ " = " ^ pp_value ?notation cv v) fields)
+        " | "
+        (List.map (fun (f, v) -> f ^ " => " ^ pp_value ?notation cv v) fields)
     in
     Printf.sprintf "%s{ %s }" name fs
   | Core.VRecordProj (v, f, sp) ->
@@ -274,8 +274,8 @@ let rec pp_term ?notation (cv : Context_view.t) (t : Core.term) : string =
   | Core.RecordIntro { name; fields } ->
     let fs =
       String.concat
-        ", "
-        (List.map (fun (f, e) -> f ^ " = " ^ pp_term ?notation cv e) fields)
+        " | "
+        (List.map (fun (f, e) -> f ^ " => " ^ pp_term ?notation cv e) fields)
     in
     Printf.sprintf "%s{ %s }" name fs
   | Core.RecordProj { record; field } ->

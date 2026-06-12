@@ -6,4 +6,4 @@
   | fst : A
   | snd : B
 
-\let p : Pair Nat Nat => { fst = Nat/zero }
+\let p : Pair Nat Nat => { fst => Nat/zero }

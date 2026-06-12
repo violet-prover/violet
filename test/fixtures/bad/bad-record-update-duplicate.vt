@@ -6,8 +6,8 @@
   | x : Nat
   | y : Nat
 
-\let p : Point => { x = Nat/zero, y = Nat/zero }
+\let p : Point => { x => Nat/zero | y => Nat/zero }
 
 # Same field overridden twice — the update has a duplicate field.
 # Mirrors bad-record-duplicate-field.vt for the *update* path.
-\let bad : Point => { p | x = Nat/suc Nat/zero, x = Nat/suc (Nat/suc Nat/zero) }
+\let bad : Point => { p \with x => Nat/suc Nat/zero | x => Nat/suc (Nat/suc Nat/zero) }

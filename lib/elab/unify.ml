@@ -416,7 +416,7 @@ and unify_spine ~loc (cv : Context_view.t) (xs : Core.spine) (ys : Core.spine) :
 ;;
 
 let%expect_test "record eta: VRecordIntro vs neutral unifies" =
-  (* If `t = RigidLocal 0` and lit = { x = t.x, y = t.y }, then
+  (* If `t = RigidLocal 0` and lit = { x => t.x | y => t.y }, then
      unify should succeed: the literal is definitionally equal to t. *)
   let t : Core.value = Core.RigidLocal (0, Emp) in
   let lit : Core.value =

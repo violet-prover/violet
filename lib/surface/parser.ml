@@ -59,6 +59,7 @@ module C : sig
     | T_RECORD
     | T_AXIOM
     | T_DOT
+    | T_WITH
 
   type t
 
@@ -115,6 +116,7 @@ end = struct
     | T_RECORD
     | T_AXIOM
     | T_DOT
+    | T_WITH
 
   let tag_index = function
     | T_DATA -> 0
@@ -155,6 +157,7 @@ end = struct
     | T_RECORD -> 35
     | T_DOT -> 36
     | T_AXIOM -> 37
+    | T_WITH -> 38
   ;;
 
   let tag_of : Lexer.token -> tag = function
@@ -196,12 +199,13 @@ end = struct
     | Lexer.RECORD -> T_RECORD
     | Lexer.AXIOM -> T_AXIOM
     | Lexer.DOT -> T_DOT
+    | Lexer.WITH -> T_WITH
   ;;
 
   type t = int
 
-  (* 38 tags (indices 0–37) → mask of 38 bits *)
-  let mask = (1 lsl 38) - 1
+  (* 39 tags (indices 0–38) → mask of 39 bits *)
+  let mask = (1 lsl 39) - 1
   let empty = 0
   let top = mask
   let one t = 1 lsl tag_index t
@@ -540,16 +544,19 @@ module Grammar = struct
   (* Three-way classifier for `{` at position i in the token buffer.
      Returns:
        `Binder  — `{name... : type} -> body`
-       `Literal — `{ field = e, … }` or `{ x }` (pun) or `{}`
-       `Update  — `{ expr | field = e, … }` copy-with-update
+       `Literal — `{ field => e | … }` or `{ x }` (pun) or `{}`
+       `Update  — `{ base \with field => e | … }` copy-with-update
+
+     Both literal and update are brace-delimited; update is marked by the
+     `\with` keyword separating the base term from the override fields.
 
      Strategy: scan forward from i+1, balancing L_BRACKET/L_PAREN depth,
      until we find a token at depth 0 that disambiguates:
-       VERT (`|`)  → Update
-       R_BRACKET (`}`) at depth 0 → Literal (empty or single pun ending)
-       SYMBOL "=" → Literal (explicit field)
-       SYMBOL "," → Literal (pun list)
-       COLON      → Binder
+       WITH (`\with`)   → Update (a base precedes it; base has no `=>`/`|`/`:`)
+       FAT_ARROW (`=>`) → Literal (explicit field)
+       VERT (`|`)       → Literal (field separator)
+       R_BRACKET (`}`) at depth 0 → Literal (empty `{}` or pun `{ x }`)
+       COLON            → Binder
        EOF / other → Binder (let downstream fail)
   *)
   type lbrace_kind =
@@ -571,10 +578,10 @@ module Grammar = struct
          if !depth = 0
          then result := Some Literal (* closing `}` at depth 0 → literal *)
          else decr depth
-       | Lexer.VERT when !depth = 0 -> result := Some Update
+       | Lexer.WITH when !depth = 0 -> result := Some Update
+       | Lexer.FAT_ARROW when !depth = 0 -> result := Some Literal
+       | Lexer.VERT when !depth = 0 -> result := Some Literal
        | Lexer.COLON when !depth = 0 -> result := Some Binder
-       | Lexer.SYMBOL "=" when !depth = 0 -> result := Some Literal
-       | Lexer.SYMBOL "," when !depth = 0 -> result := Some Literal
        | _ -> ());
       incr j
     done;
@@ -739,278 +746,106 @@ module Grammar = struct
       let atom_no_bracket : S.preterm t =
         ident_atom || goal_atom || p_atom_lparen || p_atom_lambda
       in
-      (* A lambda written *as a record-field value* (`{ f = \x -> body, … }`)
-         must have its body stop at the record separators `,`/`}`/`|`. The
-         generic `p_atom_lambda` parses its body with the unrestricted `term`,
-         which treats `,` as an operator and swallows the following entries.
-         These record-scoped lambdas parse the body with `p_record_value`
-         (the same terminator-aware spine used for the field value itself),
-         tied back through `record_value_ref`. For a body richer than that
-         restricted grammar (e.g. a bare `->` type), parenthesize. *)
-      let record_value_ref = ref P.fail.parse in
-      let record_value_body : S.preterm t =
-        let tp =
-          Tp.
-            { null = false
-            ; first =
-                C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA; C.T_SYMBOL ]
-            ; follow = C.empty
-            }
-        in
-        { tp; parse = (fun buf i -> !record_value_ref buf i) }
-      in
-      let lambda_untyped_rv : S.preterm t =
-        relocate_full
-          (let+ _ = tok C.T_LAMBDA
-           and+ names = p_idents_loc
-           and+ _ = tok C.T_ARROW
-           and+ body = record_value_body in
-           S.lambda names body)
-      in
-      let lambda_typed_rv : S.preterm t =
-        relocate_full
-          (let+ _ = tok C.T_LAMBDA
-           and+ binders = p_bindings_flat
-           and+ _ = tok C.T_ARROW
-           and+ body = record_value_body in
-           S.typed_lambda binders body)
-      in
-      let p_atom_lambda_rv : S.preterm t =
-        let tp = Tp.{ null = false; first = C.one C.T_LAMBDA; follow = C.empty } in
-        let parse (buf : P.token_buf) i =
-          if peek_is_typed_lambda buf i
-          then lambda_typed_rv.parse buf i
-          else lambda_untyped_rv.parse buf i
-        in
-        { tp; parse }
-      in
-      let atom_no_bracket_rv : S.preterm t =
-        ident_atom || goal_atom || p_atom_lparen || p_atom_lambda_rv
-      in
-      (* RECORD LITERAL: `{ field = expr , … }` or `{ field , … }` (pun) or `{}`.
-         All variants start with T_LBRACKET. Disambiguation from the binder form `{x : T} -> body` is done by peek_is_record_lit. *)
-      let p_record_value : S.preterm t =
-        let tp =
-          Tp.
-            { null = false
-            ; first =
-                C.of_list [ C.T_IDENT; C.T_QMARK; C.T_LPAREN; C.T_LAMBDA; C.T_SYMBOL ]
-            ; follow = C.empty
-            }
-        in
-        let parse (buf : P.token_buf) i =
-          let n = Array.length buf in
-          (* Greedily consume `.field` projections after an atom, mirroring the
-             postfix `proj_soup` loop in the full term parser. This makes
-             projection bind tighter than operators, so projections can mixin
-             the expression (e.g. `x.v + y.v`). *)
-          let apply_proj_loop start_proj start_i base =
-            let acc = ref base in
-            let pos = ref start_i in
-            let continue_ = ref true in
-            while !continue_ && !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_DOT do
-              let dot_i = !pos + 1 in
-              if dot_i < n && C.tag_of buf.(dot_i).Surface.value = C.T_IDENT
-              then begin
-                let field =
-                  match buf.(dot_i).Surface.value with
-                  | Lexer.IDENT s -> s
-                  | _ -> assert false
-                in
-                let field_loc = buf.(dot_i).Surface.loc in
-                acc
-                := { S.loc = span_of buf start_proj dot_i
-                   ; node = S.Proj (!acc, { S.loc = field_loc; value = field })
-                   };
-                pos := dot_i + 1
-              end
-              else continue_ := false
-            done;
-            !pos, !acc
-          in
-          (* Tokens that end a field value (record separators and `}`). *)
-          let is_terminator tok =
-            match C.tag_of tok with
-            | C.T_RBRACKET | C.T_VERT -> true
-            | C.T_SYMBOL ->
-              (match tok with
-               | Lexer.SYMBOL "," -> true
-               | _ -> false)
-            | _ -> false
-          in
-          (* Parse one soup item; None at a terminator or end of input. *)
-          let parse_item buf i =
-            if i >= n
-            then None
-            else if is_terminator buf.(i).Surface.value
-            then None
-            else (
-              match C.tag_of buf.(i).Surface.value with
-              | C.T_SYMBOL ->
-                (* operator name (any non-terminator symbol, including `=`) *)
-                let loc = buf.(i).Surface.loc in
-                let s =
-                  match buf.(i).Surface.value with
-                  | Lexer.SYMBOL s -> s
-                  | _ -> assert false
-                in
-                Some (i + 1, S.SI_Name { S.loc; value = s })
-              | C.T_IDENT ->
-                (* Mirror `p_ident_soup_item`: bare ident → SI_Name; qualified
-                   or projected ident → concrete SI_Atom. *)
-                let loc = buf.(i).Surface.loc in
-                let bare =
-                  not (i + 1 < n && C.tag_of buf.(i + 1).Surface.value = C.T_SLASH)
-                in
-                let first_name =
-                  match buf.(i).Surface.value with
-                  | Lexer.IDENT s -> s
-                  | _ -> assert false
-                in
-                let i2, var = atom_no_bracket_rv.parse buf i in
-                let i3, projected = apply_proj_loop i i2 var in
-                if i3 > i2
-                then Some (i3, S.SI_Atom projected)
-                else if bare
-                then Some (i2, S.SI_Name { S.loc; value = first_name })
-                else Some (i2, S.SI_Atom var)
-              | C.T_QMARK | C.T_LPAREN | C.T_LAMBDA ->
-                let i2, a = atom_no_bracket_rv.parse buf i in
-                let i3, a = apply_proj_loop i i2 a in
-                Some (i3, S.SI_Atom a)
-              | _ -> None)
-          in
-          let start = i in
-          match parse_item buf i with
-          | None -> P.fail_at buf i
-          | Some (i, first_item) ->
-            let items = ref [ first_item ] in
-            let pos = ref i in
-            let continue_ = ref true in
-            while !continue_ do
-              match parse_item buf !pos with
-              | None -> continue_ := false
-              | Some (i', it) ->
-                items := it :: !items;
-                pos := i'
-            done;
-            ( !pos
-            , { S.loc = span_of buf start (!pos - 1); node = S.Op_soup (List.rev !items) }
-            )
-        in
-        { tp; parse }
-      in
-      (* Tie the knot: record-field-value lambdas parse their body with the
-         restricted field-value parser above. *)
-      let () = record_value_ref := p_record_value.parse in
-      (* One field entry: `name = value` (explicit) or `name` (pun). *)
+      (* RECORD LITERAL: `{ field => expr | … }`, pun `{ field | … }`, or `{}`.
+         All start with T_LBRACKET; disambiguation from the binder form
+         `{x : T} -> body` is by peek_is_record_lit. Field VALUES use the full
+         `term` parser: the separator `|` (VERT) is a reserved token (never a
+         user operator), so a value — lambda, infix operator, application spine,
+         even a nested `\with` update — parses whole and stops at `|`/`}`. *)
+      (* One field entry:
+           `name => value`        explicit
+           `name p1 … pk => value` sugar for `name => \p1 … pk -> value`
+           `name`                 pun, sugar for `name => name`
+         The parameter idents between the name and `=>` desugar to an untyped
+         lambda (mirroring `\x -> …`), so a function-valued field reads like a
+         `\let` clause: `prog-ok stk => …` instead of `prog-ok => \stk -> …`. *)
       let p_record_entry : (string S.spanned * S.preterm) t =
         let tp = Tp.{ null = false; first = C.one C.T_IDENT; follow = C.empty } in
         let parse (buf : P.token_buf) i =
+          let n = Array.length buf in
           let i, name = ident_loc.parse buf i in
-          let pun = { S.loc = name.S.loc; node = S.Var [ name.S.value ] } in
-          if i < Array.length buf
+          (* Collect zero-or-more parameter idents up to `=>`. *)
+          let params = ref [] in
+          let pos = ref i in
+          while !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_IDENT do
+            (match buf.(!pos).Surface.value with
+             | Lexer.IDENT s ->
+               params := { S.loc = buf.(!pos).Surface.loc; value = s } :: !params
+             | _ -> assert false);
+            pos := !pos + 1
+          done;
+          let params = List.rev !params in
+          if !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_FAT_ARROW
+          then begin
+            let i = !pos + 1 in
+            (* consume `=>` *)
+            let i, e = term.parse buf i in
+            i, (name, S.lambda params e)
+          end
+          else if params = []
           then (
-            match buf.(i).Surface.value with
-            | Lexer.SYMBOL "=" ->
-              let i = i + 1 in
-              let i, e = p_record_value.parse buf i in
-              i, (name, e)
-            | _ -> i, (name, pun))
-          else i, (name, pun)
+            (* pun *)
+            let pun = { S.loc = name.S.loc; node = S.Var [ name.S.value ] } in
+            i, (name, pun))
+          else
+            (* parameter idents but no `=>` — malformed field entry *)
+            P.fail_at buf !pos
         in
         { tp; parse }
       in
-      (* `{ entry , … }` or `{}`. `,` is SYMBOL "," so we hand-code the loop. *)
+      (* Parse `entry (| entry)*` at i — the caller has already consumed `{`
+         (and, for an update, the base term and `\with`). Stops at `}` (NOT
+         consumed); an immediate `}` yields the empty list. *)
+      let parse_record_entries (buf : P.token_buf) i =
+        let n = Array.length buf in
+        if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
+        then i, []
+        else begin
+          let i, first = p_record_entry.parse buf i in
+          let entries = ref [ first ] in
+          let pos = ref i in
+          while !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_VERT do
+            pos := !pos + 1;
+            (* skip `|` *)
+            let i', e = p_record_entry.parse buf !pos in
+            entries := e :: !entries;
+            pos := i'
+          done;
+          !pos, List.rev !entries
+        end
+      in
       let p_record_lit : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
         let parse (buf : P.token_buf) i =
           let start = i in
-          let i = i + 1 in
-          (* consume `{` *)
-          let n = Array.length buf in
-          if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
-          then (
-            let end_i = i in
-            end_i + 1, { S.loc = span_of buf start end_i; node = S.RecordLit [] })
-          else begin
-            let i, first = p_record_entry.parse buf i in
-            let entries = ref [ first ] in
-            let pos = ref i in
-            while
-              !pos < n
-              &&
-              match buf.(!pos).Surface.value with
-              | Lexer.SYMBOL "," -> true
-              | _ -> false
-            do
-              pos := !pos + 1;
-              (* skip `,` *)
-              let i', e = p_record_entry.parse buf !pos in
-              entries := e :: !entries;
-              pos := i'
-            done;
-            let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            ( i'
-            , { S.loc = span_of buf start (i' - 1)
-              ; node = S.RecordLit (List.rev !entries)
-              } )
-          end
+          let i, _ = (tok C.T_LBRACKET).parse buf i in
+          let i, fields = parse_record_entries buf i in
+          let i', _ = (tok C.T_RBRACKET).parse buf i in
+          i', { S.loc = span_of buf start (i' - 1); node = S.RecordLit fields }
         in
         { tp; parse }
       in
-      (* `{ expr | entry , … }` copy-with-update.
-         The base expression is parsed with `p_record_value` (the same
-         restricted spine parser used for field values), which stops before
-         SYMBOL tokens — including `|` — and R_BRACKET.  This means the base
-         must be a simple application spine of atoms (no infix operators),
-         which is the common case; more complex bases can be parenthesised. *)
+      (* RECORD UPDATE: `{ base \with field => expr | … }`. The base is a full
+         term parsed up to the `\with` keyword; the override fields then use the
+         same `entry | …` grammar as a literal. Brace-delimited and marked by
+         `\with`, so it reads distinctly from construction yet projects directly
+         (`{ p \with x => z }.x`). *)
       let p_record_update : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
         let parse (buf : P.token_buf) i =
           let start = i in
-          let i = i + 1 in
-          (* consume `{` *)
-          let n = Array.length buf in
-          (* Parse the base expression: a spine of atom_no_bracket items,
-             stopping before VERT or R_BRACKET. *)
-          let i, base = p_record_value.parse buf i in
-          (* Consume `|` (T_VERT) *)
-          let i, _ = (tok C.T_VERT).parse buf i in
-          (* Parse comma-separated entries *)
-          if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
-          then i + 1, { S.loc = span_of buf start i; node = S.RecordUpdate (base, []) }
-          else begin
-            let i, first = p_record_entry.parse buf i in
-            let entries = ref [ first ] in
-            let pos = ref i in
-            while
-              !pos < n
-              &&
-              match buf.(!pos).Surface.value with
-              | Lexer.SYMBOL "," -> true
-              | _ -> false
-            do
-              pos := !pos + 1;
-              (* skip `,` *)
-              let i', e = p_record_entry.parse buf !pos in
-              entries := e :: !entries;
-              pos := i'
-            done;
-            let i', _ = (tok C.T_RBRACKET).parse buf !pos in
-            ( i'
-            , { S.loc = span_of buf start (i' - 1)
-              ; node = S.RecordUpdate (base, List.rev !entries)
-              } )
-          end
+          let i, _ = (tok C.T_LBRACKET).parse buf i in
+          let i, base = term.parse buf i in
+          let i, _ = (tok C.T_WITH).parse buf i in
+          (* consume `\with` *)
+          let i, fields = parse_record_entries buf i in
+          let i', _ = (tok C.T_RBRACKET).parse buf i in
+          i', { S.loc = span_of buf start (i' - 1); node = S.RecordUpdate (base, fields) }
         in
         { tp; parse }
       in
-      (* Disambiguating T_LBRACKET atom: record update, record literal, OR
-         implicit-binder pi.  All start with `{`; we use the 3-way classifier
-         to decide which form is intended.  Update is tried first because
-         `{ ident | …` cannot be distinguished from `{ ident = …` until the
-         second token after the ident. *)
+      (* Disambiguating T_LBRACKET atom: record literal, record update, OR
+         implicit-binder pi.  All start with `{`; the classifier decides. *)
       let p_lbracket_atom : S.preterm t =
         let tp = Tp.{ null = false; first = C.one C.T_LBRACKET; follow = C.empty } in
         let parse (buf : P.token_buf) i =
@@ -1089,7 +924,7 @@ module Grammar = struct
          as a soup of items `x.f`, `+`, `y.f` rather than terminating at the
          first projection. Projection binds tighter than application and
          operators. Operator symbols (T_SYMBOL) and implicit args are never
-         projected. Mirrors the field-value spine parser `p_record_value`. *)
+         projected. *)
       let fold_proj (item : S.soup_item t) : S.soup_item t =
         let parse (buf : P.token_buf) i =
           let start = i in
@@ -1275,19 +1110,28 @@ module Grammar = struct
     move
   ;;
 
-  (* peek_is_record_pattern: returns true when the token at position i is `{`
-     and the next two tokens are `IDENT SYMBOL "="`.
-     This distinguishes `{ fst = a, … }` (PRecord) from `{name}` (PImpVar). *)
+  (* peek_is_record_pattern: `{` at i opening a PRecord, i.e. it contains a
+     field binder `=>` or a separator `|` at depth 0 before the matching `}`.
+     A single `{ name }` has neither, so it stays a PImpVar (implicit-arg
+     binder). To write a one-field record pattern by pun, spell `{ name => name }`. *)
   let peek_is_record_pattern (buf : P.token_buf) (i : int) : bool =
     let n = Array.length buf in
-    if i + 2 >= n
-    then false
-    else (
-      match
-        buf.(i).Surface.value, buf.(i + 1).Surface.value, buf.(i + 2).Surface.value
-      with
-      | Lexer.L_BRACKET, Lexer.IDENT _, Lexer.SYMBOL "=" -> true
-      | _ -> false)
+    let depth = ref 0 in
+    let j = ref (i + 1) in
+    let result = ref None in
+    while !result = None && !j < n do
+      (match buf.(!j).Surface.value with
+       | Lexer.L_BRACKET | Lexer.L_PAREN -> incr depth
+       | Lexer.R_BRACKET | Lexer.R_PAREN ->
+         if !depth = 0 then result := Some false else decr depth
+       | Lexer.FAT_ARROW when !depth = 0 -> result := Some true
+       | Lexer.VERT when !depth = 0 -> result := Some true
+       | _ -> ());
+      incr j
+    done;
+    match !result with
+    | Some b -> b
+    | None -> false
   ;;
 
   (* p_pattern: parses a single pattern (PVar, PCon, PImpVar, PRecord).
@@ -1334,23 +1178,24 @@ module Grammar = struct
         let start = i in
         if peek_is_record_pattern buf i
         then begin
-          (* PRecord: `{ name = pat , … }` — no punning allowed *)
+          (* PRecord: `{ name => pat | … }`, or pun `{ name | … }` where `name`
+             stands for `name => name`. *)
           let i = i + 1 in
           (* consume `{` *)
           let n = Array.length buf in
           let parse_entry pos =
             let pos, name = ident_loc.parse buf pos in
-            (* Require `=` — punning is forbidden in patterns *)
-            let pos =
-              if pos < n
-              then (
-                match buf.(pos).Surface.value with
-                | Lexer.SYMBOL "=" -> pos + 1
-                | _ -> (P.fail_at buf pos : int))
-              else (P.fail_at buf pos : int)
-            in
-            let pos, p = self.parse buf pos in
-            pos, (name, p)
+            if pos < n && C.tag_of buf.(pos).Surface.value = C.T_FAT_ARROW
+            then begin
+              let pos = pos + 1 in
+              (* consume `=>` *)
+              let pos, p = self.parse buf pos in
+              pos, (name, p)
+            end
+            else (
+              (* pun: bind a variable named after the field *)
+              let p = { S.ploc = name.S.loc; pnode = S.PVar name.S.value } in
+              pos, (name, p))
           in
           if i < n && C.tag_of buf.(i).Surface.value = C.T_RBRACKET
           then i + 1, { S.ploc = span_of buf start i; pnode = S.PRecord [] }
@@ -1358,15 +1203,9 @@ module Grammar = struct
             let i, first = parse_entry i in
             let entries = ref [ first ] in
             let pos = ref i in
-            while
-              !pos < n
-              &&
-              match buf.(!pos).Surface.value with
-              | Lexer.SYMBOL "," -> true
-              | _ -> false
-            do
+            while !pos < n && C.tag_of buf.(!pos).Surface.value = C.T_VERT do
               pos := !pos + 1;
-              (* skip `,` *)
+              (* skip `|` *)
               let i', e = parse_entry !pos in
               entries := e :: !entries;
               pos := i'
@@ -1967,27 +1806,39 @@ let%expect_test "parse: operator decl alongside let" =
 
 let%expect_test "parse: op soup in record field value" =
   print_string
-  @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => { val = a ⊕ b }\n");
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => { val => a ⊕ b }\n");
   [%expect
     {|
     [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
-       body = <soup:[A({ val = <soup:[N(a); N(⊕); N(b)]> })]>}
+       body = <soup:[A({ val => <soup:[N(a); N(⊕); N(b)]> })]>}
       ]
     |}]
 ;;
 
 let%expect_test "parse: lambda field value stops at record separator" =
   (* Regression: a bare lambda field value must not let its body (parsed as a
-     term) swallow the following `, field = …` entries. Both `to` and `from`
+     term) swallow the following `| field => …` entries. Both `to` and `from`
      must survive as separate entries. *)
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "\\let r : T => { to = \\x -> x, from = \\y -> y }\n");
+       (parse_tops_for_test "\\let r : T => { to => \\x -> x | from => \\y -> y }\n");
   [%expect
     {|
     [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
        body =
-       <soup:[A({ to = <soup:[A(fun x => <soup:[N(x)]>)]>, from = <soup:[A(fun y => <soup:[N(y)]>)]> })]>}
+       <soup:[A({ to => <soup:[A(fun x => <soup:[N(x)]>)]> | from => <soup:[A(fun y => <soup:[N(y)]>)]> })]>}
+      ]
+    |}]
+;;
+
+let%expect_test "parse: record field params desugar to a lambda" =
+  (* `f x => body` is sugar for `f => \x -> body`. *)
+  print_string
+  @@ [%show: Surface.top list] (parse_tops_for_test "\\let r : T => { f stk => stk }\n");
+  [%expect
+    {|
+    [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
+       body = <soup:[A({ f => fun stk => <soup:[N(stk)]> })]>}
       ]
     |}]
 ;;
@@ -1995,11 +1846,11 @@ let%expect_test "parse: lambda field value stops at record separator" =
 let%expect_test "parse: projection inside op soup in record field value" =
   print_string
   @@ [%show: Surface.top list]
-       (parse_tops_for_test "\\let r : T => { val = x.f ⍮* y.f }\n");
+       (parse_tops_for_test "\\let r : T => { val => x.f ⍮* y.f }\n");
   [%expect
     {|
     [Surface.Let {name = "r"; bindings = []; result_ty = <soup:[N(T)]>;
-       body = <soup:[A({ val = <soup:[A(x.f); N(⍮*); A(y.f)]> })]>}
+       body = <soup:[A({ val => <soup:[A(x.f); N(⍮*); A(y.f)]> })]>}
       ]
     |}]
 ;;
