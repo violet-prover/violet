@@ -38,4 +38,4 @@
   | f29 : Nat
   | f30 : Nat
 
-\let big : Big => { f01 = Nat/zero, f02 = Nat/zero, f03 = Nat/zero, f04 = Nat/zero, f05 = Nat/zero, f06 = Nat/zero, f07 = Nat/zero, f08 = Nat/zero, f09 = Nat/zero, f10 = Nat/zero, f11 = Nat/zero, f12 = Nat/zero, f13 = Nat/zero, f14 = Nat/zero, f15 = Nat/zero, f16 = Nat/zero, f17 = Nat/zero, f18 = Nat/zero, f19 = Nat/zero, f20 = Nat/zero, f21 = Nat/zero, f22 = Nat/zero, f23 = Nat/zero, f24 = Nat/zero, f25 = Nat/zero, f26 = Nat/zero, f27 = Nat/zero, f28 = Nat/zero, f29 = Nat/zero, f30 = Nat/zero }
+\let big : Big => { f01 => Nat/zero | f02 => Nat/zero | f03 => Nat/zero | f04 => Nat/zero | f05 => Nat/zero | f06 => Nat/zero | f07 => Nat/zero | f08 => Nat/zero | f09 => Nat/zero | f10 => Nat/zero | f11 => Nat/zero | f12 => Nat/zero | f13 => Nat/zero | f14 => Nat/zero | f15 => Nat/zero | f16 => Nat/zero | f17 => Nat/zero | f18 => Nat/zero | f19 => Nat/zero | f20 => Nat/zero | f21 => Nat/zero | f22 => Nat/zero | f23 => Nat/zero | f24 => Nat/zero | f25 => Nat/zero | f26 => Nat/zero | f27 => Nat/zero | f28 => Nat/zero | f29 => Nat/zero | f30 => Nat/zero }

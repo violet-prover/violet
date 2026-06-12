@@ -225,7 +225,7 @@ let goto_src =
 \let id (A : U) (x : A) : A => x
 \let lam : Nat -> Nat => \y -> y
 \let sh (n : Nat) : Nat -> Nat => \n -> n
-\let mk (a : Nat) : P => { fst = a, snd = zero }
+\let mk (a : Nat) : P => { fst => a | snd => zero }
 \let f : Nat -> Nat \where
   f n <= \elim n
   | f zero => zero
@@ -280,7 +280,7 @@ let test_goto_record_pun_collision () =
   | fst : Nat
   | snd : Nat
 \let fst : Nat => zero
-\let mk (snd : Nat) : P => { fst, snd }
+\let mk (snd : Nat) : P => { fst | snd }
 |}
   in
   let idx = check_module_collecting ~filename src in
@@ -424,7 +424,7 @@ let hover_src =
 \record P : U
   | fst : Nat
   | snd : Nat
-\let mk (a : Nat) : P => { fst = a, snd = zero }
+\let mk (a : Nat) : P => { fst => a | snd => zero }
 \let getf (p : P) : Nat => p.fst
 \let lam : Nat -> Nat => \x -> x
 \let f : Nat -> Nat \where

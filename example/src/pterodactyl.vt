@@ -27,4 +27,4 @@
 \let swap (A : U) (B : U) : Sigma A (\x -> B) -> Sigma B (\y -> A) \where
   <= \intro
   <= \split
-  | swap A B { fst = a, snd = b } => { fst = b, snd = a }
+  | swap A B { fst => a | snd => b } => { fst => b | snd => a }

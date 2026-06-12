@@ -8,4 +8,4 @@
 
 # `z` is not a field of `Point` — the literal includes an unknown field.
 # Mirrors bad-record-update-unknown-field.vt for the *literal* path.
-\let bad : Point => { x = Nat/zero, y = Nat/zero, z = Nat/zero }
+\let bad : Point => { x => Nat/zero | y => Nat/zero | z => Nat/zero }

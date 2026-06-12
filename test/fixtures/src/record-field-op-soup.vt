@@ -12,5 +12,5 @@
   | val : Nat
 
 \let mk (x y : Box) : Box => {
-  val = x.val ⊕ y.val ⊕ (Nat/zero ⊕ Nat/zero)
+  val => x.val ⊕ y.val ⊕ (Nat/zero ⊕ Nat/zero)
 }

@@ -214,8 +214,8 @@ let record_lit_test () =
    | _ ->
      Format.printf "record_lit_test FAIL empty: wrong shape@.";
      exit 1);
-  (* Plain literal: { x = a, y = b } *)
-  let tops1 = parse_tops "\\let p : Point => { x = a, y = b }" in
+  (* Plain literal: { x => a | y => b } *)
+  let tops1 = parse_tops "\\let p : Point => { x => a | y => b }" in
   (match tops1 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
@@ -229,8 +229,8 @@ let record_lit_test () =
    | _ ->
      Format.printf "record_lit_test FAIL plain-lit: wrong shape@.";
      exit 1);
-  (* Pun literal: { x, y } desugars to { x = x, y = y } *)
-  let tops2 = parse_tops "\\let p : Point => { x, y }" in
+  (* Pun literal: { x | y } desugars to { x => x | y => y } *)
+  let tops2 = parse_tops "\\let p : Point => { x | y }" in
   (match tops2 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
@@ -252,8 +252,8 @@ let record_lit_test () =
    | _ ->
      Format.printf "record_lit_test FAIL pun-lit: wrong shape@.";
      exit 1);
-  (* Mixed: { x, y = e, z } desugars to { x = x, y = e, z = z } *)
-  let tops3 = parse_tops "\\let p : Point => { x, y = e, z }" in
+  (* Mixed: { x | y => e | z } desugars to { x => x | y => e | z => z } *)
+  let tops3 = parse_tops "\\let p : Point => { x | y => e | z }" in
   (match tops3 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_lit body with
@@ -323,7 +323,8 @@ let record_update_test () =
   in
   let peel (p : Violet_surface.Surface.preterm) = p.Violet_surface.Surface.node in
   let key (s : string Violet_surface.Surface.spanned) = s.Violet_surface.Surface.value in
-  (* Helper: unwrap RecordUpdate from Op_soup wrapper *)
+  (* Helper: unwrap RecordUpdate from the Op_soup wrapper. `{ base \with … }`
+     is a brace atom, so it appears as Op_soup [ SI_Atom (RecordUpdate …) ]. *)
   let unwrap_record_update body =
     match peel body with
     | Violet_surface.Surface.Op_soup items ->
@@ -335,8 +336,8 @@ let record_update_test () =
        | _ -> None)
     | _ -> None
   in
-  (* Simple single-field update: { p | x = z } *)
-  let tops1 = parse_tops "\\let q : Point => { p | x = z }" in
+  (* Simple single-field update: { p \with x => z } *)
+  let tops1 = parse_tops "\\let q : Point => { p \\with x => z }" in
   (match tops1 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
@@ -350,8 +351,8 @@ let record_update_test () =
    | _ ->
      Format.printf "record_update_test FAIL simple: wrong shape@.";
      exit 1);
-  (* Multi-field update: { p | x = z, y = w } *)
-  let tops2 = parse_tops "\\let q : Point => { p | x = z, y = w }" in
+  (* Multi-field update: { p \with x => z | y => w } *)
+  let tops2 = parse_tops "\\let q : Point => { p \\with x => z | y => w }" in
   (match tops2 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
@@ -365,8 +366,8 @@ let record_update_test () =
    | _ ->
      Format.printf "record_update_test FAIL multi: wrong shape@.";
      exit 1);
-  (* Pun-style override: { p | x } desugars to { p | x = x } *)
-  let tops3 = parse_tops "\\let q : Point => { p | x }" in
+  (* Pun-style override: { p \with x } desugars to { p \with x => x } *)
+  let tops3 = parse_tops "\\let q : Point => { p \\with x }" in
   (match tops3 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match unwrap_record_update body with
@@ -384,8 +385,8 @@ let record_update_test () =
    | _ ->
      Format.printf "record_update_test FAIL pun: wrong shape@.";
      exit 1);
-  (* Regression: plain literal { x = a } must still be RecordLit, not RecordUpdate *)
-  let tops4 = parse_tops "\\let p : Point => { x = a }" in
+  (* Regression: plain literal { x => a } must still be RecordLit, not RecordUpdate *)
+  let tops4 = parse_tops "\\let p : Point => { x => a }" in
   (match tops4 with
    | [ { Violet_surface.Surface.value = Violet_surface.Surface.Let { body; _ }; _ } ] ->
      (match peel body with
@@ -493,7 +494,7 @@ let pattern_record_test () =
     "\\let swap : Pair Nat Nat -> Pair Nat Nat \\where\n\
     \  <= \\intro\n\
     \  <= \\split\n\
-    \  | swap { fst = a, snd = b } => { fst = b, snd = a }"
+    \  | swap { fst => a | snd => b } => { fst => b | snd => a }"
   in
   let tops = parse_tops src in
   (match tops with

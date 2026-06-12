@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- redesign record surface syntax
+
 ## 0.7.0
 
 - fix parser: a bare lambda as a record-literal field value (`{ f = \x -> x, g = … }`) no longer swallows the following entries; its body stops at the field separators `,`/`}`/`|`

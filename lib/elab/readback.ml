@@ -249,7 +249,7 @@ let%expect_test "core_term_to_surface: RecordIntro" =
   in
   let result = core_term_to_surface ~loc ~cv ~owner_map:[] tm in
   print_string (Surface.show_preterm result);
-  [%expect {| { fst = a, snd = b } |}]
+  [%expect {| { fst => a | snd => b } |}]
 ;;
 
 let%expect_test "core_term_to_surface: RecordProj" =

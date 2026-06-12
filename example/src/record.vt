@@ -6,12 +6,12 @@
   | fst : A
   | snd : B
 
-\let p : Pair Nat Nat => { fst = Nat/zero, snd = Nat/zero }
+\let p : Pair Nat Nat => { fst => Nat/zero | snd => Nat/zero }
 
 \let p-fst : Nat => p.fst
 \let p-snd : Nat => p.snd
 
-\let q : Pair Nat Nat => { p | fst = Nat/suc Nat/zero }
+\let q : Pair Nat Nat => { p \with fst => Nat/suc Nat/zero }
 
 \let q-fst : Nat => q.fst
 \let q-snd : Nat => q.snd
@@ -19,9 +19,9 @@
 \let swap (A : U) (B : U) : Pair A B -> Pair B A \where
   <= \intro
   <= \split
-  | swap A B { fst = a, snd = b } => { fst = b, snd = a }
+  | swap A B { fst => a | snd => b } => { fst => b | snd => a }
 
-\let original : Pair Nat Nat => { fst = Nat/zero, snd = Nat/suc Nat/zero }
+\let original : Pair Nat Nat => { fst => Nat/zero | snd => Nat/suc Nat/zero }
 \let swapped : Pair Nat Nat => swap Nat Nat original
 \let test-fst : Nat => swapped.fst
 \let test-snd : Nat => swapped.snd
@@ -31,10 +31,10 @@
   | x : Nat
   | y : Nat
 
-\let origin : Point => { x = Nat/zero, y = Nat/zero }
+\let origin : Point => { x => Nat/zero | y => Nat/zero }
 
-# Punning: { x, y } desugars to { x = x, y = y }
-\let pt (x : Nat) (y : Nat) : Point => { x, y }
+# Punning: { x | y } desugars to { x => x | y => y }
+\let pt (x : Nat) (y : Nat) : Point => { x | y }
 
 \let pt-x : Nat => (pt Nat/zero (Nat/suc Nat/zero)).x
 \let pt-y : Nat => (pt Nat/zero (Nat/suc Nat/zero)).y

@@ -26,15 +26,15 @@
   | prog-ok : {σ : StackShape} -> (stk : Stack σ) -> exec prog stk = (value ◁ stk)
 
 \let literalImpl (n : Nat) : ImplementedNat => {
-  value = n,
-  prog = (Instr/PUSH n) ⍮ empty,
-  prog-ok = \stk -> ?literal-ok
+  value => n |
+  prog => (Instr/PUSH n) ⍮ empty |
+  prog-ok stk => ?literal-ok
 }
 
 \let addImpl (x y : ImplementedNat) : ImplementedNat => {
-  value = x.value + y.value,
-  prog = y.prog ⍮* x.prog ⍮* ADD ⍮ Prog/empty,
-  prog-ok = \stk ->
+  value => x.value + y.value |
+  prog => y.prog ⍮* x.prog ⍮* ADD ⍮ Prog/empty |
+  prog-ok => \stk ->
     (exec (y.prog ⍮* (x.prog ⍮* (ADD ⍮ Prog/empty))) stk)
       =⟨ ?add-step-1 ⟩
     (exec (x.prog ⍮* (ADD ⍮ Prog/empty)) (exec y.prog stk))
@@ -49,9 +49,9 @@
 }
 
 \let mulImpl (x y : ImplementedNat) : ImplementedNat => {
-  value = x.value * y.value,
-  prog = y.prog ⍮* x.prog ⍮* MUL ⍮ Prog/empty ,
-  prog-ok = \stk -> ?mul-ok
+  value => x.value * y.value |
+  prog => y.prog ⍮* x.prog ⍮* MUL ⍮ Prog/empty |
+  prog-ok => \stk -> ?mul-ok
 }
 
 \let compile {T : U} : Term T -> ImplementedNat \where
