@@ -1,0 +1,16 @@
+(library
+ (name violet_literate)
+ (inline_tests)
+ (preprocess
+  (pps ppx_expect))
+ (libraries
+  violet_common
+  violet_surface
+  violet_elab
+  violet_project
+  violet_interactive
+  violet_kernel
+  asai
+  tsort
+  unix
+  yuujinchou))

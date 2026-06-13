@@ -30,6 +30,11 @@ let list_src_segments (root : string) : string list =
       let full = Filename.concat src entry in
       if Sys.is_directory full
       then Some entry
+      else if Filename.check_suffix entry ".vt.scrbl"
+      then begin
+        let n = String.length entry in
+        Some (String.sub entry 0 (n - String.length ".vt.scrbl"))
+      end
       else if Filename.check_suffix entry ".vt"
       then Some (Filename.chop_extension entry)
       else None)
