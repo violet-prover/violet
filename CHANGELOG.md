@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0
+
 - literate programming, first backend: [tr-notes](https://tr-notes.srht.site/)
 - redesign record surface syntax
 
