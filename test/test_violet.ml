@@ -281,6 +281,45 @@ let hung_overrides : string list = []
 let golden_path vt = vt ^ ".expected"
 let read_file = read_msg_file
 
+(* Literate (weave) corpus: [*.vt.scrbl] cards under fixtures/literate/bad must
+   FAIL the literate scanner (e.g. an unterminated [@vt|{] block), and the
+   rendered diagnostic must byte-equal a committed golden, exactly like the
+   bad/ corpus. We drive [Block.scan] directly under a collecting reporter
+   rather than through the fork harness: scanning cannot hang, and this keeps
+   the golden free of project-resolution noise. *)
+let scrbl_entries (dir : string) : string list =
+  if Sys.file_exists dir
+  then
+    Sys.readdir dir
+    |> Array.to_list
+    |> List.filter (fun f -> Filename.check_suffix f ".vt.scrbl")
+    |> List.sort String.compare
+    |> List.map (fun f -> Filename.concat dir f)
+  else []
+;;
+
+let literate_outcome (scrbl : string) : [ `Ok | `Fail of string ] =
+  let text = read_file scrbl in
+  let diag = Violet_common.Diagnostic_collector.create () in
+  let emit d = Violet_common.Diagnostic_collector.emit diag d in
+  (try
+     Violet_common.Reporter.run
+       ~emit
+       ~fatal:(fun d ->
+         emit d;
+         raise Exit)
+       (fun () -> ignore (Violet_literate.Block.scan ~source:scrbl text))
+   with
+   | Exit -> ());
+  match Violet_common.Diagnostic_collector.latest_error diag with
+  | Some d ->
+    `Fail
+      (render_loc d.explanation.loc
+       ^ "\n"
+       ^ Asai.Diagnostic.string_of_text d.explanation.value)
+  | None -> `Ok
+;;
+
 (* Outcome comparison for the Ok/Hung (src/example) path. bad/ fixtures are
    compared against golden files instead, so they don't go through this. *)
 type cmp =
@@ -348,6 +387,42 @@ let () =
            end
          end)
     bads;
+  (* literate/bad: [*.vt.scrbl] cards that must FAIL the literate scanner,
+     compared against a committed golden in the bad/ format. *)
+  let literate_bads = scrbl_entries "./fixtures/literate/bad" in
+  List.iter
+    (fun scrbl ->
+       match literate_outcome scrbl with
+       | `Ok ->
+         Printf.printf "%s: got OK, expected FAIL\n" scrbl;
+         incr mismatches
+       | `Fail msg ->
+         let msg = String.trim msg in
+         if promote
+         then begin
+           let oc = open_out (golden_path scrbl) in
+           output_string oc (msg ^ "\n");
+           close_out oc;
+           Printf.printf "%s: golden written\n" scrbl
+         end
+         else begin
+           let want =
+             String.trim
+               (try read_file (golden_path scrbl) with
+                | _ -> "")
+           in
+           if String.equal msg want
+           then Printf.printf "%s: FAIL (golden matches)\n" scrbl
+           else begin
+             Printf.printf
+               "%s: golden mismatch\n--- want ---\n%s\n--- got ---\n%s\n"
+               scrbl
+               want
+               msg;
+             incr mismatches
+           end
+         end)
+    literate_bads;
   (* goal/ must elaborate (unresolved goals are warnings), and the rendered
      goal reports must match the committed golden — these pin the pretty
      printer (operator notation, eliminator folding) across real contexts. *)

@@ -5,6 +5,7 @@
 module Loader = Violet_project.Loader
 module Index = Violet_interactive.Index
 module B = Backend.Tr_notes
+module Tty = Asai.Tty.Make (Violet_common.Reporter.Message)
 
 type woven_block =
   { src : string
@@ -40,36 +41,13 @@ let build_buffer (segments : Block.segment list) : string * woven_block list =
   Buffer.contents b, List.rev !blocks
 ;;
 
-let line_col (text : string) (off : int) : int * int =
-  let line = ref 1
-  and col = ref 1 in
-  let off = min off (String.length text) in
-  for k = 0 to off - 1 do
-    if text.[k] = '\n'
-    then begin
-      incr line;
-      col := 1
-    end
-    else incr col
-  done;
-  !line, !col
-;;
-
-let message_of (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) : string =
-  let buf = Buffer.create 128 in
-  let fmt = Format.formatter_of_buffer buf in
-  Format.fprintf fmt "%t" d.explanation.value;
-  Format.pp_print_flush fmt ();
-  Buffer.contents buf
-;;
-
 let text_override (filepath : string) : string option =
   if Filename.check_suffix filepath ".vt"
   then (
     let scrbl = filepath ^ ".scrbl" in
     if Sys.file_exists scrbl
     then (
-      let _, blocks = build_buffer (Block.scan (read_file scrbl)) in
+      let _, blocks = build_buffer (Block.scan ~source:scrbl (read_file scrbl)) in
       let b = Buffer.create 256 in
       List.iter
         (fun wb ->
@@ -85,8 +63,6 @@ let text_override (filepath : string) : string option =
    elaboration diagnostics (remapped to the scrbl source where possible). *)
 let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
   let scrbl_text = read_file scrbl_path in
-  let segments = Block.scan scrbl_text in
-  let buffer, blocks = build_buffer segments in
   let module_file =
     if Filename.check_suffix scrbl_path ".scrbl"
     then Filename.chop_extension scrbl_path
@@ -106,6 +82,11 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
   let collector = Violet_interactive.Collector.create () in
   let on_event = Violet_interactive.Collector.on_event collector in
   let aborted = ref false in
+  (* Scanning happens inside [Reporter.run] below so an unterminated [@vt|{]
+     block reports through the same diagnostic path as elaboration errors,
+     rather than escaping as an unhandled effect. *)
+  let segments = ref []
+  and blocks = ref [] in
   (try
      Violet_common.Reporter.run
        ~emit:(fun d -> Violet_common.Diagnostic_collector.emit diag_collector d)
@@ -125,6 +106,10 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
             ~not_found:Env.Handler.not_found
             ~hook:Env.Handler.hook
           @@ fun () ->
+          let segs = Block.scan ~source:scrbl_path scrbl_text in
+          segments := segs;
+          let buffer, blks = build_buffer segs in
+          blocks := blks;
           let m = Violet_surface.Parser.parse_buffer ~filename:module_file buffer in
           let deps = Hashtbl.create 16 in
           let mods = Hashtbl.create 16 in
@@ -152,23 +137,39 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
     let scrbl_off_of buf_off =
       List.find_opt
         (fun wb -> buf_off >= wb.buf_start && buf_off < wb.buf_start + wb.buf_len)
-        blocks
+        !blocks
       |> Option.map (fun wb -> wb.src_offset + (buf_off - wb.buf_start))
     in
-    List.iter
-      (fun d ->
-         let msg = message_of d in
-         match d.Asai.Diagnostic.explanation.loc with
-         | Some loc
-           when match Violet_common.Range.source loc with
-                | Some s -> String.equal s module_file
-                | None -> false ->
+    (* Re-anchor each diagnostic onto the scrbl document so [Tty.display]
+       highlights the real source, like [violet check]. Elaboration errors
+       arrive pointing into the synthesized code buffer; scan errors already
+       point into the scrbl. A loc that maps nowhere is dropped (the message
+       still renders without a snippet). *)
+    let scrbl_loc (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t)
+      : Asai.Range.t option
+      =
+      match d.explanation.loc with
+      | None -> None
+      | Some loc ->
+        (match Violet_common.Range.source loc with
+         | Some s when String.equal s scrbl_path -> Some loc
+         | Some s when String.equal s module_file ->
            (match scrbl_off_of (Violet_common.Range.start_offset loc) with
             | Some soff ->
-              let l, c = line_col scrbl_text soff in
-              Printf.eprintf "%s:%d:%d: error: %s\n" scrbl_path l c msg
-            | None -> Printf.eprintf "%s: error: %s\n" scrbl_path msg)
-         | _ -> Printf.eprintf "%s: error: %s\n" scrbl_path msg)
+              let w = Violet_common.Range.width loc in
+              let len = String.length scrbl_text in
+              (* Within a block, buffer offsets map to scrbl offsets by a
+                 constant shift, so the span width carries over. Guard against
+                 the [End_of_file] sentinel ([width = max_int]). *)
+              let e = if w >= 0 && w <= len - soff then soff + w else soff in
+              Some (Block.range_of ~source:scrbl_path scrbl_text soff e)
+            | None -> None)
+         | _ -> None)
+    in
+    List.iter
+      (fun (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
+         let loc = scrbl_loc d in
+         Tty.display { d with explanation = { d.explanation with loc } })
       errors;
     None
   end
@@ -181,7 +182,7 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
          if e.kind = Index.Def then Hashtbl.replace def_paths e.path ())
       entries;
     let out = Buffer.create (String.length scrbl_text * 2) in
-    let blk_q = ref blocks in
+    let blk_q = ref !blocks in
     List.iter
       (fun seg ->
          match seg with
@@ -200,7 +201,7 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
                ~def_paths
            in
            Buffer.add_string out (B.wrap_block html))
-      segments;
+      !segments;
     Some (Buffer.contents out)
   end
 ;;
@@ -265,4 +266,17 @@ let%test "weave links a local-variable use to its binder occurrence" =
   | Some s ->
     (* a binder-targeting href exists, and a matching binder id is emitted *)
     contains s "#vt-loc-c-" && contains s "id=\"vt-loc-c-"
+;;
+
+(* An unterminated [@vt|{] block aborts the weave (returns [None]) instead of
+   silently treating the rest of the document as code. The exact rendered
+   diagnostic (loc + message) is pinned by the literate/bad fixture golden in
+   test_violet; here we only assert the end-to-end abort. *)
+let%test "weave aborts on an unterminated @vt block" =
+  let dir = Filename.temp_dir "litunterm" "" in
+  let path = Filename.concat dir "d.vt.scrbl" in
+  let oc = open_out path in
+  output_string oc "@p{intro}\n@vt|{\n\\universe U\n\\let id (A : U) (x : A) : A => x\n";
+  close_out oc;
+  weave_file ~scrbl_path:path () = None
 ;;

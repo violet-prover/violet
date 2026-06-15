@@ -20,7 +20,26 @@ type segment =
 
 let vt_open = "@vt|{"
 
-let scan (text : string) : segment list =
+(* A range over [text]'s bytes [\[b, e)], tagged with [source] so diagnostics
+   point into the scrbl document. Walks [text] to recover line/column, so only
+   call it off the hot path (i.e. when reporting an error). *)
+let range_of ~source (text : string) (b : int) (e : int) : Asai.Range.t =
+  let pos off : Lexing.position =
+    let line = ref 1
+    and bol = ref 0 in
+    for k = 0 to off - 1 do
+      if text.[k] = '\n'
+      then begin
+        incr line;
+        bol := k + 1
+      end
+    done;
+    { Lexing.pos_fname = source; pos_lnum = !line; pos_bol = !bol; pos_cnum = off }
+  in
+  Asai.Range.of_lex_range (pos b, pos e)
+;;
+
+let scan ~(source : string) (text : string) : segment list =
   let n = String.length text in
   let buf = Buffer.create 256 in
   let segs = ref [] in
@@ -36,9 +55,14 @@ let scan (text : string) : segment list =
     p + lm <= n && String.equal (String.sub text p lm) marker
   in
   let find_close body_start =
+    let open_off = body_start - String.length vt_open in
     let rec go j =
       if j + 1 >= n
-      then n (* unterminated: take the rest of the document *)
+      then
+        Violet_common.Reporter.fatalf
+          ~loc:(range_of ~source text open_off j)
+          Parse_error
+          "unterminated @vt|{ block: missing closing `}|`"
       else if text.[j] = '}' && text.[j + 1] = '|'
       then j
       else go (j + 1)
@@ -54,7 +78,7 @@ let scan (text : string) : segment list =
       let close = find_close body_start in
       let src = String.sub text body_start (close - body_start) in
       segs := Block { src; src_offset = body_start } :: !segs;
-      i := if close >= n then n else close + 2
+      i := close + 2
     end
     else begin
       Buffer.add_char buf text.[!i];
@@ -70,13 +94,33 @@ let%expect_test "scan splits prose and code blocks" =
     | Verbatim s -> Printf.printf "V(%s)" s
     | Block { src; src_offset } -> Printf.printf "B(%S,@%d)" src src_offset
   in
-  List.iter show (scan "a@vt|{x}|b@vt|{y}|c");
+  List.iter show (scan ~source:"doc.scrbl" "a@vt|{x}|b@vt|{y}|c");
   [%expect {| V(a)B("x",@6)V(b)B("y",@15)V(c) |}]
 ;;
 
 let%expect_test "scan keeps Violet braces and backslashes verbatim" =
-  (match scan "p@vt|{\\let f => {a}}|q" with
+  (match scan ~source:"doc.scrbl" "p@vt|{\\let f => {a}}|q" with
    | [ Verbatim a; Block { src; _ }; Verbatim b ] -> Printf.printf "%s | %s | %s" a src b
    | _ -> print_string "unexpected");
   [%expect {| p | \let f => {a} | q |}]
+;;
+
+let%expect_test "scan reports an unterminated @vt block with a source location" =
+  Violet_common.Reporter.run
+    ~emit:(fun _ -> ())
+    ~fatal:(fun d ->
+      let loc = Option.get d.Asai.Diagnostic.explanation.loc in
+      match Asai.Range.view loc with
+      | `Range (s, _) ->
+        Format.printf
+          "%s:%d:%d: %t@."
+          (match s.source with
+           | `File f -> f
+           | `String _ -> "?")
+          s.line_num
+          (s.offset - s.start_of_line)
+          d.explanation.value
+      | `End_of_file _ -> ())
+    (fun () -> ignore (scan ~source:"doc.scrbl" "line one\n@vt|{ \\let f => a"));
+  [%expect {| doc.scrbl:2:0: unterminated @vt|{ block: missing closing `}|` |}]
 ;;
