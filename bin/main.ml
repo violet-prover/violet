@@ -134,6 +134,27 @@ let write_file path contents =
   Fun.protect ~finally:(fun () -> close_out oc) @@ fun () -> output_string oc contents
 ;;
 
+(* Create info.vt and src/ under [dir], each skipped if it already exists.
+   Prints a skip/created line per item and returns what was created. *)
+let scaffold ~dir ~name =
+  let created = ref [] in
+  let info_path = Filename.concat dir "info.vt" in
+  if Sys.file_exists info_path
+  then Printf.printf "skip info.vt (already exists)\n"
+  else begin
+    write_file info_path (Printf.sprintf "\\name %S\n\\version \"0.1.0\"\n" name);
+    created := "info.vt" :: !created
+  end;
+  let src_path = Filename.concat dir "src" in
+  if Sys.file_exists src_path
+  then Printf.printf "skip src/ (already exists)\n"
+  else begin
+    Unix.mkdir src_path 0o755;
+    created := "src/" :: !created
+  end;
+  List.rev !created
+;;
+
 let new_cmd ~env =
   let _ = env in
   let arg_name =
@@ -156,11 +177,34 @@ let new_cmd ~env =
             project;
         let name = Filename.basename project in
         Unix.mkdir project 0o755;
-        Unix.mkdir (Filename.concat project "src") 0o755;
-        let info_path = Filename.concat project "info.vt" in
-        write_file info_path (Printf.sprintf "\\name %S\n\\version \"0.1.0\"\n" name);
+        ignore (scaffold ~dir:project ~name);
         Printf.printf "created %s\n" project)
       $ arg_name)
+;;
+
+let init_cmd ~env =
+  let _ = env in
+  let arg_dir =
+    let doc = "Directory to initialize. Defaults to the current directory." in
+    Arg.value @@ Arg.pos 0 Arg.string "." @@ Arg.info [] ~docv:"DIR" ~doc
+  in
+  let doc = "Initialize info.vt and src/ in an existing directory" in
+  let info = Cmd.info "init" ~version ~doc in
+  Cmd.v
+    info
+    Term.(
+      const (fun dir ->
+        if not (Sys.file_exists dir && Sys.is_directory dir)
+        then
+          Violet_surface.Reporter.fatalf
+            Parse_error
+            "cannot initialize: %s is not an existing directory"
+            dir;
+        let name = Filename.basename (if dir = "." then Sys.getcwd () else dir) in
+        match scaffold ~dir ~name with
+        | [] -> ()
+        | xs -> Printf.printf "created %s\n" (String.concat ", " xs))
+      $ arg_dir)
 ;;
 
 let add_cmd ~env =
@@ -413,6 +457,7 @@ let cmd ~env =
     ; check_cmd ~env
     ; update_cmd ~env
     ; new_cmd ~env
+    ; init_cmd ~env
     ; add_cmd ~env
     ; weave_cmd ~env
     ; lsp_cmd ~env
