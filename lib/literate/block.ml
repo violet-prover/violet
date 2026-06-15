@@ -42,11 +42,11 @@ let range_of ~source (text : string) (b : int) (e : int) : Asai.Range.t =
 let scan ~(source : string) (text : string) : segment list =
   let n = String.length text in
   let buf = Buffer.create 256 in
-  let segs = ref [] in
+  let segs = Dynarray.create () in
   let flush_verbatim () =
     if Buffer.length buf > 0
     then begin
-      segs := Verbatim (Buffer.contents buf) :: !segs;
+      Dynarray.add_last segs (Verbatim (Buffer.contents buf));
       Buffer.clear buf
     end
   in
@@ -77,7 +77,7 @@ let scan ~(source : string) (text : string) : segment list =
       let body_start = !i + String.length vt_open in
       let close = find_close body_start in
       let src = String.sub text body_start (close - body_start) in
-      segs := Block { src; src_offset = body_start } :: !segs;
+      Dynarray.add_last segs (Block { src; src_offset = body_start });
       i := close + 2
     end
     else begin
@@ -86,7 +86,7 @@ let scan ~(source : string) (text : string) : segment list =
     end
   done;
   flush_verbatim ();
-  List.rev !segs
+  Dynarray.to_list segs
 ;;
 
 let%expect_test "scan splits prose and code blocks" =
