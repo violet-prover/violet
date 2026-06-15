@@ -1,4 +1,5 @@
 open Bwd
+open Yuujinchou
 
 (* Binders carry either a user-written name or `Anon` for binders generated
    internally (e.g. the non-dependent arrow `A -> B` desugars to a Pi whose
@@ -19,6 +20,31 @@ module Name = struct
   let to_string : t -> string = function
     | Named s -> s
     | Anon -> "_"
+  ;;
+
+  (* [of_segments ["Data"; "Nat"; "suc"]] is ["Data/Nat/suc"]. *)
+  let of_segments (segments : string list) : string = String.concat "/" segments
+
+  (* Inverse of [of_segments]. *)
+  let to_segments (name : string) : Trie.path = String.split_on_char '/' name
+
+  (* Append a leaf under a prefix (a module name, or an owning declaration such
+     as the inductive a constructor belongs to). *)
+  let qualify (prefix : string) (leaf : string) : string = prefix ^ "/" ^ leaf
+
+  let%expect_test "qualify and of_segments agree; to_segments is their inverse" =
+    print_endline (qualify "Data/Nat" "suc");
+    print_endline (of_segments [ "Data/Nat"; "List"; "cons" ]);
+    List.iter print_endline (to_segments "Data/Nat/List/cons");
+    [%expect
+      {|
+      Data/Nat/suc
+      Data/Nat/List/cons
+      Data
+      Nat
+      List
+      cons
+      |}]
   ;;
 end
 

@@ -6,7 +6,7 @@ module Trie = Yuujinchou.Trie
    thing carried by [Observer.Def.path]). The serialized "/"-joined form of a
    path is exactly what appears as a [Core.Var] head, so we use it as the
    internal Hashtbl key while exposing genuine paths at the API boundary. *)
-let key (p : Trie.path) : string = String.concat "/" p
+let key (p : Trie.path) : string = Syntax.Name.of_segments p
 
 module PathSet = Set.Make (struct
     type t = Trie.path
@@ -47,7 +47,7 @@ let display_deps_of (p : Trie.path) : Trie.path list =
    A head is the "/"-joined serialization of a path, so we split it back. *)
 let rec refs_in_term (t : Core.term) : Trie.path list =
   match t with
-  | Core.Var name -> [ String.split_on_char '/' name ]
+  | Core.Var name -> [ Syntax.Name.to_segments name ]
   | Core.Universe _ | Core.LocalVar _ | Core.Meta _ | Core.InsertedMeta _ | Core.Empty ->
     []
   | Core.App (a, b, _) -> refs_in_term a @ refs_in_term b
@@ -69,7 +69,7 @@ let rec refs_in_term (t : Core.term) : Trie.path list =
 
 (* test helper: render a path list as comma-joined "/"-paths *)
 let show_paths (ps : Trie.path list) : string =
-  String.concat "," (List.map (String.concat "/") ps)
+  String.concat "," (List.map Syntax.Name.of_segments ps)
 ;;
 
 let%expect_test "direct axiom dependency" =

@@ -30,7 +30,7 @@ let load_cmd ~env =
          | Sorted r ->
            List.iter
              (fun mod_name ->
-                let module_path = String.split_on_char '/' mod_name in
+                let module_path = Violet_kernel.Syntax.Name.to_segments mod_name in
                 Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
              r
          | ErrorCycle err_list ->
@@ -78,7 +78,7 @@ let check_cmd ~env =
            | Sorted r ->
              List.iter
                (fun mod_name ->
-                  let module_path = String.split_on_char '/' mod_name in
+                  let module_path = Violet_kernel.Syntax.Name.to_segments mod_name in
                   Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
                r
            | ErrorCycle err_list ->
@@ -119,7 +119,7 @@ let check_cmd ~env =
            | Sorted r ->
              List.iter
                (fun mod_name ->
-                  let module_path = String.split_on_char '/' mod_name in
+                  let module_path = Violet_kernel.Syntax.Name.to_segments mod_name in
                   Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
                r
            | ErrorCycle err_list ->

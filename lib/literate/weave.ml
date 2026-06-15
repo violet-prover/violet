@@ -125,7 +125,7 @@ let weave_file ?explicit_root ~(scrbl_path : string) () : string option =
           | Sorted r ->
             List.iter
               (fun mn ->
-                 let mp = String.split_on_char '/' mn in
+                 let mp = Violet_kernel.Syntax.Name.to_segments mn in
                  Elab.check_module ~on_event ~module_path:mp (Hashtbl.find mods mn))
               r
           | ErrorCycle _ -> ())

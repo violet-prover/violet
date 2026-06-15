@@ -9,6 +9,11 @@ module Name : sig
     | Anon
 
   val to_string : t -> string
+
+  (* Qualified global names are segment paths joined by `/` (e.g. `std/Nat/suc`) *)
+  val of_segments : string list -> string
+  val to_segments : string -> string list
+  val qualify : string -> string -> string
 end
 
 type 't binder =

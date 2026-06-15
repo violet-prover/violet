@@ -104,7 +104,7 @@ let lookup (x : string) : Core.value_ty =
 let lookup_path (xs : Trie.path) : Core.value_ty =
   match S.resolve xs with
   | Some (v, _) -> v
-  | None -> Reporter.fatalf NoVar_error "`%s` is not defined" (String.concat "/" xs)
+  | None -> Reporter.fatalf NoVar_error "`%s` is not defined" (Syntax.Name.of_segments xs)
 ;;
 
 let has_path (xs : Trie.path) : bool = Option.is_some (S.resolve xs)
@@ -112,7 +112,7 @@ let has_path (xs : Trie.path) : bool = Option.is_some (S.resolve xs)
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
-    | path -> Format.pp_print_string fmt @@ String.concat "/" (Bwd.to_list path)
+    | path -> Format.pp_print_string fmt @@ Syntax.Name.of_segments (Bwd.to_list path)
   ;;
 
   let pp_context fmt = function

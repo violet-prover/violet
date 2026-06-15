@@ -1,3 +1,5 @@
+module Name = Violet_kernel.Syntax.Name
+
 let render_type ?(axiom_deps = []) ~name ~ty () =
   let head =
     match ty with
@@ -11,7 +13,7 @@ let render_type ?(axiom_deps = []) ~name ~ty () =
     Printf.sprintf
       "%s\n\ndepends on axioms: %s"
       head
-      (String.concat ", " (List.map (String.concat "/") deps))
+      (String.concat ", " (List.map Name.of_segments deps))
 ;;
 
 let render_goal ~name ~ctx ~target =
@@ -48,16 +50,16 @@ let handle (store : Doc_store.t) ~uri ~(position : Linol_lsp.Lsp.Types.Position.
         at Def sites; uses inherit the empty list and render no extra line. *)
      | Some { kind = Def; path; pp_ty; axiom_deps; _ }
      | Some { kind = Use; path; pp_ty; axiom_deps; _ } ->
-       let name = String.concat "/" path in
+       let name = Name.of_segments path in
        Some (mk_hover (render_type ~axiom_deps ~name ~ty:pp_ty ()))
      | Some { kind = Goal; path; ctx; pp_target = Some target; _ } ->
-       let name = String.concat "/" path in
+       let name = Name.of_segments path in
        Some (mk_hover (render_goal ~name ~ctx ~target))
      | Some { kind = Goal; path; pp_target = None; _ } ->
-       let name = String.concat "/" path in
+       let name = Name.of_segments path in
        Some (mk_hover (render_type ~name ~ty:None ()))
      | Some { kind = Binder; path; pp_ty; _ } ->
-       let name = String.concat "/" path in
+       let name = Name.of_segments path in
        Some (mk_hover (render_type ~name ~ty:pp_ty ()))
      | None -> None)
 ;;

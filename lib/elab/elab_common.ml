@@ -374,7 +374,7 @@ let render_goal_report ~(module_name : string) ?(def_name = "") (g : deferred_go
        buf
        (Printf.sprintf
           "  --- axioms: %s ---\n"
-          (String.concat ", " (List.map (String.concat "/") deps))));
+          (String.concat ", " (List.map Syntax.Name.of_segments deps))));
   Buffer.add_string buf "  --- context ---\n";
   (* Bwd.to_list returns outermost-first. *)
   let names =
@@ -437,7 +437,7 @@ let publish_to_env ~exported path datum =
 (* Is this core head name a registered eliminator in the current scope?
    Used to gate Notation.register_fold at definition time. *)
 let is_elim_head (en : string) : bool =
-  match Context.S.resolve (String.split_on_char '/' en) with
+  match Context.S.resolve (Syntax.Name.to_segments en) with
   | Some (_, `Eliminator) -> true
   | _ -> false
 ;;

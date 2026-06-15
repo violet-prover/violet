@@ -49,8 +49,7 @@ and preterm_node =
       match n with
       | Some s -> fprintf fmt "?%s" s
       | None -> fprintf fmt "?"]
-  | Var of string list
-  [@printer fun fmt path -> fprintf fmt "%s" (String.concat "/" path)]
+  | Var of string list [@printer fun fmt path -> fprintf fmt "%s" (Name.of_segments path)]
   | App of bool * preterm * preterm
   [@printer
     fun fmt (implicit, a, b) ->

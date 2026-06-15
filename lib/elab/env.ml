@@ -37,14 +37,17 @@ let lookup (x : string) : Core.value =
     Reporter.fatalf
       NoVar_error
       "cannot find `%s` in environment"
-      (String.concat "/" [ x ])
+      (Syntax.Name.of_segments [ x ])
 ;;
 
 let lookup_path (xs : Trie.path) : Core.value =
   match S.resolve xs with
   | Some (v, _) -> v
   | None ->
-    Reporter.fatalf NoVar_error "cannot find `%s` in environment" (String.concat "/" xs)
+    Reporter.fatalf
+      NoVar_error
+      "cannot find `%s` in environment"
+      (Syntax.Name.of_segments xs)
 ;;
 
 (* Top-level let definitions, keyed by name.  Unification consults this when
@@ -61,7 +64,7 @@ let unfold_def (name : string) : Core.value option = Hashtbl.find_opt definition
 module Handler = struct
   let pp_path fmt = function
     | Emp -> Format.pp_print_string fmt "(root)"
-    | path -> Format.pp_print_string fmt @@ String.concat "/" (Bwd.to_list path)
+    | path -> Format.pp_print_string fmt @@ Syntax.Name.of_segments (Bwd.to_list path)
   ;;
 
   let pp_context fmt = function

@@ -803,7 +803,7 @@ let handle_elim_def_have_body
     Observer.emit
       (Def
          { path = [ name ]
-         ; module_path = String.split_on_char '/' m.module_name
+         ; module_path = Syntax.Name.to_segments m.module_name
          ; loc
          ; name_loc
          ; ty = typ_val
@@ -815,7 +815,7 @@ let handle_elim_def_have_body
     publish_to_env ~exported [ name ] (body_val, `Defn);
     Env.register_definition name body_val;
     Notation.register_fold ~fn:name ~is_elim_head (Evaluation.quote 0 body_val);
-    let qname = m.module_name ^ "." ^ name in
+    let qname = Syntax.Name.qualify m.module_name name in
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:term;
     m.result <- Some PUnit
   | other ->

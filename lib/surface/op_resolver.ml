@@ -28,10 +28,12 @@
 
 (* Yuujinchou.Trie plus a [pp_path], so `Trie.path` fields can sit inside the
    `[@@deriving show]` types below (ppx looks up `Trie.pp_path`). *)
+module Name = Violet_kernel.Syntax.Name
+
 module Trie = struct
   include Yuujinchou.Trie
 
-  let pp_path fmt (p : path) = Format.pp_print_string fmt (String.concat "/" p)
+  let pp_path fmt (p : path) = Format.pp_print_string fmt (Name.of_segments p)
 end
 
 type name_part =
@@ -420,7 +422,7 @@ let invert_decl (decl : op_decl) : inv_entry option =
        then None
        else
          Some
-           { inv_head = String.concat "/" path
+           { inv_head = Name.of_segments path
            ; inv_arity = arity
            ; inv_parts = List.filter_map Fun.id parts
            })
@@ -1662,7 +1664,7 @@ let lookup_table ~(module_name : string) : op_table option =
   Hashtbl.find_opt module_op_tables module_name
 ;;
 
-let module_name_of_path (p : Yuujinchou.Trie.path) : string = String.concat "/" p
+let module_name_of_path (p : Yuujinchou.Trie.path) : string = Name.of_segments p
 
 (* Merge another table's decls into ours. Duplicate-template across modules
    raises unless the duplicates share an origin (diamond import). *)

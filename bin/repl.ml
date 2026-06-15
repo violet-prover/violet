@@ -1,4 +1,5 @@
 open Bwd
+module Name = Violet_kernel.Syntax.Name
 module Surface = Violet_surface.Surface
 module Parser = Violet_surface.Parser
 module Op_resolver = Violet_surface.Op_resolver
@@ -32,7 +33,7 @@ let visible_names () : string list =
   let visible = Context.S.get_visible () in
   let names = ref [] in
   Yuujinchou.Trie.iter
-    (fun path _ -> names := String.concat "/" (Bwd.to_list path) :: !names)
+    (fun path _ -> names := Name.of_segments (Bwd.to_list path) :: !names)
     visible;
   List.sort String.compare !names
 ;;
@@ -42,7 +43,7 @@ let print_browse () =
   let entries = ref [] in
   Yuujinchou.Trie.iter
     (fun path (ty, _tag) ->
-       let name = String.concat "/" (Bwd.to_list path) in
+       let name = Name.of_segments (Bwd.to_list path) in
        entries := (name, ty) :: !entries)
     visible;
   let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) !entries in
@@ -120,7 +121,7 @@ let parse_command (line : string) : action option =
     | "\\browse" -> Some Browse
     | "\\type" -> Some (Type_of rest)
     | "\\normalize" -> Some (Eval rest)
-    | "\\open" -> Some (Open (String.split_on_char '/' rest))
+    | "\\open" -> Some (Open (Name.to_segments rest))
     | "\\axioms" -> Some (Axioms rest)
     | other -> Some (Unknown other)
   end
@@ -166,21 +167,21 @@ let handle_open (path : Trie.path) : unit =
     let open Yuujinchou.Language in
     Context.S.modify_visible (union [ all; renaming path [] ]);
     Env.S.modify_visible (union [ all; renaming path [] ]);
-    Printf.printf "opened %s\n%!" (String.concat "/" path)
+    Printf.printf "opened %s\n%!" (Name.of_segments path)
 ;;
 
 let handle_axioms (name : string) : unit =
-  match Violet_elab.Axiom_deps.display_deps_of (String.split_on_char '/' name) with
+  match Violet_elab.Axiom_deps.display_deps_of (Name.to_segments name) with
   | [] -> Printf.printf "no axiom dependencies\n%!"
   | deps ->
     Printf.printf
       "depends on axioms: %s\n%!"
-      (String.concat ", " (List.map (String.concat "/") deps))
+      (String.concat ", " (List.map Name.of_segments deps))
 ;;
 
 let run ~(entry_module : Surface.t) : unit =
   let module_path = [ Filename.chop_extension @@ Filename.basename entry_module.name ] in
-  let module_name = String.concat "/" module_path in
+  let module_name = Name.of_segments module_path in
   apply_visibility ~module_path ~imports:entry_module.imports;
   let names = ref (visible_names ()) in
   LNoise.set_completion_callback (make_completion_callback names);

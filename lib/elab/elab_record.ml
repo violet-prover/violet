@@ -396,7 +396,7 @@ let handle_proj_have_rec (m : machine) (loc : Asai.Range.t) (f : string) =
        then Reporter.fatalf ~loc Type_error "record `%s` has no field `%s`" r_name f;
        (* Look up the companion R/f to get its type, then apply it to params + record
           to recover the result type for this projection. *)
-       let companion_name = r_name ^ "/" ^ f in
+       let companion_name = Syntax.Name.qualify r_name f in
        let companion_ty = Context.lookup companion_name in
        let apply_vpi ty arg =
          match Evaluation.force_head ty with
@@ -518,7 +518,7 @@ let handle_top_record_have_type
            Observer.emit
              (Def
                 { path = [ name; fname ]
-                ; module_path = String.split_on_char '/' m.module_name
+                ; module_path = Syntax.Name.to_segments m.module_name
                 ; loc = b.name.Surface.loc
                 ; name_loc = Some b.name.Surface.loc
                 ; ty = fty_val
@@ -572,7 +572,7 @@ let handle_top_record_have_type
     let head_body_val = Evaluation.eval m.ctx.env head_body in
     publish_to_env ~exported [ name ] (head_body_val, `Defn);
     Env.register_definition name head_body_val;
-    let qname = m.module_name ^ "." ^ name in
+    let qname = Syntax.Name.qualify m.module_name name in
     Kernel_accept.accept_let m.kernel_module ~loc ~name:qname ~ty:typ_tm ~body:head_body;
     let param_binder_core_terms =
       let _, terms =
@@ -697,7 +697,7 @@ let handle_top_record_have_type
     let mk_body_val = Evaluation.eval m.ctx.env mk_body in
     publish_to_env ~exported [ mk_name ] (mk_body_val, `Defn);
     Env.register_definition mk_name mk_body_val;
-    let q_mk_name = m.module_name ^ "." ^ mk_name in
+    let q_mk_name = Syntax.Name.qualify m.module_name mk_name in
     Kernel_accept.accept_let m.kernel_module ~loc ~name:q_mk_name ~ty:mk_ty ~body:mk_body;
     let subst_proj_result_ty
           ~(n_before : int)
@@ -795,7 +795,7 @@ let handle_top_record_have_type
     List.iteri
       (fun i (b : Surface.pretype Surface.sbinder) ->
          let field_name = Syntax.Name.to_string b.name.Surface.value in
-         let proj_name = name ^ "/" ^ field_name in
+         let proj_name = Syntax.Name.qualify name field_name in
          (* prev_field_names: in context, last field bound = innermost.
             field_core_tys.(i) has LocalVar 0 = field_(i-1), ..., LocalVar (i-1) = field_0.
             So prev_field_names should map depth j -> field name at (i-1-j). *)
@@ -833,7 +833,7 @@ let handle_top_record_have_type
          let proj_body_val = Evaluation.eval m.ctx.env proj_body in
          publish_to_env ~exported [ proj_name ] (proj_body_val, `Defn);
          Env.register_definition proj_name proj_body_val;
-         let q_proj_name = m.module_name ^ "." ^ proj_name in
+         let q_proj_name = Syntax.Name.qualify m.module_name proj_name in
          Kernel_accept.accept_let
            m.kernel_module
            ~loc
@@ -961,7 +961,7 @@ let handle_top_record_have_type
     let elim_body_val = Evaluation.eval m.ctx.env elim_body in
     publish_to_env ~exported [ elim_name ] (elim_body_val, `Defn);
     Env.register_definition elim_name elim_body_val;
-    let q_elim_name = m.module_name ^ "." ^ elim_name in
+    let q_elim_name = Syntax.Name.qualify m.module_name elim_name in
     Kernel_accept.accept_let
       m.kernel_module
       ~loc

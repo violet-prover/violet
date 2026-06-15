@@ -51,7 +51,10 @@ let%expect_test "create / update / find round-trip" =
   let _ = update t ~uri ~text:"" ~version:1 in
   (match find t ~uri with
    | Some d ->
-     Printf.printf "v=%d mp=%s" d.version (String.concat "/" !(d.snapshot).module_path)
+     Printf.printf
+       "v=%d mp=%s"
+       d.version
+       (Violet_kernel.Syntax.Name.of_segments !(d.snapshot).module_path)
    | None -> Printf.printf "miss");
   [%expect {| v=1 mp=Foo |}]
 ;;

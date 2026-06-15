@@ -52,7 +52,7 @@ let bind_constructor
   let ctor_typ_tm = check_type ctx ctor_typ in
   let ctor_typ = Evaluation.eval ctx.env ctor_typ_tm in
   let pp_ty = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl ctor_typ) in
-  let ctor_flat = ind_name ^ "/" ^ name in
+  let ctor_flat = Syntax.Name.qualify ind_name name in
   (* A constructor inherits its inductive's axiom deps (via the explicit
      [ind_name] ref) plus any axioms mentioned directly in its own type. *)
   Axiom_deps.register_def
@@ -62,7 +62,7 @@ let bind_constructor
   Observer.emit
     (Def
        { path = [ ind_name; name ]
-       ; module_path = String.split_on_char '/' module_name
+       ; module_path = Syntax.Name.to_segments module_name
        ; loc
        ; name_loc
        ; ty = ctor_typ
@@ -78,7 +78,7 @@ let bind_constructor
   (* Also register under the bare name so that the unifier's rename/eval
      round-trip (Label x -> Var x -> eval -> lookup x) still finds Label x. *)
   publish_to_env ~exported [ name ] (Core.Label (name, Bwd.Emp), `Constructor);
-  let qctor_name = module_name ^ "." ^ ind_name ^ "." ^ name in
+  let qctor_name = Syntax.Name.of_segments [ module_name; ind_name; name ] in
   Kernel_accept.accept_ctor
     kernel_module
     ~loc
@@ -182,7 +182,7 @@ let handle_top_data_have_type
     Observer.emit
       (Def
          { path = [ name ]
-         ; module_path = String.split_on_char '/' m.module_name
+         ; module_path = Syntax.Name.to_segments m.module_name
          ; loc
          ; name_loc
          ; ty = typ_val
@@ -198,9 +198,9 @@ let handle_top_data_have_type
            Syntax.Name.to_string b.name.Surface.value)
         ctors
     in
-    let qname = m.module_name ^ "." ^ name in
+    let qname = Syntax.Name.qualify m.module_name name in
     let qctor_names =
-      List.map (fun cn -> m.module_name ^ "." ^ name ^ "." ^ cn) ctor_names
+      List.map (fun cn -> Syntax.Name.of_segments [ m.module_name; name; cn ]) ctor_names
     in
     Kernel_accept.accept_data
       m.kernel_module
@@ -228,7 +228,7 @@ let handle_top_data_have_type
     let elim_name = "elim" in
     (* Two-segment path used for namespace resolution in the type context *)
     let elim_path = [ name; elim_name ] in
-    let elim_flat = name ^ "/" ^ elim_name in
+    let elim_flat = Syntax.Name.qualify name elim_name in
     let elim_typ_tm = check_type m.ctx elim_typ in
     let elim_typ_val = Evaluation.eval m.ctx.env elim_typ_tm in
     publish_to_context ~exported elim_path (elim_typ_val, `Eliminator);
@@ -245,7 +245,7 @@ let handle_top_data_have_type
     let elim_value = Core.Elim (elim_head, Bwd.Emp) in
     (* Register in env under the flat key so kernel eval can find it *)
     publish_to_env ~exported [ elim_flat ] (elim_value, `Eliminator);
-    let qelim_name = m.module_name ^ "." ^ name ^ "." ^ elim_name in
+    let qelim_name = Syntax.Name.of_segments [ m.module_name; name; elim_name ] in
     Kernel_accept.accept_elim
       m.kernel_module
       ~loc

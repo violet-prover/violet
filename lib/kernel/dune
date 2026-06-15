@@ -4,4 +4,4 @@
  (inline_tests)
  (preprocess
   (pps ppx_deriving.show ppx_expect))
- (libraries bwd))
+ (libraries bwd yuujinchou))

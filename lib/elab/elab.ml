@@ -63,7 +63,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
           m.result <- Some (PTermType (Core.Var x, ty))))
   | GInfer { loc; node = Var path } ->
     let ty = Context.lookup_path path in
-    let joined = String.concat "/" path in
+    let joined = Syntax.Name.of_segments path in
     let pp_ty = Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl ty) in
     Observer.emit (Use { path; loc; def_loc = None; ty; pp_ty });
     m.result <- Some (PTermType (Core.Var joined, ty))
@@ -433,7 +433,7 @@ let rec dispatch (m : machine) (g : goal) : unit =
      | Core.IndType (ind, _) when Context.has_path [ ind; x ] ->
        (* Build the namespaced term: kernel eval resolves "ind/x" via E.lookup *)
        let ty = Context.lookup_path [ ind; x ] in
-       let tm : Core.term = Core.Var (ind ^ "/" ^ x) in
+       let tm : Core.term = Core.Var (Syntax.Name.qualify ind x) in
        push m (KCheckBy_Infer (loc, expected));
        m.result <- Some (PTermType (tm, ty))
      | _ ->
@@ -917,7 +917,7 @@ let check_module
     | Some p -> p
     | None -> [ Filename.chop_extension @@ Filename.basename file.name ]
   in
-  let module_name = String.concat "/" module_path in
+  let module_name = Syntax.Name.of_segments module_path in
   let file = Violet_surface.Op_resolver.resolve_module ~module_name file in
   Notation.run ~module_name
   @@ fun () ->
@@ -1249,7 +1249,7 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       point_record);
   (* Verify the 5 expected entries are present in the kernel module *)
   let present name =
-    match Violet_kernel.Module.lookup kernel_module ("test." ^ name) with
+    match Violet_kernel.Module.lookup kernel_module ("test/" ^ name) with
     | Some _ -> true
     | None -> false
   in
@@ -1361,7 +1361,7 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       ~is_exported
       ~loc:dummy_loc
       p_let);
-  (match Violet_kernel.Module.lookup kernel_module "test.p" with
+  (match Violet_kernel.Module.lookup kernel_module "test/p" with
    | Some (Violet_kernel.Module.Let { body; _ }) ->
      Printf.printf "body: %s\n" (Notation.pp_term Context_view.empty body)
    | _ -> Printf.printf "not found or wrong decl kind\n");
