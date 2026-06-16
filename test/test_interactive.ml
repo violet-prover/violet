@@ -1,3 +1,5 @@
+open Violet_common
+
 let parse_string ~filename src =
   let lexbuf = Lexing.from_string src in
   let toks = Array.of_list (Violet_surface.Parser.tokens filename lexbuf) in
@@ -5,14 +7,11 @@ let parse_string ~filename src =
 ;;
 
 let with_handlers k =
-  Violet_surface.Reporter.run
+  Reporter.run
     ~emit:(fun _ -> ())
     ~fatal:(fun d ->
       failwith
-        (Format.asprintf
-           "%s: %t"
-           (Violet_surface.Reporter.Message.show d.message)
-           d.explanation.value))
+        (Format.asprintf "%s: %t" (Reporter.Message.show d.message) d.explanation.value))
   @@ fun () ->
   Violet_elab.Observer.run_silent
   @@ fun () ->

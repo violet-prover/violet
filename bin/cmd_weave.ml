@@ -1,5 +1,6 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let write_stylesheet (dir : string) : string =
   let path = Filename.concat dir "violet.css" in
@@ -10,7 +11,7 @@ let write_stylesheet (dir : string) : string =
 let weave explicit_root backend inline_css out out_dir file_opt =
   if not (String.equal backend "tr-notes")
   then
-    Violet_surface.Reporter.fatalf
+    Reporter.fatalf
       Parse_error
       "backend not yet implemented: %s (only `tr-notes`)"
       backend;
@@ -22,7 +23,7 @@ let weave explicit_root backend inline_css out out_dir file_opt =
       match out with
       | Some p -> p
       | None ->
-        Violet_surface.Reporter.fatalf
+        Reporter.fatalf
           Parse_error
           "weave: -o/--output is required when weaving a single file"
     in
@@ -41,7 +42,7 @@ let weave explicit_root backend inline_css out out_dir file_opt =
       match out_dir with
       | Some d -> d
       | None ->
-        Violet_surface.Reporter.fatalf
+        Reporter.fatalf
           Parse_error
           "weave: --out-dir is required when weaving a whole project"
     in

@@ -6,10 +6,10 @@ module Op_resolver = Violet_surface.Op_resolver
 module Elab = Violet_elab.Elab
 module ElabREPL = Violet_elab.Repl
 module Evaluation = Violet_elab.Wiring.Eval
-module Reporter = Violet_surface.Reporter
 module Context = Violet_elab.Context
 module Env = Violet_elab.Env
 module Trie = Yuujinchou.Trie
+open Violet_common
 module Tty = Asai.Tty.Make (Reporter.Message)
 
 let prompt = "> "

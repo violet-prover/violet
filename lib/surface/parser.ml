@@ -18,6 +18,7 @@ module Syntax = struct
 end
 
 module Trie = Yuujinchou.Trie
+open Violet_common
 
 module C : sig
   type tag =

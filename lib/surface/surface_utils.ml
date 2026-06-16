@@ -1,4 +1,5 @@
 open Violet_kernel.Syntax
+open Violet_common
 
 let rec peel_pi_surface (n : int) (s : Surface.pretype) : Surface.pretype =
   if n = 0

@@ -1,13 +1,11 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let init dir =
   if not (Sys.file_exists dir && Sys.is_directory dir)
   then
-    Violet_surface.Reporter.fatalf
-      Parse_error
-      "cannot initialize: %s is not an existing directory"
-      dir;
+    Reporter.fatalf Parse_error "cannot initialize: %s is not an existing directory" dir;
   let name = Filename.basename (if dir = "." then Sys.getcwd () else dir) in
   match scaffold ~dir ~name with
   | [] -> Printf.printf "nothing to do; project already initialized\n"

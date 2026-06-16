@@ -1,5 +1,6 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let check explicit_root file_opt =
   let deps = Hashtbl.create ~random:true 1000 in
@@ -20,8 +21,7 @@ let check explicit_root file_opt =
     let root = require_root ~hint:"; pass a file or use --root" explicit_root in
     let proj =
       try Violet_project.Resolve.load root with
-      | Violet_project.Resolve.Project_error msg ->
-        Violet_surface.Reporter.fatalf Parse_error "%s" msg
+      | Violet_project.Resolve.Project_error msg -> Reporter.fatalf Parse_error "%s" msg
     in
     let mode = Violet_project.Loader.Project proj in
     let src_dir = Filename.concat root "src" in

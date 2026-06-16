@@ -1,15 +1,15 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let add explicit_root rev key url =
   let root = require_root explicit_root in
   let manifest =
     try Violet_project.Resolve.load_manifest root with
-    | Violet_project.Resolve.Project_error msg ->
-      Violet_surface.Reporter.fatalf Parse_error "%s" msg
+    | Violet_project.Resolve.Project_error msg -> Reporter.fatalf Parse_error "%s" msg
   in
   if List.exists (fun (d : Violet_project.Manifest.dep) -> d.key = key) manifest.deps
-  then Violet_surface.Reporter.fatalf Parse_error "dep `%s` is already declared" key;
+  then Reporter.fatalf Parse_error "dep `%s` is already declared" key;
   let info_path = Filename.concat root "info.vt" in
   let oc = open_out_gen [ Open_append; Open_creat ] 0o644 info_path in
   (Fun.protect ~finally:(fun () -> close_out oc)

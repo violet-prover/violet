@@ -1,13 +1,10 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let new_ project =
   if Sys.file_exists project
-  then
-    Violet_surface.Reporter.fatalf
-      Parse_error
-      "cannot create project: %s already exists"
-      project;
+  then Reporter.fatalf Parse_error "cannot create project: %s already exists" project;
   let name = Filename.basename project in
   Unix.mkdir project 0o755;
   ignore (scaffold ~dir:project ~name);

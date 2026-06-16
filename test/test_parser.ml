@@ -1,8 +1,9 @@
 (* Parser unit tests for typed-algebraic parser combinators.
    Tests correctness of specific parsing constructs. *)
+open Violet_common
 
 let positive_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -20,7 +21,7 @@ let positive_test () =
 ;;
 
 let goal_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -40,7 +41,7 @@ let goal_test () =
 ;;
 
 let elim_intro_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -123,7 +124,7 @@ let elim_intro_test () =
 ;;
 
 let record_top_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -176,7 +177,7 @@ let record_top_test () =
 ;;
 
 let record_lit_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -311,7 +312,7 @@ let record_lit_test () =
 ;;
 
 let record_update_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -437,7 +438,7 @@ let record_update_test () =
 ;;
 
 let projection_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in
@@ -477,7 +478,7 @@ let projection_test () =
 ;;
 
 let pattern_record_test () =
-  Violet_surface.Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
+  Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> exit 1)
   @@ fun () ->
   let parse_tops src =
     let lexbuf = Lexing.from_string src in

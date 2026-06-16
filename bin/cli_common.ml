@@ -1,4 +1,5 @@
 open Cmdliner
+open Violet_common
 
 let version = "0.8.0"
 
@@ -22,10 +23,7 @@ let require_root ?(hint = "") explicit_root =
     (match Violet_project.Root.find_root (Sys.getcwd ()) with
      | Some r -> r
      | None ->
-       Violet_surface.Reporter.fatalf
-         Parse_error
-         "no info.vt found in cwd or its ancestors%s"
-         hint)
+       Reporter.fatalf Parse_error "no info.vt found in cwd or its ancestors%s" hint)
 ;;
 
 (* Topologically sort the gathered dependencies and elaborate each module. *)
@@ -38,8 +36,7 @@ let elaborate mods deps =
          Violet_elab.Elab.check_module ~module_path (Hashtbl.find mods mod_name))
       r
   | ErrorCycle err_list ->
-    Violet_surface.Reporter.fatalf Parse_error "Cycle import %s"
-    @@ String.concat ", " err_list
+    Reporter.fatalf Parse_error "Cycle import %s" @@ String.concat ", " err_list
 ;;
 
 (* Create info.vt and src/ under [dir], each skipped if it already exists.

@@ -1,12 +1,12 @@
 open Cmdliner
 open Cli_common
+open Violet_common
 
 let update explicit_root =
   let root = require_root explicit_root in
   let manifest =
     try Violet_project.Resolve.load_manifest root with
-    | Violet_project.Resolve.Project_error msg ->
-      Violet_surface.Reporter.fatalf Parse_error "%s" msg
+    | Violet_project.Resolve.Project_error msg -> Reporter.fatalf Parse_error "%s" msg
   in
   let entries =
     List.filter_map

@@ -29,6 +29,7 @@
 (* Yuujinchou.Trie plus a [pp_path], so `Trie.path` fields can sit inside the
    `[@@deriving show]` types below (ppx looks up `Trie.pp_path`). *)
 module Name = Violet_kernel.Syntax.Name
+open Violet_common
 
 module Trie = struct
   include Yuujinchou.Trie

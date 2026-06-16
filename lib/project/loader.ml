@@ -1,4 +1,5 @@
 module Trie = Yuujinchou.Trie
+open Violet_common
 
 type mode =
   | Project of Resolve.project
@@ -29,7 +30,7 @@ let rec walk_vt_files (dir : string) : string list =
 let mode_for_entry ?explicit_root (filename : string) : mode =
   let mk_project root =
     try Project (Resolve.load root) with
-    | Resolve.Project_error msg -> Violet_surface.Reporter.fatalf Parse_error "%s" msg
+    | Resolve.Project_error msg -> Reporter.fatalf Parse_error "%s" msg
   in
   match explicit_root with
   | Some root -> mk_project root

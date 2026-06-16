@@ -1,1 +1,0 @@
-include Violet_common.Reporter

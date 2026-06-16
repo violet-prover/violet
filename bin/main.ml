@@ -1,5 +1,5 @@
 open Cmdliner
-module Tty = Asai.Tty.Make (Violet_surface.Reporter.Message)
+module Tty = Asai.Tty.Make (Violet_common.Reporter.Message)
 
 let cmd ~env =
   let doc = "violet" in
@@ -31,7 +31,7 @@ let () =
   Printexc.record_backtrace true;
   Eio_main.run
   @@ fun env ->
-  Violet_surface.Reporter.run ~emit ~fatal
+  Violet_common.Reporter.run ~emit ~fatal
   @@ fun () ->
   let open Violet_elab.Context.Handler in
   Violet_elab.Context.S.run ~shadow ~not_found ~hook

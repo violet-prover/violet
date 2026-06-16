@@ -1,4 +1,4 @@
-open Violet_surface
+open Violet_common
 module Check = Wiring.Check
 
 let report_rejection ~loc ~name err =
