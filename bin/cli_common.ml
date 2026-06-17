@@ -41,18 +41,18 @@ let elaborate mods deps =
 
 (* Create info.vt and src/ under [dir], each skipped if it already exists.
    Prints a skip/created line per item and returns what was created. *)
-let scaffold ~dir ~name =
+let scaffold ~stdout ~dir ~name =
   let created = ref [] in
   let info_path = Filename.concat dir "info.vt" in
   if Sys.file_exists info_path
-  then Printf.printf "skip info.vt (already exists)\n"
+  then Eio.Flow.copy_string "skip info.vt (already exists)\n" stdout
   else begin
     write_file info_path (Printf.sprintf "\\name %S\n\\version \"0.1.0\"\n" name);
     created := "info.vt" :: !created
   end;
   let src_path = Filename.concat dir "src" in
   if Sys.file_exists src_path
-  then Printf.printf "skip src/ (already exists)\n"
+  then Eio.Flow.copy_string "skip src/ (already exists)\n" stdout
   else begin
     Unix.mkdir src_path 0o755;
     created := "src/" :: !created

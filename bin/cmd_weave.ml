@@ -8,7 +8,7 @@ let write_stylesheet (dir : string) : string =
   path
 ;;
 
-let weave explicit_root backend inline_css out out_dir file_opt =
+let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt =
   if not (String.equal backend "tr-notes")
   then
     Reporter.fatalf
@@ -16,7 +16,10 @@ let weave explicit_root backend inline_css out out_dir file_opt =
       "backend not yet implemented: %s (only `tr-notes`)"
       backend;
   if inline_css
-  then prerr_endline "weave: --inline-css is not yet implemented; writing violet.css";
+  then
+    Eio.Flow.copy_string
+      "weave: --inline-css is not yet implemented; writing violet.css\n"
+      stderr;
   match file_opt with
   | Some scrbl_path ->
     let out_path =
@@ -32,11 +35,13 @@ let weave explicit_root backend inline_css out out_dir file_opt =
      | Some output ->
        write_file out_path output;
        let css = write_stylesheet (Filename.dirname out_path) in
-       Printf.printf
-         "wove %s -> %s (link %s once from your site)\n"
-         scrbl_path
-         out_path
-         css)
+       Eio.Flow.copy_string
+         (Printf.sprintf
+            "wove %s -> %s (link %s once from your site)\n"
+            scrbl_path
+            out_path
+            css)
+         stdout)
   | None ->
     let out_dir =
       match out_dir with
@@ -58,15 +63,20 @@ let weave explicit_root backend inline_css out out_dir file_opt =
          | Some output ->
            let out_path = Filename.concat out_dir (addr ^ ".scrbl") in
            write_file out_path output;
-           Printf.printf "wove %s -> %s\n" scrbl_path out_path)
+           Eio.Flow.copy_string
+             (Printf.sprintf "wove %s -> %s\n" scrbl_path out_path)
+             stdout)
       cards;
     let css = write_stylesheet out_dir in
-    Printf.printf "wrote %s (link it once from your site template)\n" css;
+    Eio.Flow.copy_string
+      (Printf.sprintf "wrote %s (link it once from your site template)\n" css)
+      stdout;
     if !failed > 0 then exit 1
 ;;
 
 let cmd ~env =
-  let _ = env in
+  let stdout = Eio.Stdenv.stdout env in
+  let stderr = Eio.Stdenv.stderr env in
   let arg_backend =
     let doc =
       "Output backend. Only `tr-notes` is implemented; a generic Scribble backend is \
@@ -107,7 +117,7 @@ let cmd ~env =
   Cmd.v
     info
     Term.(
-      const weave
+      const (weave ~stdout ~stderr)
       $ arg_root
       $ arg_backend
       $ arg_inline_css

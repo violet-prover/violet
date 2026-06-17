@@ -2,7 +2,7 @@ open Cmdliner
 open Cli_common
 open Violet_common
 
-let add explicit_root rev key url =
+let add ~stdout explicit_root rev key url =
   let root = require_root explicit_root in
   let manifest =
     try Violet_project.Resolve.load_manifest root with
@@ -15,11 +15,13 @@ let add explicit_root rev key url =
   (Fun.protect ~finally:(fun () -> close_out oc)
    @@ fun () ->
    output_string oc (Printf.sprintf "\\dep %s (git = %S, rev = %S)\n" key url rev));
-  Printf.printf "added dep `%s` -> %s@%s; run `violet update`\n" key url rev
+  Eio.Flow.copy_string
+    (Printf.sprintf "added dep `%s` -> %s@%s; run `violet update`\n" key url rev)
+    stdout
 ;;
 
 let cmd ~env =
-  let _ = env in
+  let stdout = Eio.Stdenv.stdout env in
   let arg_rev =
     let doc = "Git revision to pin in info.vt (branch, tag, or commit)." in
     Arg.value @@ Arg.opt Arg.string "main" @@ Arg.info [ "rev" ] ~docv:"REV" ~doc
@@ -34,5 +36,5 @@ let cmd ~env =
   in
   let doc = "Add a git dependency to info.vt" in
   let info = Cmd.info "add" ~version ~doc in
-  Cmd.v info Term.(const add $ arg_root $ arg_rev $ arg_key $ arg_url)
+  Cmd.v info Term.(const (add ~stdout) $ arg_root $ arg_rev $ arg_key $ arg_url)
 ;;

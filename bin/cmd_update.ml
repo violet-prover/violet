@@ -2,7 +2,7 @@ open Cmdliner
 open Cli_common
 open Violet_common
 
-let update explicit_root =
+let update ~stdout explicit_root =
   let root = require_root explicit_root in
   let manifest =
     try Violet_project.Resolve.load_manifest root with
@@ -23,12 +23,14 @@ let update explicit_root =
   let oc = open_out path in
   output_string oc (Violet_project.Lockfile.to_string lock);
   close_out oc;
-  Printf.printf "updated %s (%d git deps)\n" path (List.length entries)
+  Eio.Flow.copy_string
+    (Printf.sprintf "updated %s (%d git deps)\n" path (List.length entries))
+    stdout
 ;;
 
 let cmd ~env =
-  let _ = env in
+  let stdout = Eio.Stdenv.stdout env in
   let doc = "Resolve declared dependencies and regenerate info.lock" in
   let info = Cmd.info "update" ~version ~doc in
-  Cmd.v info Term.(const update $ arg_root)
+  Cmd.v info Term.(const (update ~stdout) $ arg_root)
 ;;
