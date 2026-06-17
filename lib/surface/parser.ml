@@ -1552,7 +1552,12 @@ module Grammar = struct
 end
 
 let rec tokens filename lexbuf =
-  let tok = Lexer.token lexbuf in
+  let tok =
+    try Lexer.token lexbuf with
+    | Lexer.SyntaxError lexeme ->
+      let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
+      Reporter.fatalf ~loc Parse_error "illegal character `%s`" lexeme
+  in
   let loc = Asai.Range.of_lexbuf ~source:(`File filename) lexbuf in
   match tok with
   | Lexer.EOF -> [ { Surface.loc; value = tok } ]
