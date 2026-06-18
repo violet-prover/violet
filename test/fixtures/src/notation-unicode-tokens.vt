@@ -1,0 +1,18 @@
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let judge (g e t : Nat) : Nat => e
+\let pair (x y : Nat) : Nat => x
+
+# Rather than overriding the reserved `:` / `|` tokens, notation uses distinct
+# non-reserved Unicode codepoints (Agda does the same): `∶` is U+2236 (not the
+# reserved COLON) and `∣` is U+2223 (not the reserved VERT). Both lex as plain
+# SYMBOL material, so they work as operator literals with no special casing.
+\operator "\g ⊢ \e ∶ \t" => judge
+\operator "⟨ \x ∣ \y ⟩" => pair
+
+\let test1 : Nat => Nat/zero ⊢ Nat/suc Nat/zero ∶ Nat/zero
+\let test2 : Nat => ⟨ Nat/zero ∣ Nat/suc Nat/zero ⟩

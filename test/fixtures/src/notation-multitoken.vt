@@ -1,0 +1,13 @@
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let box (m n : Nat) : Nat => m
+
+# `Σ[` is a multi-token literal: the lexer produces IDENT `Σ` then SYMBOL `[`,
+# and the resolver glues them because they are written with no space between.
+\operator "Σ[ \x ] \y" => box
+
+\let test : Nat => Σ[ Nat/suc Nat/zero ] Nat/zero

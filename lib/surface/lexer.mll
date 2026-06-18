@@ -75,7 +75,11 @@ let newline = '\r' | '\n' | "\r\n"
    symbol byte) so that sym_unit+ partitions cleanly at codepoint boundaries
    and doesn't absorb the letter ranges above. Reserved Unicode tokens like
    `⊔` still win via first-rule precedence on equal-length matches. *)
-let ascii_sym = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',']
+(* `[` `]` are admitted as symbol material (they were previously illegal) so
+   they can appear in operator-notation literals such as `Σ[ \x ] \y`. They
+   carry no built-in structural meaning; the operator resolver gives them sense
+   via the in-scope notation table. *)
+let ascii_sym = ['+' '-' '*' '/' '<' '>' '=' '!' '&' '^' '?' '%' '@' '$' ',' '[' ']']
 (* 3-byte UTF-8 minus the Letter-like Symbols block (0xE2 0x84/0x85 xx). *)
 let utf8_sym_3 =
     ['\224'-'\225'] ['\128'-'\191'] ['\128'-'\191']

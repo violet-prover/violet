@@ -92,6 +92,25 @@ let classify_chunk (s : string) : [ `Ident | `Symbol | `Bad ] =
   | _ -> `Bad
 ;;
 
+(* The IDENT/SYMBOL pieces of a literal chunk, or None if it is empty, fails to
+   lex, or contains a reserved token. A chunk may lex to several pieces (`Σ[` →
+   `Σ`, `[`), matched against a glued run of source tokens at resolve time. *)
+let lex_literal_pieces (s : string) : string list option =
+  let lexbuf = Lexing.from_string s in
+  let rec go acc =
+    match
+      try Some (Lexer.token lexbuf) with
+      | Lexer.SyntaxError _ -> None
+    with
+    | Some Lexer.EOF -> Some (List.rev acc)
+    | Some (Lexer.IDENT x) | Some (Lexer.SYMBOL x) -> go (x :: acc)
+    | Some _ | None -> None
+  in
+  match go [] with
+  | Some (_ :: _ as pieces) -> Some pieces
+  | _ -> None
+;;
+
 (* Parse one chunk into a name_part. Holes look like "\name" and the name
    itself must be a valid identifier. Literal parts must classify as IDENT
    or SYMBOL on re-lexing — they may not start with `\`, which is reserved
@@ -119,14 +138,14 @@ let parse_chunk ~template (chunk : string) : name_part =
     Hole name
   end
   else
-    begin match classify_chunk chunk with
-    | `Ident | `Symbol -> Lit chunk
-    | `Bad ->
+    begin match lex_literal_pieces chunk with
+    | Some _ -> Lit chunk
+    | None ->
       Reporter.fatalf
         Parse_error
-        "invalid operator template `%s`: part `%s` must be a single identifier or symbol \
-         (no reserved punctuation, no spaces, no quotes; `\\` is reserved for hole names \
-         and may not begin a literal part)"
+        "invalid operator template `%s`: part `%s` must lex as one or more identifiers \
+         or symbols (no reserved punctuation, no spaces, no quotes; `\\` is reserved for \
+         hole names and may not begin a literal part)"
         template
         chunk
     end
@@ -239,6 +258,53 @@ let hole_names_of_parts (parts : name_part list) : string list =
     parts
 ;;
 
+(* Hole names that appear as a binder in the body, e.g. `x` in
+   `Sigma A (\x -> B)`. These bind: see [lower_body]. Cf. Agda's
+   `syntax Σ A (λ x → B) = Σ[ x ∈ A ] B`. *)
+let binder_holes_of_body (body : Surface.preterm) (hole_names : string list) : string list
+  =
+  let is_hole n = List.mem n hole_names in
+  let acc = ref [] in
+  let note (nm : Surface.binder_name) =
+    match nm with
+    | Surface.Named n when is_hole n && not (List.mem n !acc) -> acc := n :: !acc
+    | _ -> ()
+  in
+  let rec walk (t : Surface.preterm) =
+    match t.Surface.node with
+    | Surface.Lambda b ->
+      note b.Surface.name.Surface.value;
+      walk b.Surface.bound
+    | Surface.TypedLambda (b, body) ->
+      note b.Surface.name.Surface.value;
+      walk b.Surface.bound;
+      walk body
+    | Surface.Pi (b, body) ->
+      note b.Surface.name.Surface.value;
+      walk b.Surface.bound;
+      walk body
+    | Surface.App (_, f, x) ->
+      walk f;
+      walk x
+    | Surface.Max (a, b) ->
+      walk a;
+      walk b
+    | Surface.IdAbsurd p | Surface.Absurd p | Surface.Proj (p, _) -> walk p
+    | Surface.RecordLit entries -> List.iter (fun (_, e) -> walk e) entries
+    | Surface.RecordUpdate (base, entries) ->
+      walk base;
+      List.iter (fun (_, e) -> walk e) entries
+    | Surface.Var _
+    | Surface.Universe
+    | Surface.Hole
+    | Surface.Goal _
+    | Surface.Op_soup _
+    | Surface.Inline_elim _ -> ()
+  in
+  walk body;
+  List.rev !acc
+;;
+
 (* ===========================================================================
    2. Operator declarations and table
    ===========================================================================
@@ -257,6 +323,7 @@ type op_decl =
   ; assoc : Surface.op_assoc
   ; body : Surface.preterm
   ; hole_names : string list
+  ; binder_holes : string list (* subset of hole_names; see [binder_holes_of_body] *)
   ; ref_path : Trie.path
   ; constraints : op_constraint list
   ; raw_template : string (* original string, for diagnostics *)
@@ -281,6 +348,7 @@ let make_op_decl
   =
   let parts = parse_template template in
   let shape = derive_shape parts in
+  let hole_names = hole_names_of_parts parts in
   let assoc_opt = ref None in
   let constraints = ref [] in
   List.iter
@@ -316,7 +384,8 @@ let make_op_decl
   ; shape
   ; assoc
   ; body
-  ; hole_names = hole_names_of_parts parts
+  ; hole_names
+  ; binder_holes = binder_holes_of_body body hole_names
   ; ref_path = ref_path_of_parts parts
   ; constraints = List.rev !constraints
   ; raw_template = template
@@ -948,7 +1017,11 @@ let op_lit_set (table : op_table) : (string, unit) Hashtbl.t =
     (fun d ->
        List.iter
          (function
-           | Lit s -> Hashtbl.replace h s ()
+           (* every token piece, so the atom spine stops at each one *)
+           | Lit s ->
+             (match lex_literal_pieces s with
+              | Some pieces -> List.iter (fun p -> Hashtbl.replace h p ()) pieces
+              | None -> Hashtbl.replace h s ())
            | Hole _ -> ())
          d.template)
     table.decls;
@@ -984,6 +1057,32 @@ let consumed_span (st : parser_state) (i : int) (j : int) : Asai.Range.t =
   Surface.join_loc (tok_loc st.toks.(i)) (tok_loc st.toks.(max i (j - 1)))
 ;;
 
+(* Adjacent tokens, i.e. no whitespace between: `Σ[` is glued, `Σ [` is not. *)
+let glued (a : Asai.Range.t) (b : Asai.Range.t) : bool =
+  match Asai.Range.view a, Asai.Range.view b with
+  | `Range (_, x), `Range (y, _) -> x.Asai.Range.offset = y.Asai.Range.offset
+  | _ -> false
+;;
+
+(* Position past the glued run of names from [pos] that spells exactly [s], if
+   any. This is how a literal may span several tokens (`Σ[` = `Σ` then `[`). *)
+let match_lit (st : parser_state) (s : string) (pos : int) : int option =
+  let n = Array.length st.toks in
+  let rec go j acc =
+    if String.equal acc s
+    then Some j
+    else if j >= n
+    then None
+    else (
+      match st.toks.(j) with
+      | TName sp when j = pos || glued (tok_loc st.toks.(j - 1)) sp.Surface.loc ->
+        let acc = acc ^ sp.Surface.value in
+        if String.starts_with ~prefix:acc s then go (j + 1) acc else None
+      | _ -> None)
+  in
+  go pos ""
+;;
+
 (* Substitute hole-name occurrences in `body` with the matched subterms.
    Walk body and replace `Var h` with the matched term whenever `h` is one
    of the operator's hole names. If the body mentions no hole, treat it as
@@ -1003,15 +1102,43 @@ let lower_body (op : op_decl) (matches : Surface.preterm list) ~(use_span : Asai
     h
   in
   let env = List.combine op.hole_names matches in
+  let binder_hole_set =
+    let h = Hashtbl.create 4 in
+    List.iter (fun n -> Hashtbl.replace h n ()) op.binder_holes;
+    h
+  in
+  let rename_binder (nm : Surface.binder_name Surface.spanned)
+    : Surface.binder_name Surface.spanned
+    =
+    match nm.Surface.value with
+    | Surface.Named x when Hashtbl.mem binder_hole_set x ->
+      (match List.assoc_opt x env with
+       | Some { Surface.node = Surface.Var [ m ]; _ } ->
+         let value = if String.equal m "_" then Surface.Anon else Surface.Named m in
+         { nm with Surface.value }
+       | Some bad ->
+         Reporter.fatalf
+           ~loc:bad.Surface.loc
+           Parse_error
+           "operator binder position `\\%s` must be a single name, not a compound term"
+           x
+       | None -> nm)
+    | _ -> nm
+  in
   let rec sub (t : Surface.preterm) : Surface.preterm =
     match t.Surface.node with
     | Surface.Var [ n ] when Hashtbl.mem hole_set n -> List.assoc n env
     | Surface.Var _ as v -> at v
     | Surface.App (impl, f, x) -> at (Surface.App (impl, sub f, sub x))
-    | Surface.Lambda b -> at (Surface.Lambda { b with bound = sub b.bound })
+    | Surface.Lambda b ->
+      at (Surface.Lambda { b with name = rename_binder b.name; bound = sub b.bound })
     | Surface.TypedLambda (b, body) ->
-      at (Surface.TypedLambda ({ b with bound = sub b.bound }, sub body))
-    | Surface.Pi (b, body) -> at (Surface.Pi ({ b with bound = sub b.bound }, sub body))
+      at
+        (Surface.TypedLambda
+           ({ b with name = rename_binder b.name; bound = sub b.bound }, sub body))
+    | Surface.Pi (b, body) ->
+      at
+        (Surface.Pi ({ b with name = rename_binder b.name; bound = sub b.bound }, sub body))
     | Surface.Max (a, b) -> at (Surface.Max (sub a, sub b))
     | (Surface.Universe | Surface.Hole | Surface.Goal _) as n -> at n
     | Surface.IdAbsurd p -> at (Surface.IdAbsurd (sub p))
@@ -1183,7 +1310,6 @@ and try_extend_one
 and try_lit_starting_op (st : parser_state) (op : op_decl) (lvl : int) (i : int)
   : (Surface.preterm * int) option
   =
-  let n = Array.length st.toks in
   let last_hole_idx = last_hole_index op.template in
   let template_arr = Array.of_list op.template in
   let template_len = Array.length template_arr in
@@ -1195,17 +1321,11 @@ and try_lit_starting_op (st : parser_state) (op : op_decl) (lvl : int) (i : int)
     let part = template_arr.(!k) in
     match part with
     | Lit s ->
-      if
-        !pos < n
-        &&
-        match st.toks.(!pos) with
-        | TName s' -> String.equal s s'.Surface.value
-        | _ -> false
-      then begin
-        pos := !pos + 1;
-        incr k
-      end
-      else ok := false
+      (match match_lit st s !pos with
+       | Some j ->
+         pos := j;
+         incr k
+       | None -> ok := false)
     | Hole _ ->
       let lvl_hole =
         if !k = last_hole_idx && op.shape = Prefix then level_for_outer_rhs op lvl else 0
@@ -1232,7 +1352,6 @@ and try_hole_starting_op
       (j : int)
   : (Surface.preterm * int) option
   =
-  let n = Array.length st.toks in
   let last_hole_idx = last_hole_index op.template in
   let template_arr = Array.of_list op.template in
   let template_len = Array.length template_arr in
@@ -1245,17 +1364,11 @@ and try_hole_starting_op
     let part = template_arr.(!k) in
     match part with
     | Lit s ->
-      if
-        !pos < n
-        &&
-        match st.toks.(!pos) with
-        | TName s' -> String.equal s s'.Surface.value
-        | _ -> false
-      then begin
-        pos := !pos + 1;
-        incr k
-      end
-      else ok := false
+      (match match_lit st s !pos with
+       | Some j' ->
+         pos := j';
+         incr k
+       | None -> ok := false)
     | Hole _ ->
       let lvl_hole =
         if !k = last_hole_idx && op.shape = Infix then level_for_outer_rhs op lvl else 0
@@ -1448,6 +1561,72 @@ let%expect_test "parse_soup: ternary mixfix" =
   in
   print_string @@ [%show: Surface.preterm] result;
   [%expect {| (((ite c) a) b) |}]
+;;
+
+(* A literal part may span several lexer tokens (here `Σ[` = IDENT `Σ` glued to
+   SYMBOL `[`). The soup carries the pieces as separate `SI_Name`s; the matcher
+   glues them back. Dummy locs all sit at offset 0, so they count as glued. *)
+let%expect_test "parse_soup: multi-token literal `Σ[ \\x ] \\y`" =
+  let sigma =
+    make_op_decl ~template:"Σ[ \\x ] \\y" ~body:(d (Surface.Var [ "box" ])) ~options:[]
+  in
+  let table = add_decl sigma empty_table in
+  let result =
+    parse_soup
+      ~loc:Surface.dummy_loc
+      table
+      [ Surface.SI_Name (dn "Σ")
+      ; Surface.SI_Name (dn "[")
+      ; Surface.SI_Name (dn "m")
+      ; Surface.SI_Name (dn "]")
+      ; Surface.SI_Name (dn "n")
+      ]
+  in
+  print_string @@ [%show: Surface.preterm] result;
+  [%expect {| ((box m) n) |}]
+;;
+
+(* A hole used as a body binder (`x` in `Sigma A (\x -> B)`) is a binder hole:
+   the matched identifier renames the body binder, so `Σ s ∶ P , s` lowers with
+   the lambda binding `s` (not the template's `x`). *)
+let%expect_test "parse_soup: binder hole renames body binder" =
+  let sigma_body =
+    d
+      (Surface.App
+         ( false
+         , d (Surface.App (false, d (Surface.Var [ "Sigma" ]), d (Surface.Var [ "A" ])))
+         , d
+             (Surface.Lambda
+                { name = dn (Surface.Named "x")
+                ; bound = d (Surface.Var [ "B" ])
+                ; implicit = false
+                }) ))
+  in
+  let op = make_op_decl ~template:"Σ \\x ∶ \\A , \\B" ~body:sigma_body ~options:[] in
+  let table = add_decl op empty_table in
+  let result =
+    parse_soup
+      ~loc:Surface.dummy_loc
+      table
+      [ Surface.SI_Name (dn "Σ")
+      ; Surface.SI_Name (dn "s")
+      ; Surface.SI_Name (dn "∶")
+      ; Surface.SI_Name (dn "P")
+      ; Surface.SI_Name (dn ",")
+      ; Surface.SI_Name (dn "s")
+      ]
+  in
+  print_string @@ [%show: Surface.preterm] result;
+  [%expect {| ((Sigma P) fun s => s) |}]
+;;
+
+let%expect_test "parse_template: multi-token literal lexes into a single part" =
+  print_string @@ [%show: name_part list] (parse_template "Σ[ \\x ] \\y");
+  [%expect
+    {|
+    [(Op_resolver.Lit "\206\163["); (Op_resolver.Hole "x");
+      (Op_resolver.Lit "]"); (Op_resolver.Hole "y")]
+    |}]
 ;;
 
 let%expect_test "parse_soup: postfix `!`" =

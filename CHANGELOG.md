@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A hole used as a binder in the body now binds
+- operator literals now can span several lexer tokens, matched by gluing adjacent source tokens with no whitespace between them.
 - literate: report missing closing of codeblock
 
 ## 0.8.0

@@ -1,0 +1,13 @@
+\universe U
+
+\data Nat : U
+  | zero : Nat
+  | suc : Nat -> Nat
+
+\let box (m n : Nat) : Nat => m
+
+\operator "Σ[ \x ] \y" => box
+
+# Writing `Σ [` with a space breaks the glued run, so the `Σ[` literal cannot
+# match: the soup has no parse.
+\let test : Nat => Σ [ Nat/zero ] Nat/zero

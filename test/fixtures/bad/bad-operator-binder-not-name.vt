@@ -1,0 +1,13 @@
+\universe U
+
+\record Sigma (A : U) (B : A -> U) : U
+  | fst : A
+  | snd : B fst
+
+\operator "Σ \x ∶ \A , \B" => Sigma A (\x -> B)
+
+\let f (P : U) : U => P
+
+# The binder position `\x` is filled by a compound term `(f P)`, not a name,
+# so the operator cannot bind it.
+\let bad (P : U) : U => Σ (f P) ∶ P , P

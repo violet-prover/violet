@@ -1,0 +1,16 @@
+\universe U
+
+\record Sigma (A : U) (B : A -> U) : U
+  | fst : A
+  | snd : B fst
+
+# `\x` appears as a binder in the body (`\x -> B`), so it is a BINDER hole:
+# the name the user writes at the use site renames the body binder and is
+# captured by the spliced `\B`. (cf. Agda `syntax Σ A (λ x → B) = Σ[ x ∈ A ] B`.)
+\operator "Σ \x ∶ \A , \B" => Sigma A (\x -> B)
+
+# dependent: `s` is bound over the second component
+\let dep (P : U) (Q : P -> U) : U => Σ s ∶ P , Q s
+
+# non-dependent: `_` becomes an anonymous binder
+\let nondep (P R : U) : U => Σ _ ∶ P , R
