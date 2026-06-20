@@ -1,7 +1,7 @@
 open Cmdliner
 open Violet_common
 
-let version = "0.8.0"
+let version = "0.8.1"
 
 let write_file path contents =
   let oc = open_out path in
