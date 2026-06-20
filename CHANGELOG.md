@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- literate: weave emits a self-contained HTML page for each referenced dependency module, so cross-package uses link across the boundary; a single-file weave produces the dep pages it uses when given `--out-dir`
 - A hole used as a binder in the body now binds
 - operator literals now can span several lexer tokens, matched by gluing adjacent source tokens with no whitespace between them.
 - literate: report missing closing of codeblock

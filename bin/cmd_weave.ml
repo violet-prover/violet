@@ -8,6 +8,28 @@ let write_stylesheet (dir : string) : string =
   path
 ;;
 
+(* Create [dir] and every missing ancestor (a dep page's path like
+   [std/id/index.html] carries directories). *)
+let rec ensure_dir dir =
+  if not (Sys.file_exists dir)
+  then begin
+    ensure_dir (Filename.dirname dir);
+    Unix.mkdir dir 0o755
+  end
+;;
+
+(* Write each [(addr, html)] page under [dir] at [Weave.output_path], emitting a
+   message per file. *)
+let write_pages ~stdout dir pages =
+  List.iter
+    (fun (addr, html) ->
+       let out_path = Filename.concat dir (Violet_literate.Weave.output_path ~addr) in
+       ensure_dir (Filename.dirname out_path);
+       write_file out_path html;
+       Eio.Flow.copy_string (Printf.sprintf "wove %s\n" out_path) stdout)
+    pages
+;;
+
 let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt =
   if not (String.equal backend "tr-notes")
   then
@@ -32,9 +54,19 @@ let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt 
     in
     (match Violet_literate.Weave.weave_file ?explicit_root ~scrbl_path () with
      | None -> exit 1
-     | Some output ->
+     | Some (output, dep_pages) ->
        write_file out_path output;
        let css = write_stylesheet (Filename.dirname out_path) in
+       (* The card's referenced dependency pages are self-contained HTML; emit
+          them under [--out-dir] (e.g. the site's _build) when given, so the
+          cross-package /<dep>/<addr> links resolve. Without it they are skipped
+          (the card still weaves, the links just 404). *)
+       (match out_dir with
+        | Some dir when dep_pages <> [] ->
+          ensure_dir dir;
+          write_pages ~stdout dir dep_pages;
+          ignore (write_stylesheet dir)
+        | _ -> ());
        Eio.Flow.copy_string
          (Printf.sprintf
             "wove %s -> %s (link %s once from your site)\n"
@@ -52,26 +84,14 @@ let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt 
           "weave: --out-dir is required when weaving a whole project"
     in
     let root = require_root ~hint:"; pass a FILE or use --root" explicit_root in
-    if not (Sys.file_exists out_dir) then Unix.mkdir out_dir 0o755;
-    let registry = Violet_literate.TRCard.scan ~root in
-    let cards = Violet_literate.TRCard.cards registry in
-    let failed = ref 0 in
-    List.iter
-      (fun (addr, scrbl_path) ->
-         match Violet_literate.Weave.weave_file ~explicit_root:root ~scrbl_path () with
-         | None -> incr failed
-         | Some output ->
-           let out_path = Filename.concat out_dir (addr ^ ".scrbl") in
-           write_file out_path output;
-           Eio.Flow.copy_string
-             (Printf.sprintf "wove %s -> %s\n" scrbl_path out_path)
-             stdout)
-      cards;
+    ensure_dir out_dir;
+    let pages, failed = Violet_literate.Weave.weave_project ~root in
+    write_pages ~stdout out_dir pages;
     let css = write_stylesheet out_dir in
     Eio.Flow.copy_string
       (Printf.sprintf "wrote %s (link it once from your site template)\n" css)
       stdout;
-    if !failed > 0 then exit 1
+    if failed > 0 then exit 1
 ;;
 
 let cmd ~env =
@@ -98,8 +118,11 @@ let cmd ~env =
   in
   let arg_out_dir =
     let doc =
-      "Output directory. Required in whole-project mode; each card writes \
-       <DIR>/<addr>.scrbl."
+      "Output directory for self-contained dependency pages: each referenced dependency \
+       module writes <DIR>/<dep>/<addr>/index.html (so the /<dep>/<addr> URL resolves by \
+       directory index) plus a violet.css. With a single FILE this is optional (omit it \
+       to skip dep pages); in whole-project mode it is required and also receives each \
+       card's <addr>.scrbl."
     in
     Arg.value
     @@ Arg.opt (Arg.some Arg.string) None

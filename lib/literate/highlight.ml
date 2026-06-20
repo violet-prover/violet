@@ -114,7 +114,7 @@ let use_href ~current_addr ~registry ~def_paths (e : Index.entry) : string optio
     (match Violet_common.Range.source loc with
      | None -> None
      | Some path ->
-       let addr = TRCard.addr_of_path path in
+       let addr = TRCard.addr_of_source registry path in
        if not (TRCard.mem registry addr)
        then None
        else if not (String.equal addr current_addr)
