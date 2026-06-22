@@ -35,6 +35,7 @@
   violet_kernel
   violet_surface
   violet_elab
+  violet_literate
   violet_langserver)
  (tags
   ("dependent-types" "type-theory" "proof-assistant")))
@@ -70,6 +71,24 @@
  (depends (ocaml (>= 5.3)) dune base-unix violet_surface violet_elab tsort ppx_deriving ppx_expect))
 
 (package
+ (name violet_literate)
+ (synopsis "Violet literate programming (weave)")
+ (depends
+  (ocaml (>= 5.3))
+  dune
+  ppx_expect
+  violet_common
+  violet_surface
+  violet_elab
+  violet_project
+  violet_interactive
+  violet_kernel
+  asai
+  tsort
+  base-unix
+  yuujinchou))
+
+(package
  (name violet_langserver)
  (synopsis "Violet language server (LSP)")
  (depends
@@ -79,6 +98,7 @@
   violet_elab
   violet_kernel
   violet_project
+  violet_literate
   asai
   eio
   linol

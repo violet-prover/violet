@@ -24,6 +24,11 @@ type t
 val empty : t
 val of_events : Violet_elab.Observer.event list -> t
 val find_at : source:string -> line:int -> col:int -> t -> entry option
+
+(* Re-anchor every range an entry carries ([loc], [def_loc], [def_target]) with
+   [f] and rebuild the offset index. Used to map a literate card's entries from
+   the synthesized code buffer back onto the scrbl document. *)
+val map_ranges : (Asai.Range.t -> Asai.Range.t) -> t -> t
 val def_of : entry -> t -> Asai.Range.t option
 val all_entries : t -> entry list
 val entries_at_path : Trie.path -> t -> entry list

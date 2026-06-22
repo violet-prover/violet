@@ -1,5 +1,6 @@
 (library
  (name violet_literate)
+ (public_name violet_literate)
  (inline_tests)
  (preprocess
   (pps ppx_expect))

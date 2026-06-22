@@ -320,6 +320,19 @@ let literate_outcome (scrbl : string) : [ `Ok | `Fail of string ] =
   | None -> `Ok
 ;;
 
+(* literate/good: [*.vt.scrbl] cards that must elaborate OK through the same
+   path `violet check FILE.vt.scrbl` takes - [Weave.elaborate] scans the
+   [@vt|{}|] blocks, synthesizes a module, and type-checks it. A [Some] result
+   means the card checked clean; [None] means it reported errors (already
+   displayed). This guards that `check` on a literate card never regresses to
+   parsing the scribble prose as raw Violet source. *)
+let literate_good_outcome (scrbl : string) : [ `Ok | `Fail ] =
+  match Violet_literate.Weave.elaborate ~scrbl_path:scrbl () with
+  | Some _ -> `Ok
+  | None -> `Fail
+  | exception _ -> `Fail
+;;
+
 (* Outcome comparison for the Ok/Hung (src/example) path. bad/ fixtures are
    compared against golden files instead, so they don't go through this. *)
 type cmp =
@@ -423,6 +436,17 @@ let () =
            end
          end)
     literate_bads;
+  (* literate/good: [*.vt.scrbl] cards that must elaborate OK via the same
+     [Weave.elaborate] path as `violet check FILE.vt.scrbl`. *)
+  let literate_goods = scrbl_entries "./fixtures/literate/good" in
+  List.iter
+    (fun scrbl ->
+       match literate_good_outcome scrbl with
+       | `Ok -> Printf.printf "%s: OK (literate check)\n" scrbl
+       | `Fail ->
+         Printf.printf "%s: got FAIL, expected OK (literate check)\n" scrbl;
+         incr mismatches)
+    literate_goods;
   (* goal/ must elaborate (unresolved goals are warnings), and the rendered
      goal reports must match the committed golden — these pin the pretty
      printer (operator notation, eliminator folding) across real contexts. *)

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix checking for vt.scrbl files
+
 ## 0.8.1
 
 - literate: weave emits a self-contained HTML page for each referenced dependency module, so cross-package uses link across the boundary; a single-file weave produces the dep pages it uses when given `--out-dir`

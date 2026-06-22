@@ -210,6 +210,36 @@ let find_at ~source ~line ~col t =
   !best
 ;;
 
+(* Apply [f] to every range an entry carries - its [loc] and the optional
+   [def_loc]/[def_target] - and rebuild the offset map (keyed by [loc]'s start
+   offset, which [f] may move). The language server uses this to re-anchor a
+   literate card's entries from the synthesized code buffer onto the scrbl
+   document, so hover/goto work in the editor's coordinates. *)
+let map_ranges (f : Asai.Range.t -> Asai.Range.t) (t : t) : t =
+  let map_entry e =
+    { e with
+      loc = f e.loc
+    ; def_loc = Option.map f e.def_loc
+    ; def_target = Option.map f e.def_target
+    }
+  in
+  let by_offset =
+    IntMap.fold
+      (fun _ es m ->
+         List.fold_left
+           (fun m e ->
+              let e = map_entry e in
+              let key = start_offset e.loc in
+              let existing = Option.value (IntMap.find_opt key m) ~default:[] in
+              IntMap.add key (e :: existing) m)
+           m
+           es)
+      t.by_offset
+      IntMap.empty
+  in
+  { by_offset }
+;;
+
 let def_of entry _t = entry.def_target
 let all_entries t = IntMap.fold (fun _ es acc -> List.rev_append es acc) t.by_offset []
 

@@ -5,12 +5,24 @@ type t =
 
 let create ~store ~project_index : t = { store; project_index }
 
+(* A literate [.vt.scrbl] card is a scribble document: elaborate the
+   synthesized module (its [@vt|{}|] blocks concatenated) under the card's
+   [.vt] name, then remap diagnostics back onto the scrbl text. For a plain
+   [.vt] buffer [module_file] is [filename] and the literate steps are
+   no-ops. *)
+let is_scrbl filename = Filename.check_suffix filename ".vt.scrbl"
+
 let recheck (t : t) ~uri : unit =
   match Doc_store.find t.store ~uri with
   | None -> ()
   | Some d ->
     let filename = Linol_lsp.Lsp.Types.DocumentUri.to_path uri in
     let module_path = !(d.snapshot).module_path in
+    let module_file =
+      if is_scrbl filename then Filename.chop_extension filename else filename
+    in
+    let buffer = ref d.text in
+    let blocks = ref [] in
     let diag_collector = Violet_common.Diagnostic_collector.create () in
     let collector = Violet_interactive.Collector.create () in
     let aborted = ref false in
@@ -22,7 +34,11 @@ let recheck (t : t) ~uri : unit =
       aborted := true;
       raise Exit
     in
-    let text_override path = if path = filename then Some d.text else None in
+    (* Override the entry module's on-disk text with the in-editor buffer (the
+       synthesized code for a card, the raw text for a plain [.vt]). *)
+    let text_override path =
+      if String.equal path module_file then Some !buffer else None
+    in
     let on_event = Violet_interactive.Collector.on_event collector in
     (try
        Violet_common.Reporter.run ~emit ~fatal (fun () ->
@@ -37,17 +53,28 @@ let recheck (t : t) ~uri : unit =
            ~not_found:Env.Handler.not_found
            ~hook:Env.Handler.hook
          @@ fun () ->
-         let m = Violet_surface.Parser.parse_buffer ~filename d.text in
+         let m =
+           if is_scrbl filename
+           then begin
+             let _, buf, blks =
+               Violet_literate.Source.to_buffer ~source:filename d.text
+             in
+             buffer := buf;
+             blocks := blks;
+             Violet_surface.Parser.parse_buffer ~filename:module_file buf
+           end
+           else Violet_surface.Parser.parse_buffer ~filename d.text
+         in
          let deps = Hashtbl.create 16 in
          let mods = Hashtbl.create 16 in
-         let mode = Violet_project.Loader.mode_for_entry filename in
+         let mode = Violet_project.Loader.mode_for_entry module_file in
          Violet_project.Loader.prepare_dependencies
            ~text_override
            mode
            []
            mods
            deps
-           (Violet_project.Loader.module_name filename)
+           (Violet_project.Loader.module_name module_file)
            m;
          match Tsort.sort @@ List.of_seq @@ Hashtbl.to_seq deps with
          | Sorted r ->
@@ -60,14 +87,35 @@ let recheck (t : t) ~uri : unit =
      with
      | Exit -> ());
     let new_index = Violet_interactive.Collector.to_index collector in
+    (* [to_scrbl] re-anchors a range onto the scrbl so the editor
+       sees its own coordinates. Identity for a plain [.vt] (no blocks) and for
+       ranges that map nowhere (e.g. dependency files). *)
+    let to_scrbl loc =
+      Option.value ~default:loc
+      @@ Violet_literate.Source.remap_range
+           ~blocks:!blocks
+           ~scrbl_path:filename
+           ~scrbl_text:d.text
+           ~module_file
+           loc
+    in
+    let new_index =
+      if is_scrbl filename
+      then Violet_interactive.Index.map_ranges to_scrbl new_index
+      else new_index
+    in
     let prev_last_good = !(d.snapshot).last_good_index in
     let has_errors =
       !aborted || Violet_common.Diagnostic_collector.has_errors diag_collector
     in
     let last_good = if has_errors then prev_last_good else new_index in
     let lsp_diags =
-      List.map (Diagnostics.lsp_of_asai ~text:d.text)
-      @@ Violet_common.Diagnostic_collector.all diag_collector
+      Violet_common.Diagnostic_collector.all diag_collector
+      |> List.map (fun (diag : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
+        let loc = Option.map to_scrbl diag.explanation.loc in
+        Diagnostics.lsp_of_asai
+          ~text:d.text
+          { diag with explanation = { diag.explanation with loc } })
     in
     d.snapshot
     := { module_path
@@ -107,6 +155,107 @@ let ensure_indexed (t : t) ~file : unit =
      | Exit -> ());
     let idx = Violet_interactive.Collector.to_index collector in
     Project_index.update t.project_index ~file ~index:idx
+;;
+
+let%expect_test "recheck of a literate card checks its @vt blocks" =
+  let store = Doc_store.create () in
+  let project_index = Project_index.create () in
+  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Card.vt.scrbl" in
+  let text =
+    {vt|@title{Demo}
+
+@p{Prose around the code; the scanner must elaborate only the block.}
+
+@vt|{
+\universe U
+\let f (A : U) : U => A
+}|
+|vt}
+  in
+  let _ = Doc_store.update store ~uri ~text ~version:1 in
+  let c = create ~store ~project_index in
+  recheck c ~uri;
+  let snap = !((Option.get (Doc_store.find store ~uri)).snapshot) in
+  let has_entries = List.length (Violet_interactive.Index.all_entries snap.index) > 0 in
+  Printf.printf "diags=%d has_entries=%b" (List.length snap.diagnostics) has_entries;
+  [%expect
+    {|
+    +checking [module] Card (/tmp/Card.vt)
+    diags=0 has_entries=true
+    |}]
+;;
+
+let%expect_test "literate diagnostics are remapped onto the scrbl, not the buffer" =
+  let store = Doc_store.create () in
+  let project_index = Project_index.create () in
+  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Bad.vt.scrbl" in
+  let text =
+    {vt|@title{Bad}
+
+@p{One.}
+@p{Two.}
+
+@vt|{
+\universe U
+\let bad : U => undefined_name
+}|
+|vt}
+  in
+  let _ = Doc_store.update store ~uri ~text ~version:1 in
+  let c = create ~store ~project_index in
+  recheck c ~uri;
+  let snap = !((Option.get (Doc_store.find store ~uri)).snapshot) in
+  let line0 =
+    match snap.diagnostics with
+    | diag :: _ -> diag.Linol_lsp.Lsp.Types.Diagnostic.range.start.line
+    | [] -> -1
+  in
+  Printf.printf "diags=%d line0=%d" (List.length snap.diagnostics) line0;
+  [%expect
+    {|
+    +checking [module] Bad (/tmp/Bad.vt)
+    diags=1 line0=7
+    |}]
+;;
+
+let%expect_test "literate index is anchored to scrbl coordinates" =
+  let store = Doc_store.create () in
+  let project_index = Project_index.create () in
+  let scrbl = "/tmp/Card2.vt.scrbl" in
+  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path scrbl in
+  let text =
+    {vt|@title{Demo}
+
+@p{Prose.}
+
+@vt|{
+\universe U
+\let f (A : U) : U => A
+}|
+|vt}
+  in
+  let _ = Doc_store.update store ~uri ~text ~version:1 in
+  let c = create ~store ~project_index in
+  recheck c ~uri;
+  let idx = !((Option.get (Doc_store.find store ~uri)).snapshot).index in
+  (match Violet_interactive.Index.find_at ~source:scrbl ~line:7 ~col:5 idx with
+   | Some e ->
+     let path = Violet_kernel.Syntax.Name.of_segments e.Violet_interactive.Index.path in
+     let def_line =
+       match e.Violet_interactive.Index.def_target with
+       | Some loc ->
+         (match Asai.Range.split loc with
+          | s, _ -> s.Asai.Range.line_num
+          | exception _ -> -1)
+       | None -> -1
+     in
+     Printf.printf "path=%s def_line=%d" path def_line
+   | None -> Printf.printf "no hit");
+  [%expect
+    {|
+    +checking [module] Card2 (/tmp/Card2.vt)
+    path=f def_line=7
+    |}]
 ;;
 
 let%expect_test "recheck of clean buffer populates index" =

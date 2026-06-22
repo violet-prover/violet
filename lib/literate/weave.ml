@@ -6,40 +6,7 @@ module Loader = Violet_project.Loader
 module Index = Violet_interactive.Index
 module B = Backend.Tr_notes
 module Tty = Asai.Tty.Make (Violet_common.Reporter.Message)
-
-type woven_block =
-  { src : string
-  ; src_offset : int (* offset in the scrbl document, for diagnostics *)
-  ; buf_start : int (* offset in the concatenated code buffer *)
-  ; buf_len : int
-  }
-
-let read_file (path : string) : string =
-  let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic)
-  @@ fun () ->
-  let n = in_channel_length ic in
-  really_input_string ic n
-;;
-
-(* Concatenate every block's source into one Violet module buffer, recording
-   each block's buffer range so index ranges can be sliced back per block. A
-   newline separates blocks so boundaries never fuse two tokens. *)
-let build_buffer (segments : Block.segment list) : string * woven_block list =
-  let b = Buffer.create 1024 in
-  let blocks = ref [] in
-  List.iter
-    (fun seg ->
-       match seg with
-       | Block.Verbatim _ -> ()
-       | Block.Block { src; src_offset } ->
-         let buf_start = Buffer.length b in
-         Buffer.add_string b src;
-         Buffer.add_char b '\n';
-         blocks := { src; src_offset; buf_start; buf_len = String.length src } :: !blocks)
-    segments;
-  Buffer.contents b, List.rev !blocks
-;;
+open Source
 
 let text_override (filepath : string) : string option =
   if Filename.check_suffix filepath ".vt"
@@ -121,9 +88,8 @@ let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
             ~not_found:Env.Handler.not_found
             ~hook:Env.Handler.hook
           @@ fun () ->
-          let segs = Block.scan ~source:scrbl_path scrbl_text in
+          let segs, buffer, blks = to_buffer ~source:scrbl_path scrbl_text in
           segments := segs;
-          let buffer, blks = build_buffer segs in
           blocks := blks;
           let m = Violet_surface.Parser.parse_buffer ~filename:module_file buffer in
           let deps = Hashtbl.create 16 in
@@ -149,41 +115,17 @@ let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
   let errors = Violet_common.Diagnostic_collector.errors diag_collector in
   if !aborted || errors <> []
   then begin
-    let scrbl_off_of buf_off =
-      List.find_opt
-        (fun wb -> buf_off >= wb.buf_start && buf_off < wb.buf_start + wb.buf_len)
-        !blocks
-      |> Option.map (fun wb -> wb.src_offset + (buf_off - wb.buf_start))
-    in
     (* Re-anchor each diagnostic onto the scrbl document so [Tty.display]
-       highlights the real source, like [violet check]. Elaboration errors
-       arrive pointing into the synthesized code buffer; scan errors already
-       point into the scrbl. A loc that maps nowhere is dropped (the message
-       still renders without a snippet). *)
-    let scrbl_loc (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t)
-      : Asai.Range.t option
-      =
-      match d.explanation.loc with
-      | None -> None
-      | Some loc ->
-        (match Violet_common.Range.source loc with
-         | Some s when String.equal s scrbl_path -> Some loc
-         | Some s when String.equal s module_file ->
-           (match scrbl_off_of (Violet_common.Range.start_offset loc) with
-            | Some soff ->
-              let w = Violet_common.Range.width loc in
-              let len = String.length scrbl_text in
-              (* Within a block, buffer offsets map to scrbl offsets by a
-                 constant shift, so the span width carries over. Guard against
-                 the [End_of_file] sentinel ([width = max_int]). *)
-              let e = if w >= 0 && w <= len - soff then soff + w else soff in
-              Some (Block.range_of ~source:scrbl_path scrbl_text soff e)
-            | None -> None)
-         | _ -> None)
-    in
+       highlights the real source, like [violet check]. Elaboration errors point
+       into the synthesized buffer; scan errors already point into the scrbl. A
+       loc that maps nowhere is dropped (the message still renders, snippetless). *)
     List.iter
       (fun (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
-         let loc = scrbl_loc d in
+         let loc =
+           Option.bind
+             d.explanation.loc
+             (remap_range ~blocks:!blocks ~scrbl_path ~scrbl_text ~module_file)
+         in
          Tty.display { d with explanation = { d.explanation with loc } })
       errors;
     None
