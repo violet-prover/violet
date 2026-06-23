@@ -19,7 +19,7 @@ let addr_of_path (path : string) : string =
 ;;
 
 type t =
-  { addrs : (string, string) Hashtbl.t (* addr -> source path (scrbl or .vt) *)
+  { addrs : (string, string) Hashtbl.t (* addr -> source path (.vt.scrbl or .vt) *)
   ; dep_roots : (string * string) list (* (dep_key, "<dep_root>/src") *)
   }
 

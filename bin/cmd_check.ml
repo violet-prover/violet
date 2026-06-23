@@ -6,7 +6,7 @@ let check explicit_root file_opt =
   let deps = Hashtbl.create ~random:true 1000 in
   let mods = Hashtbl.create ~random:true 1000 in
   match file_opt with
-  | Some filename when Filename.check_suffix filename ".scrbl" ->
+  | Some filename when Filename.check_suffix filename ".vt.scrbl" ->
     (* A literate [.vt.scrbl] card is a scribble document, not raw Violet source:
        parsing it directly chokes on the prose (e.g. [@date{...}]). Route it
        through the weaver's elaboration, which scans the [@vt|{}|] blocks, checks

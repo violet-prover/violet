@@ -94,12 +94,12 @@ let%expect_test "scan splits prose and code blocks" =
     | Verbatim s -> Printf.printf "V(%s)" s
     | Block { src; src_offset } -> Printf.printf "B(%S,@%d)" src src_offset
   in
-  List.iter show (scan ~source:"doc.scrbl" "a@vt|{x}|b@vt|{y}|c");
+  List.iter show (scan ~source:"doc.vt.scrbl" "a@vt|{x}|b@vt|{y}|c");
   [%expect {| V(a)B("x",@6)V(b)B("y",@15)V(c) |}]
 ;;
 
 let%expect_test "scan keeps Violet braces and backslashes verbatim" =
-  (match scan ~source:"doc.scrbl" "p@vt|{\\let f => {a}}|q" with
+  (match scan ~source:"doc.vt.scrbl" "p@vt|{\\let f => {a}}|q" with
    | [ Verbatim a; Block { src; _ }; Verbatim b ] -> Printf.printf "%s | %s | %s" a src b
    | _ -> print_string "unexpected");
   [%expect {| p | \let f => {a} | q |}]
@@ -121,6 +121,6 @@ let%expect_test "scan reports an unterminated @vt block with a source location" 
           (s.offset - s.start_of_line)
           d.explanation.value
       | `End_of_file _ -> ())
-    (fun () -> ignore (scan ~source:"doc.scrbl" "line one\n@vt|{ \\let f => a"));
-  [%expect {| doc.scrbl:2:0: unterminated @vt|{ block: missing closing `}|` |}]
+    (fun () -> ignore (scan ~source:"doc.vt.scrbl" "line one\n@vt|{ \\let f => a"));
+  [%expect {| doc.vt.scrbl:2:0: unterminated @vt|{ block: missing closing `}|` |}]
 ;;
