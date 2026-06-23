@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.2
+
 - fix checking for vt.scrbl files
 
 ## 0.8.1
