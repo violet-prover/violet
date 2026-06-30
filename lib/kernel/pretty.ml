@@ -42,7 +42,7 @@ let rec pp_value ?notation (cv : Context_view.t) (v : Core.value) : string =
   match v with
   | Core.Universe l -> pp_universe l
   | Core.RigidLocal (lvl, spine) -> pp_neutral ?notation cv (pp_local_name cv lvl) spine
-  | Core.Var (n, spine) -> pp_named_neutral ?notation cv n spine
+  | Core.Var (n, spine, _) -> pp_named_neutral ?notation cv n spine
   | Core.IndType (n, spine) -> pp_named_neutral ?notation cv n spine
   | Core.Label (n, spine) -> pp_named_neutral ?notation cv n spine
   | Core.Flex (m, spine) -> pp_neutral ?notation cv (pp_metavar m) spine
@@ -158,7 +158,7 @@ and pp_arg ?notation (cv : Context_view.t) (v : Core.value) : string =
   match v with
   | Core.Universe _
   | Core.RigidLocal (_, Emp)
-  | Core.Var (_, Emp)
+  | Core.Var (_, Emp, _)
   | Core.IndType (_, Emp)
   | Core.Label (_, Emp)
   | Core.Flex (_, Emp) -> pp_value ?notation cv v
@@ -400,9 +400,9 @@ let%expect_test "pp_value: notation hook sugars an IndType neutral" =
     Core.IndType
       ( "Id"
       , Emp
-        <: Core.implicit_arg (Core.Var ("A", Emp))
-        <: Core.explicit_arg (Core.Var ("x", Emp))
-        <: Core.explicit_arg (Core.Var ("y", Emp)) )
+        <: Core.implicit_arg (Core.var_ "A")
+        <: Core.explicit_arg (Core.var_ "x")
+        <: Core.explicit_arg (Core.var_ "y") )
   in
   print_string (pp_value ~notation:test_hook Context_view.empty v);
   [%expect {| x = y |}]

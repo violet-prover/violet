@@ -81,7 +81,7 @@ module PartialRenaming = struct
        | Some l' ->
          (* l' is a dom-level; convert to term-side de Bruijn INDEX *)
          rename_sp m cv pr (LocalVar (pr.dom - l' - 1)) sp)
-    | Var (x, sp) -> rename_sp m cv pr (Var x) sp
+    | Var (x, sp, _) -> rename_sp m cv pr (Var x) sp
     | Label (x, sp) -> rename_sp m cv pr (Var x) sp
     | IndType (x, sp) -> rename_sp m cv pr (Var x) sp
     | Elim ({ elim_name; _ }, sp) -> rename_sp m cv pr (Var elim_name) sp
@@ -290,7 +290,8 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     unify ~loc cv a.ty b.ty;
     unify ~loc cv a.tm b.tm
   | RigidLocal (l1, sp1), RigidLocal (l2, sp2) when l1 = l2 -> unify_spine ~loc cv sp1 sp2
-  | Var (h1, sp1), Var (h2, sp2) when String.equal h1 h2 -> unify_spine ~loc cv sp1 sp2
+  | Var (h1, sp1, _), Var (h2, sp2, _) when String.equal h1 h2 ->
+    unify_spine ~loc cv sp1 sp2
   | Label (h1, sp1), Label (h2, sp2) when String.equal h1 h2 ->
     unify_spine ~loc cv sp1 sp2
   | IndType (h1, sp1), IndType (h2, sp2) when String.equal h1 h2 ->
@@ -551,7 +552,7 @@ let%expect_test "meta solution keeps defined heads folded" =
     (Core.VLambda { name = Named "x"; implicit = false; bound = (fun v -> v) });
   let mv = Meta.fresh_metavar () in
   let rhs : Core.value =
-    Core.Var ("myid-fold-test", Snoc (Emp, Core.explicit_arg (Core.Var ("zero", Emp))))
+    Core.Var ("myid-fold-test", Snoc (Emp, Core.explicit_arg (Core.var_ "zero")), None)
   in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
@@ -685,7 +686,8 @@ let%expect_test
           ( Emp
           , Core.explicit_arg
               (Core.Flex (m2, Snoc (Snoc (Emp, Core.explicit_arg a), Core.explicit_arg b)))
-          ) )
+          )
+      , None )
   in
   let result =
     Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")

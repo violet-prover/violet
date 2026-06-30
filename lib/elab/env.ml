@@ -125,7 +125,7 @@ end
 let lookup_or_var (x : string) : Core.value =
   match S.resolve [ x ] with
   | Some (v, _) -> v
-  | None -> Core.Var (x, Bwd.Emp)
+  | None -> Core.var_ x
 ;;
 
 module View : Violet_kernel.Views.ENV_VIEW = struct

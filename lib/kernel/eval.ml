@@ -9,7 +9,10 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | VLambda { bound = f; _ } -> f u
     | Flex (m, sp) -> Flex (m, sp <: arg)
     | RigidLocal (l, sp) -> RigidLocal (l, sp <: arg)
-    | Var (h, sp) -> Var (h, sp <: arg)
+    | Var (h, sp, unf) ->
+      (* The current spine is extended, hence also needs to grow the glued unfolding *)
+      let unf' = Option.map (fun lz -> lazy (vapp ~implicit (Lazy.force lz) u)) unf in
+      Var (h, sp <: arg, unf')
     | Label (h, sp) -> Label (h, sp <: arg)
     | IndType (h, sp) -> IndType (h, sp <: arg)
     | Elim (h, sp) -> Elim (h, sp <: arg)
@@ -47,10 +50,16 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
      otherwise the head stays neutral. *)
   let rec force_head (v : value) : value =
     match force v with
-    | Var (x, sp) ->
+    | Var (_, _, Some lz) ->
+      (* Glued: take the memoized unfolding straight away (no re-traversal of the
+         spine, and the thunk is forced at most once per node). *)
+      force_head (Lazy.force lz)
+    | Var (x, sp, None) ->
+      (* No attached unfolding (axiom or hand-built head): fall back to a live
+         lookup, exactly as before glued evaluation. *)
       (match E.unfold x with
        | Some def -> force_head (vapp_spine def sp)
-       | None -> Var (x, sp))
+       | None -> Var (x, sp, None))
     | Elim (({ reducer; _ } as h), sp) ->
       (match reducer sp with
        | Some reduced -> force_head reduced
@@ -83,7 +92,12 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     | Var x ->
       (match E.lookup x with
        | (Label _ | IndType _ | Elim _) as v -> v
-       | _ -> Var (x, Emp))
+       | _ ->
+         (* Glue the definition (if any) onto the head so later force_head calls
+            unfold from a memoized thunk instead of re-querying + re-applying the
+            spine. Axioms get [None] and stay folded. *)
+         let unf = Option.map (fun def -> lazy def) (E.unfold x) in
+         Var (x, Emp, unf))
     | App (t, u, implicit) -> vapp ~implicit (eval env t) (eval env u)
     | Pi ({ name; bound; implicit }, b) ->
       VPi ({ name; bound = eval env bound; implicit }, fun v -> eval (env <: v) b)
@@ -164,7 +178,7 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
     match force v with
     | Universe l -> Universe l
     | RigidLocal (l, sp) -> quote_spine lvl (LocalVar (lvl_to_ix ~env_size:lvl l)) sp
-    | Var (x, sp) -> quote_spine lvl (Var x) sp
+    | Var (x, sp, _) -> quote_spine lvl (Var x) sp
     | IndType (x, sp) -> quote_spine lvl (Var x) sp
     | Label (x, sp) -> quote_spine lvl (Var x) sp
     | Elim ({ elim_name; _ }, sp) -> quote_spine lvl (Var elim_name) sp
@@ -214,7 +228,7 @@ module NullMeta : Views.META_VIEW = struct
 end
 
 module NullEnv : Views.ENV_VIEW = struct
-  let lookup x = Var (x, Emp)
+  let lookup x = Var (x, Emp, None)
   let unfold _ = None
 end
 

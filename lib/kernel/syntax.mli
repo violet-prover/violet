@@ -75,7 +75,7 @@ module Core : sig
   type value =
     | Flex of metavar * spine
     | RigidLocal of int * spine
-    | Var of string * spine
+    | Var of string * spine * value Lazy.t option
     | IndType of string * spine
     | Label of string * spine
     | Elim of elim_head * spine
@@ -129,6 +129,7 @@ module Core : sig
 
   and spine = arg Bwd.bwd
 
+  val var_ : string -> value
   val rigid_local : int -> value
   val lvl_to_ix : env_size:int -> int -> int
   val explicit_arg : value -> arg

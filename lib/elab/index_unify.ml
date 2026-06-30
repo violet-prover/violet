@@ -54,7 +54,7 @@ let occurs (subst : subst) (lvl : int) (v : Core.value) : bool =
     | Core.RigidLocal (l, sp) -> l = lvl || Bwd.exists go (Core.spine_values sp)
     | Core.Label (_, sp) -> Bwd.exists go (Core.spine_values sp)
     | Core.IndType (_, sp) -> Bwd.exists go (Core.spine_values sp)
-    | Core.Var (_, sp) -> Bwd.exists go (Core.spine_values sp)
+    | Core.Var (_, sp, _) -> Bwd.exists go (Core.spine_values sp)
     | Core.Elim (_, sp) -> Bwd.exists go (Core.spine_values sp)
     | Core.Flex (_, sp) -> Bwd.exists go (Core.spine_values sp)
     | Core.Universe _ -> false

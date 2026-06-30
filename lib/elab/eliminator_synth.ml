@@ -369,11 +369,13 @@ let analyze_ctor ~ind_name ~params (ctor : Surface.pretype Surface.sbinder)
 (* vapp specialized for the heads we may encounter: VLambda closures (real
    case binders post-elaboration) and Var/Label/etc. with spines. Mirrors
    Evaluation.vapp but is kept local to avoid module cycles. *)
-let vapp (t : Core.value) (u : Core.value) : Core.value =
+let rec vapp (t : Core.value) (u : Core.value) : Core.value =
   let arg = Core.explicit_arg u in
   match t with
   | Core.VLambda { bound = f; _ } -> f u
-  | Core.Var (h, sp) -> Core.Var (h, sp <: arg)
+  | Core.Var (h, sp, unf) ->
+    let unf' = Option.map (fun lz -> lazy (vapp (Lazy.force lz) u)) unf in
+    Core.Var (h, sp <: arg, unf')
   | Core.Label (h, sp) -> Core.Label (h, sp <: arg)
   | Core.Flex (m, sp) -> Core.Flex (m, sp <: arg)
   | Core.RigidLocal (l, sp) -> Core.RigidLocal (l, sp <: arg)
@@ -524,8 +526,8 @@ let%expect_test "Nat-elim reduces target=zero to case-zero" =
   in
   let target = Core.Label ("zero", Emp) in
   let motive = Core.Universe Level.LZero in
-  let cz = Core.Var ("cz", Emp) in
-  let cs = Core.Var ("cs", Emp) in
+  let cz = Core.var_ "cz" in
+  let cs = Core.var_ "cs" in
   let spine =
     Emp
     <: Core.explicit_arg target
@@ -545,11 +547,11 @@ let%expect_test "Nat-elim reduces target=suc n to (case-suc n IH)" =
   let reducer =
     build_elim_reducer ~ind_name:"Nat" ~elim_name:"Nat/elim" ~params:[] ~deps:[] nat_ctors
   in
-  let n = Core.Var ("n", Emp) in
+  let n = Core.var_ "n" in
   let target = Core.Label ("suc", Emp <: Core.explicit_arg n) in
-  let motive = Core.Var ("M", Emp) in
-  let cz = Core.Var ("cz", Emp) in
-  let cs = Core.Var ("cs", Emp) in
+  let motive = Core.var_ "M" in
+  let cz = Core.var_ "cz" in
+  let cs = Core.var_ "cs" in
   let spine =
     Emp
     <: Core.explicit_arg target
@@ -612,10 +614,10 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
         ]
       vec_ctors
   in
-  let aV = Core.Var ("A", Emp) in
-  let kV = Core.Var ("k", Emp) in
-  let xV = Core.Var ("x", Emp) in
-  let xsV = Core.Var ("xs", Emp) in
+  let aV = Core.var_ "A" in
+  let kV = Core.var_ "k" in
+  let xV = Core.var_ "x" in
+  let xsV = Core.var_ "xs" in
   let target =
     Core.Label
       ( "cons"
@@ -625,10 +627,10 @@ let%expect_test "Vec-elim reduces target=cons {A}{k} x xs to case-cons k x xs IH
         <: Core.explicit_arg xV
         <: Core.explicit_arg xsV )
   in
-  let depN = Core.Var ("idx", Emp) in
-  let motive = Core.Var ("M", Emp) in
-  let cnil = Core.Var ("cnil", Emp) in
-  let ccons = Core.Var ("ccons", Emp) in
+  let depN = Core.var_ "idx" in
+  let motive = Core.var_ "M" in
+  let cnil = Core.var_ "cnil" in
+  let ccons = Core.var_ "ccons" in
   let spine =
     Emp
     <: Core.explicit_arg aV

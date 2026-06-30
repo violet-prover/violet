@@ -124,9 +124,17 @@ module Core = struct
     (* local-bound free variable: de Bruijn LEVEL (counted from the outside in)。
        Lambda/Pi 開新 binder 時直接拿當下的 lvl 來生這個 head。 *)
     | RigidLocal of int * spine
-    (* opaque global head：top-level let 還沒展開時的 representation。
-       Unfold 由 Unification 視需要呼叫 Env.unfold_def 觸發。 *)
-    | Var of string * spine
+    (* Glued global head *)
+    | Var of
+        (* 前兩個欄位是 fold form，顯示與 conversion 的快路徑都看這個 *)
+        string
+        * spine
+          (* glued unfolding
+             - [thunk] memoize 了「head 套上目前 spine」
+               的 unfolding 結果
+             - [None]：axiom（無定義），或手工建構、未帶 unfolding 資訊的 Var；
+               force_head 會去查 Env.unfold_def 確認 *)
+        * value Lazy.t option
       (* indtype 是 inductive type 在 environment 裡面的表示方式，跟 rigid 要分開 *)
     | IndType of string * spine (* label 是 constructor 的表示方式，跟 rigid 要分開 *)
     | Label of string * spine
@@ -205,6 +213,7 @@ module Core = struct
 
   and spine = arg bwd
 
+  let var_ (name : string) : value = Var (name, Emp, None)
   let rigid_local (lvl : int) : value = RigidLocal (lvl, Bwd.Emp)
   let lvl_to_ix ~(env_size : int) (lvl : int) : int = env_size - lvl - 1
 

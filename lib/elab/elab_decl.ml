@@ -138,7 +138,7 @@ let handle_top_axiom_have_type (m : machine) ~loc ~(name : string Surface.spanne
          });
     let exported = m.is_exported nm in
     publish_to_context ~exported [ nm ] (typ_val, `Defn);
-    publish_to_env ~exported [ nm ] (Core.Var (nm, Bwd.Emp), `Defn);
+    publish_to_env ~exported [ nm ] (Core.var_ nm, `Defn);
     let qname = Syntax.Name.qualify m.module_name nm in
     Kernel_accept.accept_axiom m.kernel_module ~loc ~name:qname ~ty:typ_tm;
     m.result <- Some PUnit
