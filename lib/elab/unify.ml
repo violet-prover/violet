@@ -264,6 +264,37 @@ let unify_level ~loc (l1 : Level.level) (l2 : Level.level) : unit =
         (Level.pretty l2))
 ;;
 
+(* Glued-conversion fast path.  [conv] decides definitional equality WITHOUT
+   unfolding glued global heads and WITHOUT solving any metavariable
+
+   It must be SOUND, in the sense that never returns [true] for non-equal values,
+   but is free to be INCOMPLETE: whenever it cannot decide, it returns [false];
+   the caller fallback to the full unfolding-and-solving path, so completeness and
+   meta solving are preserved
+
+   NOTE: Because it solves nothing, it has no side effects to roll back *)
+let rec conv (cv : Context_view.t) (a : Core.value) (b : Core.value) : bool =
+  match force a, force b with
+  | Universe l1, Universe l2 -> Level.equal l1 l2
+  | Var (h1, sp1, _), Var (h2, sp2, _) -> String.equal h1 h2 && conv_spine cv sp1 sp2
+  | RigidLocal (l1, sp1), RigidLocal (l2, sp2) -> l1 = l2 && conv_spine cv sp1 sp2
+  | Label (h1, sp1), Label (h2, sp2) -> String.equal h1 h2 && conv_spine cv sp1 sp2
+  | IndType (h1, sp1), IndType (h2, sp2) -> String.equal h1 h2 && conv_spine cv sp1 sp2
+  | Elim (h1, sp1), Elim (h2, sp2) ->
+    String.equal h1.elim_name h2.elim_name && conv_spine cv sp1 sp2
+  | Flex (m1, sp1), Flex (m2, sp2) -> m1 = m2 && conv_spine cv sp1 sp2
+  | VEmpty, VEmpty -> true
+  (* Anything else is left to the full path. *)
+  | _ -> false
+
+and conv_spine (cv : Context_view.t) (sp1 : Core.spine) (sp2 : Core.spine) : bool =
+  match sp1, sp2 with
+  | Emp, Emp -> true
+  | Snoc (sp1, { tm = x; _ }), Snoc (sp2, { tm = y; _ }) ->
+    conv cv x y && conv_spine cv sp1 sp2
+  | _ -> false
+;;
+
 let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
   Reporter.tracef
     ~loc
@@ -271,7 +302,15 @@ let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : uni
     (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
     (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
   @@ fun () ->
-  (* force_head unfolds metas AND opaque global heads.  After this, the only
+  match force a, force b with
+  (* Fast path: two glued globals with the same head *)
+  | Var (h1, sp1, _), Var (h2, sp2, _) when String.equal h1 h2 && conv_spine cv sp1 sp2 ->
+    ()
+  (* Any uncertainty fallback to [unify_forced] *)
+  | _ -> force_unify ~loc cv a b
+
+and force_unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
+  (* [force_head] unfolds metas AND opaque global heads.  After this, the only
      way to still see a Var(x, sp) head is if `x` has no definition (axiom). *)
   match force_head a, force_head b with
   | Universe l1, Universe l2 -> unify_level ~loc l1 l2
@@ -569,6 +608,74 @@ let%expect_test "meta solution keeps defined heads folded" =
   in
   print_endline result;
   [%expect {| myid-fold-test zero |}]
+;;
+
+let%expect_test "glued fast path: same head + equal spine unifies without unfolding" =
+  (* `glued-noforce` is defined as a NON-applicable value (a universe), so any
+     attempt to unfold `glued-noforce p` and apply the spine raises
+     BadApplication.  The fast path compares the folded spine and must succeed
+     without ever forcing that unfolding. *)
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  Env.register_definition "glued-noforce" (Core.Universe Level.LZero);
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    Env.S.run
+      ~shadow:Env.Handler.shadow
+      ~not_found:Env.Handler.not_found
+      ~hook:Env.Handler.hook
+    @@ fun () ->
+    let fx =
+      Evaluation.eval
+        Bwd.Emp
+        (Core.App (Core.Var "glued-noforce", Core.Var "p-axiom", false))
+    in
+    let conv_verdict = conv cv fx fx in
+    try
+      unify ~loc cv fx fx;
+      Printf.sprintf "conv=%b unify=ok" conv_verdict
+    with
+    | Violet_kernel.Error.Kernel_error e ->
+      Printf.sprintf "KERNEL error=%s" ([%show: Violet_kernel.Error.kernel_error] e)
+  in
+  print_endline result;
+  [%expect {| conv=true unify=ok |}]
+;;
+
+let%expect_test "glued fallback: conv says false, unify still unifies via unfolding" =
+  (* `kk-const := \_. universe` ignores its argument, so `kk a = kk b` even when `a ≠ b`.
+     (1) `conv` must NOT decide them equal, because it didn't use unfolded value
+     (2) `unify` must success *)
+  let loc = Asai.Range.of_lex_range (Lexing.dummy_pos, Lexing.dummy_pos) in
+  let cv = Context_view.empty in
+  Env.register_definition
+    "kk-const"
+    (Core.VLambda
+       { name = Named "_"
+       ; implicit = false
+       ; bound = (fun _ -> Core.Universe Level.LZero)
+       });
+  let result =
+    Reporter.run ~emit:(fun _ -> ()) ~fatal:(fun _ -> "FAILED")
+    @@ fun () ->
+    Env.S.run
+      ~shadow:Env.Handler.shadow
+      ~not_found:Env.Handler.not_found
+      ~hook:Env.Handler.hook
+    @@ fun () ->
+    let ka =
+      Evaluation.eval Bwd.Emp (Core.App (Core.Var "kk-const", Core.Var "a-axiom", false))
+    in
+    let kb =
+      Evaluation.eval Bwd.Emp (Core.App (Core.Var "kk-const", Core.Var "b-axiom", false))
+    in
+    let conv_verdict = conv cv ka kb in
+    unify ~loc cv ka kb;
+    Printf.sprintf "conv=%b unify=ok" conv_verdict
+  in
+  print_endline result;
+  [%expect {| conv=false unify=ok |}]
 ;;
 
 let%expect_test "spine mismatch rejects cleanly" =
