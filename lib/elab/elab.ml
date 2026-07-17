@@ -33,10 +33,6 @@ let try_insert_implicit_abstraction
 let rec dispatch (m : machine) (g : goal) : unit =
   match g with
   | GCheck (term, ty) when try_insert_implicit_abstraction m term.loc term ty -> ()
-  | GInfer { node = Universe; _ } ->
-    m.result
-    <- Some
-         (PTermType (Core.Universe Level.LZero, Core.Universe (Level.LSuc Level.LZero)))
   | GInfer { loc; node = Var [ x ] } ->
     (match resolve_local m.ctx x with
      | Some i ->
@@ -640,13 +636,15 @@ let infer_for_test (p : Surface.preterm) : Core.term * Core.value =
   | other -> Reporter.fatalf Elab_error "infer_for_test: got %s" (produced_tag other)
 ;;
 
-let%expect_test "infer Universe" =
-  let tm, ty = infer_for_test (d Surface.Universe) in
+let%expect_test "infer declared universe var" =
+  Context.clear_level_vars ();
+  Context.declare_level_var "U";
+  let tm, ty = infer_for_test (d (Surface.Var [ "U" ])) in
   Printf.printf
     "%s : %s"
     (Notation.pp_term Context_view.empty tm)
     (Notation.pp_term Context_view.empty (Evaluation.quote 0 ty));
-  [%expect {| universe 𝓤₀ : universe S 0 |}]
+  [%expect {| universe U : universe S U |}]
 ;;
 
 let%expect_test "infer Var bound locally" =
@@ -719,18 +717,20 @@ let%expect_test "var lookup of `_` ignores Anon binders" =
 ;;
 
 let%expect_test "infer Pi" =
+  Context.clear_level_vars ();
+  Context.declare_level_var "U";
   let p =
     d
       (Surface.Pi
-         ( { name = dn (Named "x"); bound = d Surface.Universe; implicit = false }
-         , d Surface.Universe ))
+         ( { name = dn (Named "x"); bound = d (Surface.Var [ "U" ]); implicit = false }
+         , d (Surface.Var [ "U" ]) ))
   in
   let tm, ty = infer_for_test p in
   Printf.printf
     "%s : %s"
     (Notation.pp_term Context_view.empty tm)
     (Notation.pp_term Context_view.empty (Evaluation.quote 0 ty));
-  [%expect {| (x : universe 𝓤₀) -> universe 𝓤₀ : universe (S 0) ⊔ (S 0) |}]
+  [%expect {| (x : universe U) -> universe U : universe (S U) ⊔ (S U) |}]
 ;;
 
 let%expect_test "check Lambda against Pi" =
@@ -996,7 +996,7 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
       { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; ctors =
           [ { name = dn (Named "zero")
             ; bound = d (Surface.Var [ "Nat" ])
@@ -1028,7 +1028,7 @@ let%expect_test "type-directed: bare zero against Nat resolves to Nat/zero" =
     { name = "td-test.vt"
     ; imports = []
     ; exports = []
-    ; tops = [ loc nat_data; loc let_zero ]
+    ; tops = [ loc (Surface.Universe_decl [ dn "U" ]); loc nat_data; loc let_zero ]
     }
   in
   with_handlers (fun () -> check_module ast);
@@ -1049,7 +1049,7 @@ let%expect_test
       { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; ctors =
           [ { name = dn (Named "zero")
             ; bound = d (Surface.Var [ "Nat" ])
@@ -1070,7 +1070,11 @@ let%expect_test
       }
   in
   let mod_a : Surface.t =
-    { name = "a.vt"; imports = []; exports = [ dn "Nat" ]; tops = [ loc nat_data ] }
+    { name = "a.vt"
+    ; imports = []
+    ; exports = [ dn "Nat" ]
+    ; tops = [ loc (Surface.Universe_decl [ dn "U" ]); loc nat_data ]
+    }
   in
   (* uses_bundle : Nat => Nat/zero — references both the type and a constructor,
      proving the inductive bundle (type + ctors) is visible cross-module. *)
@@ -1110,7 +1114,7 @@ let%expect_test
       { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; ctors =
           [ { name = dn (Named "zero")
             ; bound = d (Surface.Var [ "Nat" ])
@@ -1134,7 +1138,7 @@ let%expect_test
     Surface.Record
       { name = dn "Point"
       ; params = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; fields =
           [ { name = dn (Named "x"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
           ; { name = dn (Named "y"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
@@ -1147,7 +1151,7 @@ let%expect_test
     { name = "a.vt"
     ; imports = []
     ; exports = [ dn "Nat"; dn "Point" ]
-    ; tops = [ loc nat_data; loc point_record ]
+    ; tops = [ loc (Surface.Universe_decl [ dn "U" ]); loc nat_data; loc point_record ]
     }
   in
   (* Module B: imports a, uses Point/x — proves the companion is cross-module visible.
@@ -1196,7 +1200,7 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
       { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; ctors =
           [ { name = dn (Named "zero")
             ; bound = d (Surface.Var [ "Nat" ])
@@ -1220,7 +1224,7 @@ let%expect_test "record: \\record Point : U | x : Nat | y : Nat produces 5 Modul
     Surface.Record
       { name = dn "Point"
       ; params = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; fields =
           [ { name = dn (Named "x"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
           ; { name = dn (Named "y"); bound = d (Surface.Var [ "Nat" ]); implicit = false }
@@ -1279,7 +1283,7 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
       { name = dn "Nat"
       ; params = []
       ; deps = []
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; ctors =
           [ { name = dn (Named "zero")
             ; bound = d (Surface.Var [ "Nat" ])
@@ -1303,10 +1307,10 @@ let%expect_test "check-mode record literal elaboration produces RecordIntro" =
     Surface.Record
       { name = dn "Pair"
       ; params =
-          [ { name = dn (Named "A"); bound = d Surface.Universe; implicit = false }
-          ; { name = dn (Named "B"); bound = d Surface.Universe; implicit = false }
+          [ { name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+          ; { name = dn (Named "B"); bound = d (Surface.Var [ "U" ]); implicit = false }
           ]
-      ; ind_ty = d Surface.Universe
+      ; ind_ty = d (Surface.Var [ "U" ])
       ; fields =
           [ { name = dn (Named "fst"); bound = d (Surface.Var [ "A" ]); implicit = false }
           ; { name = dn (Named "snd"); bound = d (Surface.Var [ "B" ]); implicit = false }

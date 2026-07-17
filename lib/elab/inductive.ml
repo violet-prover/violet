@@ -173,7 +173,7 @@ let mark_recursive_call_implicits
       keep (Surface.TypedLambda ({ b with bound = rw b.bound }, rw body))
     | Surface.Pi (b, body) -> keep (Surface.Pi ({ b with bound = rw b.bound }, rw body))
     | Surface.Max (a, b) -> keep (Surface.Max (rw a, rw b))
-    | Surface.Var _ | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+    | Surface.Var _ | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd _ -> t
     | Surface.Absurd _ -> t
     | Surface.Op_soup _ -> t
@@ -2456,12 +2456,12 @@ let%expect_test "compute_effective_intros: bracketed intro at explicit param err
             ~loc:dummy_loc
             ~bindings:
               [ ({ name = { Surface.loc = dummy_loc; value = Named "A" }
-                 ; bound = at dummy_loc Surface.Universe
+                 ; bound = at dummy_loc (Surface.Var [ "U" ])
                  ; implicit = false
                  }
                  : Surface.pretype Surface.sbinder)
               ]
-            ~signature:(at dummy_loc Surface.Universe)
+            ~signature:(at dummy_loc (Surface.Var [ "U" ]))
             ~intros:[ "A", true ]
         in
         ());

@@ -59,7 +59,7 @@ let rec subst_vars (env : (string * Surface.preterm) list) (t : Surface.preterm)
               | Surface.SI_Imp_arg e -> Surface.SI_Imp_arg (subst_vars env e)
               | other -> other)
             items))
-  | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+  | Surface.Hole | Surface.Goal _ -> t
   | Surface.IdAbsurd _ -> t
   | Surface.Absurd _ -> t
   | Surface.Inline_elim _ -> t

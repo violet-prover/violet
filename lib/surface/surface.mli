@@ -34,7 +34,6 @@ and preterm_record =
   }
 
 and preterm_node =
-  | Universe
   | Hole
   | Goal of string option
   | Var of string list

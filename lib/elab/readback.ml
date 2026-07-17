@@ -67,6 +67,20 @@ let cv_of_user_level_names (user_level_names : (int * string) list) : Context_vi
   List.fold_left Context_view.extend Context_view.empty names
 ;;
 
+let rec level_to_surface ~loc (l : Level.level) : Surface.preterm =
+  match Level.force_level l with
+  | Level.LVar name -> Surface.Mk.at loc (Surface.Var [ name ])
+  | Level.LMax (a, b) ->
+    Surface.Mk.at loc (Surface.Max (level_to_surface ~loc a, level_to_surface ~loc b))
+  | (Level.LZero | Level.LSuc _ | Level.LMeta _) as bad ->
+    Reporter.fatalf
+      ~loc
+      Elab_error
+      "readback: universe level `%s` has no surface notation (expected a declared \
+       universe variable)"
+      (Level.pretty bad)
+;;
+
 let rec core_term_to_surface
           ~(loc : Asai.Range.t)
           ~(cv : Context_view.t)
@@ -77,7 +91,7 @@ let rec core_term_to_surface
   let at node : Surface.preterm = Surface.Mk.at loc node in
   let rb t = core_term_to_surface ~loc ~cv ~owner_map t in
   match t with
-  | Core.Universe _ -> at Surface.Universe
+  | Core.Universe l -> level_to_surface ~loc l
   | Core.LocalVar ix ->
     let lvl = Context_view.lvl cv - 1 - ix in
     (match Context_view.nth_name_from_lvl cv lvl with
@@ -198,12 +212,14 @@ let rec core_term_to_surface
   | Core.Absurd t -> at (Surface.Absurd (rb t))
 ;;
 
-let%expect_test "core_term_to_surface: Universe" =
+let%expect_test "core_term_to_surface: Universe renders its declared level var" =
   let loc = Surface.dummy_loc in
   let cv = Context_view.empty in
-  let result = core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Universe Level.LZero) in
+  let result =
+    core_term_to_surface ~loc ~cv ~owner_map:[] (Core.Universe (Level.LVar "U"))
+  in
   print_string (Surface.show_preterm result);
-  [%expect {| 𝓤 |}]
+  [%expect {| U |}]
 ;;
 
 let%expect_test "core_term_to_surface: LocalVar renders binder name" =

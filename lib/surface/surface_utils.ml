@@ -49,7 +49,7 @@ let occurs_in (target : string) (t : Surface.preterm) : bool =
     | Surface.TypedLambda (b, body) ->
       go b.bound || ((not (b.name.Surface.value = Named target)) && go body)
     | Surface.Max (a, b) -> go a || go b
-    | Surface.Universe | Surface.Hole | Surface.Goal _ -> false
+    | Surface.Hole | Surface.Goal _ -> false
     | Surface.IdAbsurd _ -> false
     | Surface.Absurd _ -> false
     | Surface.Op_soup _ ->
@@ -111,7 +111,7 @@ let map_free_vars
           Surface.Pi ({ b with bound = bound' }, go (enter_bn b.name scope) body)
       }
     | Surface.Max (a, b) -> { t with Surface.node = Surface.Max (go scope a, go scope b) }
-    | Surface.Universe | Surface.Hole | Surface.Goal _ -> t
+    | Surface.Hole | Surface.Goal _ -> t
     | Surface.IdAbsurd p -> { t with Surface.node = Surface.IdAbsurd (go scope p) }
     | Surface.Absurd p -> { t with Surface.node = Surface.Absurd (go scope p) }
     | Surface.Op_soup _ ->
@@ -174,7 +174,7 @@ let%expect_test "occurs_in: shadowed by inner binder" =
     d
       (Surface.Pi
          ( { Surface.name = dn (Surface.Named "Bad")
-           ; bound = d Surface.Universe
+           ; bound = d (Surface.Var [ "U" ])
            ; implicit = false
            }
          , d (Surface.Var [ "Bad" ]) ))

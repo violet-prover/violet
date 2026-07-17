@@ -295,7 +295,6 @@ let binder_holes_of_body (body : Surface.preterm) (hole_names : string list) : s
       walk base;
       List.iter (fun (_, e) -> walk e) entries
     | Surface.Var _
-    | Surface.Universe
     | Surface.Hole
     | Surface.Goal _
     | Surface.Op_soup _
@@ -1140,7 +1139,7 @@ let lower_body (op : op_decl) (matches : Surface.preterm list) ~(use_span : Asai
       at
         (Surface.Pi ({ b with name = rename_binder b.name; bound = sub b.bound }, sub body))
     | Surface.Max (a, b) -> at (Surface.Max (sub a, sub b))
-    | (Surface.Universe | Surface.Hole | Surface.Goal _) as n -> at n
+    | (Surface.Hole | Surface.Goal _) as n -> at n
     | Surface.IdAbsurd p -> at (Surface.IdAbsurd (sub p))
     | Surface.Absurd p -> at (Surface.Absurd (sub p))
     | Surface.Op_soup _ ->
@@ -1175,7 +1174,7 @@ let lower_body (op : op_decl) (matches : Surface.preterm list) ~(use_span : Asai
       | Surface.Max (a, b) ->
         walk a;
         walk b
-      | Surface.Universe | Surface.Hole | Surface.Goal _ -> ()
+      | Surface.Hole | Surface.Goal _ -> ()
       | Surface.IdAbsurd p -> walk p
       | Surface.Absurd p -> walk p
       | Surface.Op_soup _ -> ()
@@ -1746,7 +1745,7 @@ let rec lower_preterm (table : op_table) (t : Surface.preterm) : Surface.preterm
          ({ b with bound = lower_preterm table b.bound }, lower_preterm table body))
   | Surface.Max (a, b) ->
     keep (Surface.Max (lower_preterm table a, lower_preterm table b))
-  | Surface.Universe | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
+  | Surface.Hole | Surface.Goal _ | Surface.Var _ -> t
   | Surface.IdAbsurd p -> keep (Surface.IdAbsurd (lower_preterm table p))
   | Surface.Absurd p -> keep (Surface.Absurd (lower_preterm table p))
   | Surface.RecordLit entries ->

@@ -41,7 +41,6 @@ and preterm_record =
   }
 
 and preterm_node =
-  | Universe [@printer fun fmt _ -> fprintf fmt "𝓤"]
   | Hole [@printer fun fmt _ -> fprintf fmt "_"]
   | Goal of string option
   [@printer

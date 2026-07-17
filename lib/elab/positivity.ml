@@ -185,7 +185,8 @@ let%expect_test "SP: List-shaped clean ctor accepted" =
     }
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let result =
     Reporter.run
@@ -270,7 +271,8 @@ let%expect_test "SP: nested under List positive slot accepted" =
     if String.equal name "List" then Some [ Context.StrictlyPositive ] else None
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let result =
     Reporter.run
@@ -316,7 +318,8 @@ let%expect_test "SP: non-uniform recursive use rejected" =
     }
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let result =
     Reporter.run
@@ -356,7 +359,8 @@ let%expect_test "SP: non-uniform nested self-use produces non-uniform error" =
     }
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let result =
     Reporter.run
@@ -477,7 +481,8 @@ let%expect_test "polarity: List has all SP params" =
     }
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let pol =
     infer_param_polarity
@@ -513,7 +518,8 @@ let%expect_test "polarity: param negative under Pi demoted" =
     }
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let pol =
     infer_param_polarity ~ind_name:"D" ~params ~lookup_polarity:(fun _ -> None) [ mk ]
@@ -545,7 +551,8 @@ let%expect_test "polarity: Rose nested under List positive slot stays SP" =
     if String.equal name "List" then Some [ Context.StrictlyPositive ] else None
   in
   let params =
-    [ { Surface.name = dn (Named "A"); bound = d Surface.Universe; implicit = false } ]
+    [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
+    ]
   in
   let pol =
     infer_param_polarity ~ind_name:"Rose" ~params ~lookup_polarity:lookup [ node ]
