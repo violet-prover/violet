@@ -1412,7 +1412,7 @@ let build_elim_body
     List.length
       (List.filter
          (fun (p : Surface.pretype Surface.sbinder) -> not p.implicit)
-         info.params)
+         (Context.param_binders info))
   in
   let dep_args = List.drop n_explicit_params data_args in
   let n_deps = List.length info.deps in
@@ -2166,7 +2166,7 @@ let build_inline_elim_dispatch
                  List.length
                    (List.filter
                       (fun (p : Surface.pretype Surface.sbinder) -> not p.implicit)
-                      info.params)
+                      (Context.param_binders info))
                in
                let outer_ctor =
                  List.find
@@ -2395,7 +2395,9 @@ let build_inline_elim_dispatch
   in
   let target_full_spine_surface = List.map readback_v target_full_spine_raw in
   let elim_param_imps =
-    let pi = List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params in
+    let pi =
+      List.map (fun (p : _ Surface.sbinder) -> p.implicit) (Context.param_binders info)
+    in
     let di = List.map (fun (d : _ Surface.sbinder) -> d.implicit) info.deps in
     pi @ di
   in

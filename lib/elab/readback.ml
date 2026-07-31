@@ -118,7 +118,11 @@ let rec core_term_to_surface
         let ind_imps =
           match Context.S.resolve [ x ] with
           | Some (_, `Inductive info) ->
-            let pi = List.map (fun (p : _ Surface.sbinder) -> p.implicit) info.params in
+            let pi =
+              List.map
+                (fun (p : _ Surface.sbinder) -> p.implicit)
+                (Context.param_binders info)
+            in
             let di = List.map (fun (d : _ Surface.sbinder) -> d.implicit) info.deps in
             Some (pi @ di)
           | _ -> None

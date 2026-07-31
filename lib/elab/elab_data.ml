@@ -155,9 +155,10 @@ let handle_top_data_have_type
         name
         (Pretty.pp_level user_sort)
         (Pretty.pp_level inferred_sort);
-    let lookup_polarity (n : string) : Context.polarity list option =
+    let lookup_polarity (n : string) : (int -> Context.polarity) option =
       match Context.S.resolve [ n ] with
-      | Some (_, `Inductive info) -> Some (info : Context.ind_info).param_polarity
+      | Some (_, `Inductive info) ->
+        Some (Positivity.classifier_of_polarities (Context.param_polarities info))
       | _ -> None
     in
     Positivity.check_strict_positivity
@@ -171,8 +172,14 @@ let handle_top_data_have_type
       Positivity.infer_param_polarity ~ind_name:name ~params ~lookup_polarity ctors
     in
     let infos = List.map (Eliminator_synth.analyze_ctor ~ind_name:name ~params) ctors in
+    let ind_params =
+      List.map2
+        (fun param_binder param_polarity -> { Context.param_binder; param_polarity })
+        params
+        param_polarity
+    in
     let ind_info : Context.ind_info =
-      { params; deps; ind_ty; ctors; infos; param_polarity }
+      { params = ind_params; deps; ind_ty; ctors; infos }
     in
     let pp_ty =
       Notation.pp_term (view_of_ctx m.ctx) (Evaluation.quote m.ctx.lvl typ_val)

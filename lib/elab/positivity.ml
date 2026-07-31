@@ -4,13 +4,22 @@ module Syntax = Violet_kernel.Syntax
 open Syntax
 open Surface_utils
 
+let classifier_of_polarities (pols : Context.polarity list) : int -> Context.polarity =
+  fun i ->
+  match List.nth_opt pols i with
+  | Some p -> p
+  | None -> Context.Unrestricted
+;;
+
 (* Strict positivity check for a single inductive declaration.
    `ind_name`  — name of the inductive being defined.
    `params`    — declared parameters; their names anchor the uniformity test.
    `deps`      — declared dependencies (indices). Carried for arity arithmetic.
-   `lookup_polarity` — returns `Some pols` if a name resolves to a previously
-                       declared inductive (with one entry per declared param),
-                       or `None` otherwise (locals, non-inductive globals).
+   `lookup_polarity` — returns `Some classify` if a name resolves to a
+                       previously declared inductive, where `classify i` is
+                       that inductive's polarity at declared-param position
+                       `i`; or `None` otherwise (locals, non-inductive
+                       globals). See `classifier_of_polarities`.
    `ctors`     — list of constructor binders to check.
 
    Raises via `Reporter.fatalf ~loc Type_error` on the first violation. *)
@@ -19,7 +28,7 @@ let check_strict_positivity
       ~(ind_name : string)
       ~(params : Surface.pretype Surface.sbinder list)
       ~(deps : Surface.pretype Surface.sbinder list)
-      ~(lookup_polarity : string -> Context.polarity list option)
+      ~(lookup_polarity : string -> (int -> Context.polarity) option)
       (ctors : Surface.pretype Surface.sbinder list)
   : unit
   =
@@ -123,29 +132,14 @@ let check_strict_positivity
            spine
        | Surface.Var [ n ] ->
          (match lookup_polarity n with
-          | Some pols ->
-            let n_pols = List.length pols in
+          | Some classify ->
             List.iteri
               (fun i si ->
-                 if i < n_pols
-                 then
-                   begin match List.nth_opt pols i with
-                   | Some Context.StrictlyPositive -> sp ~ctor_name ~arg_ty si
-                   | Some Context.Unrestricted ->
-                     if occurs_in ind_name si
-                     then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1)
-                   | None ->
-                     Reporter.fatalf
-                       ?loc
-                       Type_error
-                       "strict positivity: polarity index %d out of bounds for `%s` \
-                        (polarities len=%d)"
-                       i
-                       n
-                       n_pols
-                   end
-                 else if occurs_in ind_name si
-                 then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1))
+                 match classify i with
+                 | Context.StrictlyPositive -> sp ~ctor_name ~arg_ty si
+                 | Context.Unrestricted ->
+                   if occurs_in ind_name si
+                   then fail_foreign ~ctor_name ~arg_ty ~foreign_name:n ~slot:(i + 1))
               spine
           | None -> if occurs_in ind_name cod then fail_neg ~ctor_name ~arg_ty)
        | Surface.Var _ ->
@@ -268,7 +262,9 @@ let%expect_test "SP: nested under List positive slot accepted" =
     }
   in
   let lookup name =
-    if String.equal name "List" then Some [ Context.StrictlyPositive ] else None
+    if String.equal name "List"
+    then Some (classifier_of_polarities [ Context.StrictlyPositive ])
+    else None
   in
   let params =
     [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }
@@ -387,7 +383,7 @@ let%expect_test "SP: non-uniform nested self-use produces non-uniform error" =
 let infer_param_polarity
       ~(ind_name : string)
       ~(params : Surface.pretype Surface.sbinder list)
-      ~(lookup_polarity : string -> Context.polarity list option)
+      ~(lookup_polarity : string -> (int -> Context.polarity) option)
       (ctors : Surface.pretype Surface.sbinder list)
   : Context.polarity list
   =
@@ -430,20 +426,12 @@ let infer_param_polarity
          ()
        | Surface.Var [ n ] ->
          (match lookup_polarity n with
-          | Some pols ->
-            let n_pols = List.length pols in
+          | Some classify ->
             List.iteri
               (fun i si ->
-                 if i < n_pols
-                 then
-                   begin match List.nth_opt pols i with
-                   | Some Context.StrictlyPositive -> walk si
-                   | Some Context.Unrestricted -> demote_if_in si
-                   | None ->
-                     (* index out of bounds — conservatively demote *)
-                     demote_if_in si
-                   end
-                 else demote_if_in si)
+                 match classify i with
+                 | Context.StrictlyPositive -> walk si
+                 | Context.Unrestricted -> demote_if_in si)
               spine
           | None ->
             (* Unknown head (local, unresolved): any param occurrence demotes. *)
@@ -548,7 +536,9 @@ let%expect_test "polarity: Rose nested under List positive slot stays SP" =
     }
   in
   let lookup name =
-    if String.equal name "List" then Some [ Context.StrictlyPositive ] else None
+    if String.equal name "List"
+    then Some (classifier_of_polarities [ Context.StrictlyPositive ])
+    else None
   in
   let params =
     [ { Surface.name = dn (Named "A"); bound = d (Surface.Var [ "U" ]); implicit = false }

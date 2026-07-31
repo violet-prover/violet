@@ -22,14 +22,27 @@ type polarity =
   | Unrestricted
 [@@deriving show]
 
+(* Bundling binder and its polarity to keep them from drifting aprt *)
+type ind_param =
+  { param_binder : Surface.pretype Surface.sbinder
+  ; param_polarity : polarity
+  }
+
 type ind_info =
-  { params : Surface.pretype Surface.sbinder list
+  { params : ind_param list
   ; deps : Surface.pretype Surface.sbinder list
   ; ind_ty : Surface.pretype
   ; ctors : Surface.pretype Surface.sbinder list
   ; infos : ctor_info list
-  ; param_polarity : polarity list
   }
+
+let param_binders (info : ind_info) : Surface.pretype Surface.sbinder list =
+  List.map (fun (p : ind_param) -> p.param_binder) info.params
+;;
+
+let param_polarities (info : ind_info) : polarity list =
+  List.map (fun (p : ind_param) -> p.param_polarity) info.params
+;;
 
 type modifier_cmd = Trace
 
