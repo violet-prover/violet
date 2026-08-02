@@ -296,12 +296,6 @@ and conv_spine (cv : Context_view.t) (sp1 : Core.spine) (sp2 : Core.spine) : boo
 ;;
 
 let rec unify ~loc (cv : Context_view.t) (a : Core.value) (b : Core.value) : unit =
-  Reporter.tracef
-    ~loc
-    "unify `%s` and `%s`"
-    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) a))
-    (Notation.pp_term cv (Evaluation.quote (Context_view.lvl cv) b))
-  @@ fun () ->
   match force a, force b with
   (* Fast path: two glued globals with the same head *)
   | Var (h1, sp1, _), Var (h2, sp2, _) when String.equal h1 h2 && conv_spine cv sp1 sp2 ->

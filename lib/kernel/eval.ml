@@ -153,24 +153,16 @@ module Make (M : Views.META_VIEW) (E : Views.ENV_VIEW) = struct
   (* 把 v 套上 env 的 outermost n 個 local。env 從外往內，
      所以 outermost 是 env 從左數起的 n 個元素。 *)
   and vapp_locals (v : value) (env : value bwd) (n : int) : value =
-    let env_size = Bwd.length env in
+    let all = Bwd.to_list env in
+    let env_size = List.length all in
     if n > env_size
     then raise (Error.Kernel_error (Error.LocalVarOutOfRange { index = n; env_size }))
     else begin
-      (* env_nth_from_left env k = env 從左數第 k 個 *)
-      let rec env_nth_from_left env k =
-        match env with
-        | Emp ->
-          raise
-            (Error.Kernel_error (Error.LocalVarOutOfRange { index = k; env_size = 0 }))
-        | Snoc (rest, top) ->
-          let depth = Bwd.length env in
-          if depth = k + 1 then top else env_nth_from_left rest k
+      let rec apply i acc = function
+        | x :: rest when i < n -> apply (i + 1) (vapp acc x) rest
+        | _ -> acc
       in
-      let rec apply i acc =
-        if i = n then acc else apply (i + 1) (vapp acc (env_nth_from_left env i))
-      in
-      apply 0 v
+      apply 0 v all
     end
   ;;
 
