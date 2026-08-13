@@ -1,74 +1,124 @@
-(* Orchestrate a literate weave: scan a [*.vt.scrbl] card, elaborate its code
-   (project-aware, so cross-card uses resolve), render each block to highlighted
-   HTML, and reassemble a [*.scrbl] document that tr-notes renders unchanged. *)
+(* Orchestrate a literate weave: scan a card written in any host document
+   format configured via [\literate] in info.vt, elaborate its code, render
+   each block to a semantically-annotated HTML fragment, and pipe that
+   fragment through the project's per-extension output hook to reassemble the
+   final document. Violet owns finding blocks (the escape delimiter) and
+   understanding the code (elaboration, hover, jump metadata); embedding the
+   rendered result into a target format is entirely the hook's job — see
+   ../../docs/superpowers/specs/2026-08-13-weave-output-hook-design.md. *)
 
 module Loader = Violet_project.Loader
 module Index = Violet_interactive.Index
-module B = Backend.Tr_notes
 module Tty = Asai.Tty.Make (Violet_common.Reporter.Message)
 open Source
 
+(* The project's [\literate] rules governing the file at [path]: reuses an
+   already-loaded project's manifest when [path] is being elaborated as part
+   of one ([Loader.Project]); otherwise searches [path]'s own ancestors for a
+   project (a dependency file may belong to a different project than the
+   card being woven). No project found => no rules => [Delim.rule_for] will
+   raise a clear "no \literate rule configured" error for that extension. *)
+let literate_rules_near (path : string) : Violet_project.Manifest.literate_rule list =
+  match Violet_project.Root.find_root (Filename.dirname path) with
+  | Some root ->
+    (try (Violet_project.Resolve.load_manifest root).literate with
+     | Violet_project.Resolve.Project_error _ -> [])
+  | None -> []
+;;
+
+let literate_rules_for (mode : Loader.mode) (path : string)
+  : Violet_project.Manifest.literate_rule list
+  =
+  match mode with
+  | Loader.Project proj -> proj.Violet_project.Resolve.manifest.literate
+  | Loader.Single_file _ -> literate_rules_near path
+;;
+
+(* When the loader resolves an import to a plain [.vt] path, check whether a
+   literate sibling exists for any of that file's project's configured
+   extensions (e.g. [foo.vt] -> [foo.vt.md] or [foo.vt.scrbl]) and, if so,
+   feed the concatenated block source instead of trying to parse the [.vt]
+   stub as ordinary Violet syntax. *)
 let text_override (filepath : string) : string option =
   if Filename.check_suffix filepath ".vt"
   then (
-    let scrbl = filepath ^ ".scrbl" in
-    if Sys.file_exists scrbl
-    then (
-      let _, blocks = build_buffer (Block.scan ~source:scrbl (read_file scrbl)) in
-      let b = Buffer.create 256 in
-      List.iter
-        (fun wb ->
-           Buffer.add_string b wb.src;
-           Buffer.add_char b '\n')
-        blocks;
-      Some (Buffer.contents b))
-    else None)
+    let rules = literate_rules_near filepath in
+    List.find_map
+      (fun (r : Violet_project.Manifest.literate_rule) ->
+         let card_path = filepath ^ r.ext in
+         if Sys.file_exists card_path
+         then (
+           let delim = Delim.{ open_ = r.open_; close = r.close } in
+           let _, blocks =
+             build_buffer (Block.scan ~delim ~source:card_path (read_file card_path))
+           in
+           let b = Buffer.create 256 in
+           List.iter
+             (fun wb ->
+                Buffer.add_string b wb.src;
+                Buffer.add_char b '\n')
+             blocks;
+           Some (Buffer.contents b))
+         else None)
+      rules)
   else None
 ;;
 
-(* Everything one card's source yields once elaborated: the semantic index plus
-   the scrbl structure needed to splice highlighted HTML back in. Rendering is
-   deferred so the same elaboration can drive both the card's own page and the
-   pages of any dependency modules it references (which need the project-wide
-   registry, only known after every card is elaborated). *)
+(* Everything one card's source yields once elaborated: the semantic index
+   plus the document structure needed to splice rendered HTML back in.
+   [output_cmd]/[css_path] are resolved once per card (one file = one
+   extension = one rule) — [output_cmd] is reused for every block in it;
+   [css_path] (an absolute path, project-root-relative resolution already
+   applied) is [None] unless the matched rule asked for a stylesheet. *)
 type card_elab =
   { entries : Index.entry list
   ; def_paths : (string list, unit) Hashtbl.t
   ; segments : Block.segment list
   ; blocks : woven_block list
   ; module_file : string (* [buffer_source] for the card's own blocks *)
-  ; current_addr : string
+  ; output_cmd : string
+  ; css_path : string option
   ; scrbl_path : string
-  ; scan_root : string option (* project root, for the local-card registry *)
-  ; dep_roots : (string * string) list (* direct deps, for dep-qualified addrs *)
   }
 
-(* Elaborate one card. Returns [Some elab] on success, or [None] after printing
-   elaboration diagnostics (remapped to the scrbl source where possible). *)
-let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
+(* [proj_root]/[css] -> the absolute path to write the stylesheet to, if any:
+   a relative [css] resolves against the project root (matching how `\dep
+   (path = ...)` resolves), an absolute one is used as-is. *)
+let resolve_css_path ~(proj_root : string) (css : string option) : string option =
+  Option.map
+    (fun c -> if Filename.is_relative c then Filename.concat proj_root c else c)
+    css
+;;
+
+(* Elaborate one card. Returns [Some elab] on success, or [None] after
+   printing elaboration diagnostics (remapped to the source document where
+   possible). *)
+let elaborate ?explicit_root ?explicit_delim ~(scrbl_path : string) () : card_elab option =
   let scrbl_text = read_file scrbl_path in
   let module_file =
     if Filename.check_suffix scrbl_path ".scrbl"
     then Filename.chop_extension scrbl_path
     else scrbl_path
   in
-  let current_addr = TRCard.addr_of_path scrbl_path in
   let mode = Loader.mode_for_entry ?explicit_root module_file in
-  let scan_root, dep_roots =
+  let rules = literate_rules_for mode scrbl_path in
+  let proj_root =
     match mode with
-    | Loader.Project proj ->
-      Some proj.Violet_project.Resolve.root, TRCard.dep_roots_of proj
-    | Loader.Single_file _ -> None, []
+    | Loader.Project proj -> proj.Violet_project.Resolve.root
+    | Loader.Single_file dir -> dir
   in
   let diag_collector = Violet_common.Diagnostic_collector.create () in
   let collector = Violet_interactive.Collector.create () in
   let on_event = Violet_interactive.Collector.on_event collector in
   let aborted = ref false in
-  (* Scanning happens inside [Reporter.run] below so an unterminated [@vt|{]
-     block reports through the same diagnostic path as elaboration errors,
-     rather than escaping as an unhandled effect. *)
+  (* Delimiter resolution and scanning happen inside [Reporter.run] below so a
+     missing \literate rule or an unterminated block reports through the same
+     diagnostic path as elaboration errors, rather than escaping as an
+     unhandled effect. *)
   let segments = ref []
-  and blocks = ref [] in
+  and blocks = ref []
+  and output_cmd = ref ""
+  and css_path = ref None in
   (try
      Violet_common.Reporter.run
        ~emit:(fun d -> Violet_common.Diagnostic_collector.emit diag_collector d)
@@ -88,7 +138,12 @@ let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
             ~not_found:Env.Handler.not_found
             ~hook:Env.Handler.hook
           @@ fun () ->
-          let segs, buffer, blks = to_buffer ~source:scrbl_path scrbl_text in
+          let delim, rule =
+            Delim.resolve ?explicit:explicit_delim ~path:scrbl_path rules
+          in
+          output_cmd := rule.output;
+          css_path := resolve_css_path ~proj_root rule.css;
+          let segs, buffer, blks = to_buffer ~delim ~source:scrbl_path scrbl_text in
           segments := segs;
           blocks := blks;
           let m = Violet_surface.Parser.parse_buffer ~filename:module_file buffer in
@@ -115,10 +170,11 @@ let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
   let errors = Violet_common.Diagnostic_collector.errors diag_collector in
   if !aborted || errors <> []
   then begin
-    (* Re-anchor each diagnostic onto the scrbl document so [Tty.display]
-       highlights the real source, like [violet check]. Elaboration errors point
-       into the synthesized buffer; scan errors already point into the scrbl. A
-       loc that maps nowhere is dropped (the message still renders, snippetless). *)
+    (* Re-anchor each diagnostic onto the source document so [Tty.display]
+       highlights the real source, like [violet check]. Elaboration errors
+       point into the synthesized buffer; scan/resolve errors already point
+       into the document. A loc that maps nowhere is dropped (the message
+       still renders, snippetless). *)
     List.iter
       (fun (d : Violet_common.Reporter.Message.t Asai.Diagnostic.t) ->
          let loc =
@@ -144,22 +200,23 @@ let elaborate ?explicit_root ~(scrbl_path : string) () : card_elab option =
       ; segments = !segments
       ; blocks = !blocks
       ; module_file
-      ; current_addr
+      ; output_cmd = !output_cmd
+      ; css_path = !css_path
       ; scrbl_path
-      ; scan_root
-      ; dep_roots
       }
   end
 ;;
 
-(* Splice highlighted HTML back into the card's scrbl prose. *)
-let render_card (e : card_elab) ~(registry : TRCard.t) : string =
+(* Render one card: verbatim segments pass through untouched; each code
+   block's highlighted HTML fragment is piped through the card's resolved
+   output hook and the result spliced back in. *)
+let render_card (e : card_elab) : string =
   let out = Buffer.create 1024 in
   let blk_q = ref e.blocks in
   List.iter
     (fun seg ->
        match seg with
-       | Block.Verbatim s -> Buffer.add_string out (B.passthrough s)
+       | Block.Verbatim s -> Buffer.add_string out s
        | Block.Block _ ->
          let wb = List.hd !blk_q in
          blk_q := List.tl !blk_q;
@@ -169,185 +226,81 @@ let render_card (e : card_elab) ~(registry : TRCard.t) : string =
              ~buf_offset:wb.buf_start
              ~buffer_source:e.module_file
              ~entries:e.entries
-             ~current_addr:e.current_addr
-             ~registry
              ~def_paths:e.def_paths
          in
-         Buffer.add_string out (B.wrap_block html))
+         Buffer.add_string out (Output_hook.run ~cmd:e.output_cmd html))
     e.segments;
   Buffer.contents out
 ;;
 
-(* A self-contained HTML page. Dependency pages cannot go through tr-notes: they
-   carry no scribble prose (just one highlighted block), and their slash-bearing
-   addr ([std/id]) is one tr-notes flattens to a bare stem, mis-routing the page.
-   So weave emits the final HTML itself, linking the shared stylesheet by an
-   absolute path (it sits at the site root, served as [/violet.css]). *)
-let standalone_html ~(addr : string) ~(body : string) : string =
-  Printf.sprintf
-    "<!DOCTYPE html>\n\
-     <html lang=\"en\">\n\
-     <head>\n\
-     <meta charset=\"utf-8\">\n\
-     <title>%s</title>\n\
-     <link rel=\"stylesheet\" href=\"/violet.css\">\n\
-     </head>\n\
-     <body>\n\
-     <pre>%s</pre>\n\
-     </body>\n\
-     </html>\n"
-    addr
-    body
-;;
-
-(* Render a dependency module's whole [.vt] source as a single highlighted page.
-   [src] is the dep file's path (matching the [Range.source] of its index
-   entries), [addr] its dep-qualified card address (e.g. [std/id]). The result is
-   a complete HTML document, not a scrbl fragment — see [standalone_html]. *)
-let render_dep_page
-      (e : card_elab)
-      ~(registry : TRCard.t)
-      ~(addr : string)
-      ~(src : string)
-  : string
+(* Weave one card. Returns [Some (rendered, css_path)] on success — [css_path]
+   is where to write Violet's stylesheet, if the matched rule asked for one —
+   or [None] after printing elaboration diagnostics. *)
+let weave_file ?explicit_root ?explicit_delim ~(scrbl_path : string) ()
+  : (string * string option) option
   =
-  let text = read_file src in
-  let html =
-    Highlight.render
-      ~src:text
-      ~buf_offset:0
-      ~buffer_source:src
-      ~entries:e.entries
-      ~current_addr:addr
-      ~registry
-      ~def_paths:e.def_paths
-  in
-  standalone_html ~addr ~body:html
+  Option.map
+    (fun e -> render_card e, e.css_path)
+    (elaborate ?explicit_root ?explicit_delim ~scrbl_path ())
 ;;
 
-(* Relative output path for a woven page, keyed off its address. A dependency
-   address is slash-bearing ([std/id]); it becomes [<addr>/index.html] so the
-   cross-package URL [/<addr>] resolves by directory index — matching how
-   tr-notes serves cards and avoiding a dependence on the host adding [.html]. A
-   card address is a bare stem and stays [<addr>.scrbl] for tr-notes to render. *)
-let output_path ~(addr : string) : string =
-  if String.contains addr '/' then Filename.concat addr "index.html" else addr ^ ".scrbl"
+(* Basename with [ext] and a trailing [.vt] stripped, e.g. "foo.vt.md" with
+   [ext = ".md"] -> ["foo"]. [None] if [entry] doesn't have that shape (not
+   every file with a configured extension is a literate card — only ones
+   following the [<name>.vt.<ext>] convention). *)
+let card_name (ext : string) (entry : string) : string option =
+  if Filename.check_suffix entry ext
+  then (
+    let stem = String.sub entry 0 (String.length entry - String.length ext) in
+    if Filename.check_suffix stem ".vt" then Some (Filename.chop_extension stem) else None)
+  else None
 ;;
 
-(* The distinct dependency modules this elaboration references through a [Use],
-   as [(dep-addr, dep-source)] pairs (e.g. [("std/id", ".../std/src/id.vt")]).
-   One elaboration already pulls in the whole import closure, so even a
-   single-card weave sees every dependency it actually uses. *)
-let referenced_dep_pages (e : card_elab) (registry : TRCard.t) : (string * string) list =
-  let seen = Hashtbl.create 8 in
-  List.filter_map
-    (fun (en : Index.entry) ->
-       match en.kind, en.def_target with
-       | Index.Use, Some loc ->
-         (match Violet_common.Range.source loc with
-          | Some src ->
-            (match TRCard.dep_addr_of_source registry src with
-             | Some daddr when not (Hashtbl.mem seen daddr) ->
-               Hashtbl.add seen daddr ();
-               Some (daddr, src)
-             | _ -> None)
-          | None -> None)
-       | _ -> None)
-    e.entries
-;;
-
-(* Weave one card. Returns [Some (card-scrbl, dep-pages)] on success, or [None]
-   after printing elaboration diagnostics. [dep-pages] are [(addr, html)] for the
-   self-contained pages of the dependency modules this card uses; they let the
-   per-card weave emit cross-package targets inline, with no separate whole-project
-   pass. The registry knows the project's local cards (so cross-card jumps resolve)
-   and the referenced dep pages (so cross-package uses link). *)
-let weave_file ?explicit_root ~(scrbl_path : string) ()
-  : (string * (string * string) list) option
+(* Scan [dir] for every file matching one of [rules]' extensions and the
+   [<name>.vt.<ext>] naming convention, as [(name, ext, path)] triples. Reuses
+   [Loader.walk_files]'s traversal (skip dotfiles/[_build]/[_tmp], recurse
+   into directories) — only the per-entry match against the project's
+   dynamically-configured rules is specific to card discovery. *)
+let walk_cards (rules : Violet_project.Manifest.literate_rule list) (dir : string)
+  : (string * string * string) list
   =
-  match elaborate ?explicit_root ~scrbl_path () with
-  | None -> None
-  | Some e ->
-    let registry =
-      match e.scan_root with
-      | Some root -> TRCard.scan ~dep_roots:e.dep_roots ~root
-      | None -> TRCard.empty ()
-    in
-    (* Always know about the card being woven, so its own in-page jumps resolve
-       even in single-file mode. *)
-    TRCard.add registry ~addr:e.current_addr ~path:e.scrbl_path;
-    let deps = referenced_dep_pages e registry in
-    (* Register each referenced dep page before rendering, so cross-package uses
-       resolve to a link instead of an unlinked token. *)
-    List.iter (fun (addr, src) -> TRCard.add registry ~addr ~path:src) deps;
-    let dep_pages =
-      List.map (fun (addr, src) -> addr, render_dep_page e ~registry ~addr ~src) deps
-    in
-    Some (render_card e ~registry, dep_pages)
+  let rule_match entry =
+    List.find_map
+      (fun (r : Violet_project.Manifest.literate_rule) ->
+         Option.map (fun name -> name, r.ext) (card_name r.ext entry))
+      rules
+  in
+  Loader.walk_files ~keep:(fun entry -> Option.is_some (rule_match entry)) dir
+  |> List.filter_map (fun full ->
+    Option.map (fun (name, ext) -> name, ext, full) (rule_match (Filename.basename full)))
 ;;
 
-(* Weave every card under [<root>/src], plus a page for each dependency module
-   actually referenced. Returns [(addr, output)] pairs — dep pages carry a
-   slash-bearing addr like [std/id] — and the count of cards that failed to
-   elaborate. Dependency pages are emitted only for modules whose definitions are
-   *used*: a single elaboration's index already contains the full transitive set
-   of dep-module uses (every imported module is elaborated), so scanning all uses
-   yields the referenced closure without a second pass. *)
-let weave_project ~(root : string) : (string * string) list * int =
-  let proj =
-    try Some (Violet_project.Resolve.load root) with
-    | Violet_project.Resolve.Project_error _ -> None
+(* Weave every card under [<root>/src]. Returns [(filename, output)] pairs —
+   [filename] is the card's name with its own extension, e.g. ["foo.md"] —
+   the distinct stylesheet paths any woven card's rule asked for (a project
+   mixing formats may only need one, or none), and the count of cards that
+   failed to elaborate. *)
+let weave_project ~(root : string) : (string * string) list * string list * int =
+  let rules =
+    try (Violet_project.Resolve.load_manifest root).literate with
+    | Violet_project.Resolve.Project_error _ -> []
   in
-  let dep_roots =
-    match proj with
-    | Some p -> TRCard.dep_roots_of p
-    | None -> []
-  in
-  let local = TRCard.scan ~dep_roots ~root in
-  let cards = TRCard.cards local in
+  let cards = walk_cards rules (Filename.concat root "src") in
   let failed = ref 0 in
-  let elabs =
+  let css_paths = Hashtbl.create 4 in
+  let pages =
     List.filter_map
-      (fun (addr, scrbl_path) ->
-         match elaborate ~explicit_root:root ~scrbl_path () with
-         | Some e -> Some (addr, e)
+      (fun (name, ext, path) ->
+         match elaborate ~explicit_root:root ~scrbl_path:path () with
+         | Some e ->
+           Option.iter (fun p -> Hashtbl.replace css_paths p ()) e.css_path;
+           Some (name ^ ext, render_card e)
          | None ->
            incr failed;
            None)
       cards
   in
-  (* Dep module -> (its source path, an elab whose index covers it). Any card
-     that reaches the module elaborated it fully, so either elab renders it. *)
-  let referenced : (string, string * card_elab) Hashtbl.t = Hashtbl.create 16 in
-  List.iter
-    (fun (_addr, e) ->
-       List.iter
-         (fun (en : Index.entry) ->
-            match en.kind, en.def_target with
-            | Index.Use, Some loc ->
-              (match Violet_common.Range.source loc with
-               | Some src ->
-                 (match TRCard.dep_addr_of_source local src with
-                  | Some daddr ->
-                    if not (Hashtbl.mem referenced daddr)
-                    then Hashtbl.replace referenced daddr (src, e)
-                  | None -> ())
-               | None -> ())
-            | _ -> ())
-         e.entries)
-    elabs;
-  (* Final registry: local cards + every referenced dep module, so card->dep and
-     dep->dep links resolve and nothing points at an unemitted page. *)
-  let registry = TRCard.scan ~dep_roots ~root in
-  Hashtbl.iter (fun addr (src, _) -> TRCard.add registry ~addr ~path:src) referenced;
-  let card_pages = List.map (fun (addr, e) -> addr, render_card e ~registry) elabs in
-  let dep_pages =
-    Hashtbl.fold
-      (fun addr (src, e) acc -> (addr, render_dep_page e ~registry ~addr ~src) :: acc)
-      referenced
-      []
-  in
-  card_pages @ dep_pages, !failed
+  pages, Hashtbl.fold (fun p () acc -> p :: acc) css_paths [], !failed
 ;;
 
 let contains (s : string) (sub : string) : bool =
@@ -357,16 +310,28 @@ let contains (s : string) (sub : string) : bool =
   go 0
 ;;
 
-let%test "weave resolves in-page and cross-card goto-definition" =
+let write_test_file dir rel content =
+  let path = Filename.concat dir rel in
+  let d = Filename.dirname path in
+  if not (Sys.file_exists d) then Unix.mkdir d 0o755;
+  let oc = open_out path in
+  output_string oc content;
+  close_out oc
+;;
+
+let default_literate_manifest =
+  {| \literate ".scrbl" (open = "@vt|{", close = "}|", output = "cat") |}
+;;
+
+let%test "weave resolves definitions and emits data-vt metadata for uses" =
   let root = Filename.temp_dir "litweave" "" in
   Unix.mkdir (Filename.concat root "src") 0o755;
-  let write rel content =
-    let oc = open_out (Filename.concat root rel) in
-    output_string oc content;
-    close_out oc
-  in
-  write "info.vt" "\\name \"lit\"\n\\version \"0.1.0\"\n";
-  write
+  write_test_file
+    root
+    "info.vt"
+    (Printf.sprintf "\\name \"lit\"\n\\version \"0.1.0\"\n%s\n" default_literate_manifest);
+  write_test_file
+    root
     "src/a.vt.scrbl"
     "@p{a}\n\
      @vt|{\n\
@@ -376,160 +341,134 @@ let%test "weave resolves in-page and cross-card goto-definition" =
     \  <= \\intro\n\
     \  | id A x => x\n\
      }|\n";
-  write
+  match
+    weave_file ~explicit_root:root ~scrbl_path:(Filename.concat root "src/a.vt.scrbl") ()
+  with
+  | None -> false
+  | Some (s, css) ->
+    contains s "data-vt-kind=\"def\""
+    && contains s "id=\"vt-def-id\""
+    && contains s "@p{a}"
+    && css = None
+;;
+
+let%test "weave carries cross-file resolution as data-vt-target-* attributes" =
+  let root = Filename.temp_dir "litweave" "" in
+  Unix.mkdir (Filename.concat root "src") 0o755;
+  write_test_file
+    root
+    "info.vt"
+    (Printf.sprintf "\\name \"lit\"\n\\version \"0.1.0\"\n%s\n" default_literate_manifest);
+  write_test_file
+    root
+    "src/a.vt.scrbl"
+    "@vt|{\n\
+     \\universe U\n\
+     \\export id\n\
+     \\let id (A : U) : A -> A \\where\n\
+    \  <= \\intro\n\
+    \  | id A x => x\n\
+     }|\n";
+  write_test_file
+    root
     "src/b.vt.scrbl"
-    "@p{b}\n@vt|{\n\\import a\n\\universe U\n\\let id2 (A : U) : A -> A => id A\n}|\n";
+    "@vt|{\n\\import a\n\\universe U\n\\let id2 (A : U) : A -> A => id A\n}|\n";
   match
     weave_file ~explicit_root:root ~scrbl_path:(Filename.concat root "src/b.vt.scrbl") ()
   with
   | None -> false
-  | Some (s, _deps) ->
-    contains s "@pre|{"
-    && contains s "id=\"vt-def-b/id2\""
-    && contains s "href=\"/a#vt-def-a/id\""
+  | Some (s, _css) ->
+    contains s "data-vt-target-file=" && contains s "data-vt-kind=\"use\""
 ;;
 
-(* A use of a local variable [x] links to its binder occurrence, addressed by
-   offset (binders are not unique by name). Single-file mode: the card registers
-   itself, so its addr (here the temp basename) is known. *)
 let%test "weave links a local-variable use to its binder occurrence" =
   let dir = Filename.temp_dir "litbinder" "" in
-  let path = Filename.concat dir "c.vt.scrbl" in
-  let oc = open_out path in
-  output_string
-    oc
+  Unix.mkdir (Filename.concat dir "src") 0o755;
+  write_test_file
+    dir
+    "info.vt"
+    (Printf.sprintf "\\name \"lit\"\n\\version \"0.1.0\"\n%s\n" default_literate_manifest);
+  write_test_file
+    dir
+    "src/c.vt.scrbl"
     "@vt|{\n\
      \\universe U\n\
      \\let id (A : U) : A -> A \\where\n\
     \  <= \\intro\n\
     \  | id A x => x\n\
      }|\n";
-  close_out oc;
-  match weave_file ~scrbl_path:path () with
-  | None -> false
-  | Some (s, _deps) ->
-    (* a binder-targeting href exists, and a matching binder id is emitted *)
-    contains s "#vt-loc-c-" && contains s "id=\"vt-loc-c-"
-;;
-
-(* A whole-project weave emits a page for each *referenced* dependency module,
-   addressed by its dep key (here [std/id]), and the consumer card links into
-   it. The dep page's own definition carries the matching anchor id, so the
-   cross-package jump resolves. *)
-let%test "weave_project emits a page for a referenced dependency module" =
-  let tmp = Filename.temp_dir "litdep" "" in
-  let write rel content =
-    let path = Filename.concat tmp rel in
-    let dir = Filename.dirname path in
-    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-    let oc = open_out path in
-    output_string oc content;
-    close_out oc
-  in
-  (* dependency project: a plain .vt module exporting [id] *)
-  Unix.mkdir (Filename.concat tmp "std") 0o755;
-  write "std/info.vt" "\\name \"std\"\n\\version \"0.1.0\"\n";
-  write
-    "std/src/id.vt"
-    "\\universe U\n\
-     \\export id\n\
-     \\let id (A : U) : A -> A \\where\n\
-    \  <= \\intro\n\
-    \  | id A x => x\n";
-  (* consumer project: a card that imports and uses [std/id] *)
-  Unix.mkdir (Filename.concat tmp "app") 0o755;
-  write
-    "app/info.vt"
-    "\\name \"app\"\n\\version \"0.1.0\"\n\\dep std (path = \"../std\")\n";
-  write
-    "app/src/main.vt.scrbl"
-    "@p{m}\n\
-     @vt|{\n\
-     \\import std/id\n\
-     \\universe U\n\
-     \\let id2 (A : U) : A -> A => id A\n\
-     }|\n";
-  let pages, failed = weave_project ~root:(Filename.concat tmp "app") in
-  failed = 0
-  (* the dep module got its own self-contained HTML page served at a directory
-     index, with the def anchor the consumer targets *)
-  && String.equal (output_path ~addr:"std/id") "std/id/index.html"
-  && (match List.assoc_opt "std/id" pages with
-      | Some html ->
-        contains html "id=\"vt-def-std/id/id\""
-        && contains html "<link rel=\"stylesheet\" href=\"/violet.css\">"
-      | None -> false)
-  (* the consumer card is a scrbl that links across the package boundary *)
-  && String.equal (output_path ~addr:"main") "main.scrbl"
-  &&
-  match List.assoc_opt "main" pages with
-  | Some html -> contains html "href=\"/std/id#vt-def-std/id/id\""
-  | None -> false
-;;
-
-(* A single-card weave produces the dependency pages it uses, inline — no
-   separate whole-project pass. The card links across the package boundary and
-   the returned dep page carries the matching anchor and its own stylesheet link,
-   so emitting it as [std/id/index.html] makes the jump resolve. *)
-let%test "weave_file emits the dependency pages a card uses" =
-  let tmp = Filename.temp_dir "litdepfile" "" in
-  let write rel content =
-    let path = Filename.concat tmp rel in
-    let dir = Filename.dirname path in
-    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-    let oc = open_out path in
-    output_string oc content;
-    close_out oc
-  in
-  Unix.mkdir (Filename.concat tmp "std") 0o755;
-  write "std/info.vt" "\\name \"std\"\n\\version \"0.1.0\"\n";
-  write
-    "std/src/id.vt"
-    "\\universe U\n\
-     \\export id\n\
-     \\let id (A : U) : A -> A \\where\n\
-    \  <= \\intro\n\
-    \  | id A x => x\n";
-  Unix.mkdir (Filename.concat tmp "app") 0o755;
-  write
-    "app/info.vt"
-    "\\name \"app\"\n\\version \"0.1.0\"\n\\dep std (path = \"../std\")\n";
-  write
-    "app/src/main.vt.scrbl"
-    "@p{m}\n\
-     @vt|{\n\
-     \\import std/id\n\
-     \\universe U\n\
-     \\let id2 (A : U) : A -> A => id A\n\
-     }|\n";
   match
-    weave_file
-      ~explicit_root:(Filename.concat tmp "app")
-      ~scrbl_path:(Filename.concat tmp "app/src/main.vt.scrbl")
-      ()
+    weave_file ~explicit_root:dir ~scrbl_path:(Filename.concat dir "src/c.vt.scrbl") ()
   with
   | None -> false
-  | Some (card, dep_pages) ->
-    (* the card links across the boundary *)
-    contains card "href=\"/std/id#vt-def-std/id/id\""
-    (* and the very same weave handed back the dep page that link targets *)
-    &&
-      (match List.assoc_opt "std/id" dep_pages with
-      | Some html ->
-        contains html "id=\"vt-def-std/id/id\""
-        && contains html "<link rel=\"stylesheet\" href=\"/violet.css\">"
-      | None -> false)
+  | Some (s, _css) -> contains s "id=\"vt-loc-"
 ;;
 
-(* An unterminated [@vt|{] block aborts the weave (returns [None]) instead of
-   silently treating the rest of the document as code. The exact rendered
-   diagnostic (loc + message) is pinned by the literate/bad fixture golden in
-   test_violet; here we only assert the end-to-end abort. *)
-let%test "weave aborts on an unterminated @vt block" =
+let%test "weave_project weaves every card under src/, named by its own extension" =
+  let tmp = Filename.temp_dir "litproj" "" in
+  Unix.mkdir (Filename.concat tmp "src") 0o755;
+  write_test_file
+    tmp
+    "info.vt"
+    (Printf.sprintf "\\name \"lit\"\n\\version \"0.1.0\"\n%s\n" default_literate_manifest);
+  write_test_file
+    tmp
+    "src/main.vt.scrbl"
+    "@vt|{\n\
+     \\universe U\n\
+     \\let id (A : U) : A -> A \\where\n\
+    \  <= \\intro\n\
+    \  | id A x => x\n\
+     }|\n";
+  let pages, css_paths, failed = weave_project ~root:tmp in
+  failed = 0
+  && css_paths = []
+  &&
+  match List.assoc_opt "main.scrbl" pages with
+  | Some s -> contains s "data-vt-kind=\"def\""
+  | None -> false
+;;
+
+let%test "a rule's css attribute writes the stylesheet, project-root-relative" =
+  let tmp = Filename.temp_dir "litcss" "" in
+  Unix.mkdir (Filename.concat tmp "src") 0o755;
+  write_test_file
+    tmp
+    "info.vt"
+    "\\name \"lit\"\n\
+     \\version \"0.1.0\"\n\
+     \\literate \".scrbl\" (open = \"@vt|{\", close = \"}|\", output = \"cat\", css = \
+     \"assets/violet.css\")\n";
+  write_test_file tmp "src/f.vt.scrbl" "@vt|{\n\\universe U\n}|\n";
+  match
+    weave_file ~explicit_root:tmp ~scrbl_path:(Filename.concat tmp "src/f.vt.scrbl") ()
+  with
+  | None -> false
+  | Some (_s, css) -> css = Some (Filename.concat tmp "assets/violet.css")
+;;
+
+(* An unterminated code block aborts the weave (returns [None]) instead of
+   silently treating the rest of the document as code. *)
+let%test "weave aborts on an unterminated block" =
   let dir = Filename.temp_dir "litunterm" "" in
-  let path = Filename.concat dir "d.vt.scrbl" in
-  let oc = open_out path in
-  output_string oc "@p{intro}\n@vt|{\n\\universe U\n\\let id (A : U) (x : A) : A => x\n";
-  close_out oc;
-  weave_file ~scrbl_path:path () = None
+  Unix.mkdir (Filename.concat dir "src") 0o755;
+  write_test_file
+    dir
+    "info.vt"
+    (Printf.sprintf "\\name \"lit\"\n\\version \"0.1.0\"\n%s\n" default_literate_manifest);
+  write_test_file
+    dir
+    "src/d.vt.scrbl"
+    "@p{intro}\n@vt|{\n\\universe U\n\\let id (A : U) (x : A) : A => x\n";
+  weave_file ~explicit_root:dir ~scrbl_path:(Filename.concat dir "src/d.vt.scrbl") ()
+  = None
+;;
+
+let%test "weave fails clearly when the extension has no \\literate rule" =
+  let dir = Filename.temp_dir "litnorule" "" in
+  Unix.mkdir (Filename.concat dir "src") 0o755;
+  write_test_file dir "info.vt" "\\name \"lit\"\n\\version \"0.1.0\"\n";
+  write_test_file dir "src/e.vt.scrbl" "@vt|{\n\\universe U\n}|\n";
+  weave_file ~explicit_root:dir ~scrbl_path:(Filename.concat dir "src/e.vt.scrbl") ()
+  = None
 ;;

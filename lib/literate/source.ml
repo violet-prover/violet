@@ -44,10 +44,10 @@ let build_buffer (segments : Block.segment list) : string * woven_block list =
 (* Scan a scrbl document and synthesize its module buffer in one step. Runs
    under the ambient [Reporter] so an unterminated [@vt|{] block reports through
    the same diagnostic path as elaboration errors. *)
-let to_buffer ~(source : string) (scrbl_text : string)
+let to_buffer ~(delim : Delim.t) ~(source : string) (scrbl_text : string)
   : Block.segment list * string * woven_block list
   =
-  let segs = Block.scan ~source scrbl_text in
+  let segs = Block.scan ~delim ~source scrbl_text in
   let buffer, blocks = build_buffer segs in
   segs, buffer, blocks
 ;;

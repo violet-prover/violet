@@ -2,14 +2,6 @@ open Cmdliner
 open Cli_common
 open Violet_common
 
-let write_stylesheet (dir : string) : string =
-  let path = Filename.concat dir "violet.css" in
-  write_file path Violet_literate.Css.stylesheet;
-  path
-;;
-
-(* Create [dir] and every missing ancestor (a dep page's path like
-   [std/id/index.html] carries directories). *)
 let rec ensure_dir dir =
   if not (Sys.file_exists dir)
   then begin
@@ -18,29 +10,49 @@ let rec ensure_dir dir =
   end
 ;;
 
-(* Write each [(addr, html)] page under [dir] at [Weave.output_path], emitting a
-   message per file. *)
+(* Write Violet's stylesheet to [path] (already fully resolved by
+   [Weave]/[Delim] — project-root-relative attribute or absolute). Nothing is
+   written unless a project's `\literate` rule asked for it via `css = ...`;
+   there is no unconditional default location anymore (a rule targeting a
+   non-HTML format has no use for a stylesheet at all). *)
+let write_css ~stdout path =
+  ensure_dir (Filename.dirname path);
+  write_file path Violet_literate.Css.stylesheet;
+  Eio.Flow.copy_string
+    (Printf.sprintf "wrote %s (link it once from your site)\n" path)
+    stdout
+;;
+
 let write_pages ~stdout dir pages =
   List.iter
-    (fun (addr, html) ->
-       let out_path = Filename.concat dir (Violet_literate.Weave.output_path ~addr) in
+    (fun (filename, content) ->
+       let out_path = Filename.concat dir filename in
        ensure_dir (Filename.dirname out_path);
-       write_file out_path html;
+       write_file out_path content;
        Eio.Flow.copy_string (Printf.sprintf "wove %s\n" out_path) stdout)
     pages
 ;;
 
-let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt =
-  if not (String.equal backend "tr-notes")
+let weave ~stdout ~stderr explicit_root open_opt close_opt inline_css out out_dir file_opt
+  =
+  let explicit_delim =
+    match open_opt, close_opt with
+    | Some open_, Some close -> Some Violet_literate.Delim.{ open_; close }
+    | None, None -> None
+    | Some _, None | None, Some _ ->
+      Reporter.fatalf Parse_error "weave: --open and --close must be given together"
+  in
+  if Option.is_some explicit_delim && Option.is_none file_opt
   then
     Reporter.fatalf
       Parse_error
-      "backend not yet implemented: %s (only `tr-notes`)"
-      backend;
+      "weave: --open/--close only apply when weaving a single FILE (a whole-project \
+       weave may span several extensions/rules at once)";
   if inline_css
   then
     Eio.Flow.copy_string
-      "weave: --inline-css is not yet implemented; writing violet.css\n"
+      "weave: --inline-css is not yet implemented; writing a stylesheet file instead, \
+       per the matched rule's `css` attribute (if any)\n"
       stderr;
   match file_opt with
   | Some scrbl_path ->
@@ -52,28 +64,14 @@ let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt 
           Parse_error
           "weave: -o/--output is required when weaving a single file"
     in
-    (match Violet_literate.Weave.weave_file ?explicit_root ~scrbl_path () with
+    (match
+       Violet_literate.Weave.weave_file ?explicit_root ?explicit_delim ~scrbl_path ()
+     with
      | None -> exit 1
-     | Some (output, dep_pages) ->
+     | Some (output, css_path) ->
        write_file out_path output;
-       let css = write_stylesheet (Filename.dirname out_path) in
-       (* The card's referenced dependency pages are self-contained HTML; emit
-          them under [--out-dir] (e.g. the site's _build) when given, so the
-          cross-package /<dep>/<addr> links resolve. Without it they are skipped
-          (the card still weaves, the links just 404). *)
-       (match out_dir with
-        | Some dir when dep_pages <> [] ->
-          ensure_dir dir;
-          write_pages ~stdout dir dep_pages;
-          ignore (write_stylesheet dir)
-        | _ -> ());
-       Eio.Flow.copy_string
-         (Printf.sprintf
-            "wove %s -> %s (link %s once from your site)\n"
-            scrbl_path
-            out_path
-            css)
-         stdout)
+       Option.iter (write_css ~stdout) css_path;
+       Eio.Flow.copy_string (Printf.sprintf "wove %s -> %s\n" scrbl_path out_path) stdout)
   | None ->
     let out_dir =
       match out_dir with
@@ -85,26 +83,30 @@ let weave ~stdout ~stderr explicit_root backend inline_css out out_dir file_opt 
     in
     let root = require_root ~hint:"; pass a FILE or use --root" explicit_root in
     ensure_dir out_dir;
-    let pages, failed = Violet_literate.Weave.weave_project ~root in
+    let pages, css_paths, failed = Violet_literate.Weave.weave_project ~root in
     write_pages ~stdout out_dir pages;
-    let css = write_stylesheet out_dir in
-    Eio.Flow.copy_string
-      (Printf.sprintf "wrote %s (link it once from your site template)\n" css)
-      stdout;
+    List.iter (write_css ~stdout) css_paths;
     if failed > 0 then exit 1
 ;;
 
 let cmd ~env =
   let stdout = Eio.Stdenv.stdout env in
   let stderr = Eio.Stdenv.stderr env in
-  let arg_backend =
+  let arg_open =
     let doc =
-      "Output backend. Only `tr-notes` is implemented; a generic Scribble backend is \
-       future work."
+      "Open token marking the start of a Violet block (paired with --close). Overrides \
+       the project's literate rule for this one run; only valid when weaving a single \
+       FILE. Both --open and --close must be given together."
     in
-    Arg.required
+    Arg.value
     @@ Arg.opt (Arg.some Arg.string) None
-    @@ Arg.info [ "backend" ] ~docv:"BACKEND" ~doc
+    @@ Arg.info [ "open" ] ~docv:"STR" ~doc
+  in
+  let arg_close =
+    let doc = "Close token marking the end of a Violet block (paired with --open)." in
+    Arg.value
+    @@ Arg.opt (Arg.some Arg.string) None
+    @@ Arg.info [ "close" ] ~docv:"STR" ~doc
   in
   let arg_inline_css =
     let doc = "Reserved: inline the stylesheet (not yet implemented)." in
@@ -118,11 +120,8 @@ let cmd ~env =
   in
   let arg_out_dir =
     let doc =
-      "Output directory for self-contained dependency pages: each referenced dependency \
-       module writes <DIR>/<dep>/<addr>/index.html (so the /<dep>/<addr> URL resolves by \
-       directory index) plus a violet.css. With a single FILE this is optional (omit it \
-       to skip dep pages); in whole-project mode it is required and also receives each \
-       card's <addr>.scrbl."
+      "Output directory for a whole-project weave: each card writes <DIR>/<name>.<ext>. \
+       Required when FILE is omitted."
     in
     Arg.value
     @@ Arg.opt (Arg.some Arg.string) None
@@ -130,11 +129,18 @@ let cmd ~env =
   in
   let arg_file =
     let doc =
-      "The .vt.scrbl card to weave. If omitted, weaves every card under <project>/src/."
+      "The literate document to weave. If omitted, weaves every card under \
+       <project>/src/."
     in
     Arg.value @@ Arg.pos 0 (Arg.some Arg.file) None @@ Arg.info [] ~docv:"FILE" ~doc
   in
-  let doc = "Weave a literate Violet document (.vt.scrbl) into a .scrbl" in
+  let doc =
+    "Weave a literate Violet document into its target format. Violet finds and \
+     elaborates the code; how each rendered block embeds into the target format is \
+     entirely determined by the project's `\\literate` rule for that file's extension in \
+     info.vt (open/close escape tokens, an output command Violet pipes the rendered HTML \
+     through, and an optional stylesheet destination) — there is no built-in backend."
+  in
   let man = [ `S Manpage.s_description; `P "" ] in
   let info = Cmd.info "weave" ~version ~doc ~man in
   Cmd.v
@@ -142,7 +148,8 @@ let cmd ~env =
     Term.(
       const (weave ~stdout ~stderr)
       $ arg_root
-      $ arg_backend
+      $ arg_open
+      $ arg_close
       $ arg_inline_css
       $ arg_out
       $ arg_out_dir

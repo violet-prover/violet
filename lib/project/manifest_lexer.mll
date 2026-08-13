@@ -4,6 +4,7 @@ type token =
   | VERSION    (* \version *)
   | DEP        (* \dep *)
   | LOCKED     (* \locked *)
+  | LITERATE   (* \literate *)
   | IDENT of string
   | STRING of string
   | LPAREN
@@ -32,6 +33,7 @@ rule token = parse
   | "\\version"      { VERSION }
   | "\\dep"          { DEP }
   | "\\locked"       { LOCKED }
+  | "\\literate"     { LITERATE }
   | "("              { LPAREN }
   | ")"              { RPAREN }
   | ","              { COMMA }

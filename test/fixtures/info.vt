@@ -1,3 +1,5 @@
 \name "test-fixtures"
 \version "0.0.0"
 \dep std (git = "https://github.com/violet-prover/std", rev = "main")
+
+\literate ".scrbl" (open = "@vt|{", close = "}|", output = "cat")

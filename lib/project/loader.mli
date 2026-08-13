@@ -3,6 +3,7 @@ type mode =
   | Single_file of string
 
 val module_name : string -> string
+val walk_files : keep:(string -> bool) -> string -> string list
 val walk_vt_files : string -> string list
 val mode_for_entry : ?explicit_root:string -> string -> mode
 

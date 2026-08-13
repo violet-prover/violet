@@ -12,10 +12,41 @@ type dep =
   }
 [@@deriving show]
 
+(* One file extension's literate configuration, for [violet weave] — a
+   project can mix host document formats (`.md` fenced blocks alongside
+   `.scrbl` pipe-brace blocks), each needing its own escape token pair *and*
+   its own way of embedding rendered code back into that format. A plain
+   string record here (rather than [Violet_literate.Delim.t]) keeps this
+   library free of a dependency on [violet_literate], which itself depends on
+   [violet_project].
+
+   [open_]/[close]: the escape token pair [Block.scan] uses to find a Violet
+   code block in that extension's documents.
+   [output]: a shell command. Violet runs it once per code block, writing the
+   block's rendered (highlighted) HTML fragment to its stdin; the command's
+   stdout is spliced back into the document verbatim in place of the block.
+   How to embed that fragment into the target format (wrap it, transform it,
+   discard it) is entirely up to the command — Violet has no built-in notion
+   of any particular output format.
+   [css]: optional, project-root-relative path to write Violet's stylesheet
+   to (hover tooltips etc.). Only meaningful for a rule whose [output] embeds
+   the rendered HTML into an HTML-consuming target; omit it for anything else
+   (e.g. a hook that reformats into Typst has no use for it) — Violet writes
+   no stylesheet at all unless a rule asks for one. *)
+type literate_rule =
+  { ext : string (* file extension including the leading dot, e.g. ".md" *)
+  ; open_ : string
+  ; close : string
+  ; output : string
+  ; css : string option
+  }
+[@@deriving show]
+
 type t =
   { name : string
   ; version : string
   ; deps : dep list
+  ; literate : literate_rule list
   }
 [@@deriving show]
 
@@ -88,6 +119,16 @@ let parse_attrs st : (string * string) list =
   loop []
 ;;
 
+let literate_rule_of_attrs ~ext attrs : literate_rule =
+  let lookup k = List.assoc_opt k attrs in
+  match lookup "open", lookup "close", lookup "output" with
+  | Some open_, Some close, Some output ->
+    { ext; open_; close; output; css = lookup "css" }
+  | None, _, _ -> failwith "literate: missing open"
+  | _, None, _ -> failwith "literate: missing close"
+  | _, _, None -> failwith "literate: missing output"
+;;
+
 let dep_source_of_attrs attrs : dep_source =
   let lookup k = List.assoc_opt k attrs in
   match lookup "path", lookup "git", lookup "rev" with
@@ -104,6 +145,7 @@ let parse_string (s : string) : t =
   let name = ref None in
   let version = ref None in
   let deps = ref [] in
+  let literate = ref [] in
   let rec loop () =
     match st.cur with
     | EOF -> ()
@@ -127,6 +169,14 @@ let parse_string (s : string) : t =
       let attrs = parse_attrs st in
       deps := { key; source = dep_source_of_attrs attrs } :: !deps;
       loop ()
+    | LITERATE ->
+      advance st;
+      let ext = expect_string st in
+      if List.exists (fun (r : literate_rule) -> r.ext = ext) !literate
+      then failwith (Printf.sprintf "duplicate \\literate extension: %s" ext);
+      let attrs = parse_attrs st in
+      literate := literate_rule_of_attrs ~ext attrs :: !literate;
+      loop ()
     | t ->
       failwith
         (Printf.sprintf "manifest: unexpected token %s" (Manifest_lexer.show_token t))
@@ -142,7 +192,7 @@ let parse_string (s : string) : t =
     | Some v -> v
     | None -> failwith "manifest: missing \\version"
   in
-  { name; version; deps = List.rev !deps }
+  { name; version; deps = List.rev !deps; literate = List.rev !literate }
 ;;
 
 let%expect_test "parse minimal manifest" =
@@ -183,6 +233,41 @@ let%expect_test "parse manifest with deps" =
     |}]
 ;;
 
+let%expect_test "parse manifest with literate rules, keyed by extension" =
+  let m =
+    parse_string
+      {|
+    \name "my-proj"
+    \version "0.1.0"
+    \literate ".scrbl" (open = "@vt|{", close = "}|", output = "./weave-scrbl.sh", css = "assets/violet.css")
+    \literate ".md" (open = "```violet", close = "```", output = "cat")
+  |}
+  in
+  List.iter
+    (fun (r : literate_rule) ->
+       Printf.printf
+         "%s: open=%S close=%S output=%S css=%s\n"
+         r.ext
+         r.open_
+         r.close
+         r.output
+         (match r.css with
+          | Some c -> Printf.sprintf "%S" c
+          | None -> "none"))
+    m.literate;
+  [%expect
+    {|
+    .scrbl: open="@vt|{" close="}|" output="./weave-scrbl.sh" css="assets/violet.css"
+    .md: open="```violet" close="```" output="cat" css=none
+    |}]
+;;
+
+let%expect_test "manifest without literate rules leaves the list empty" =
+  let m = parse_string {| \name "p" \version "1" |} in
+  Printf.printf "%d" (List.length m.literate);
+  [%expect {| 0 |}]
+;;
+
 let parse_err s =
   try
     let _ = parse_string s in
@@ -205,6 +290,29 @@ let%expect_test "parse error: duplicate dep key" =
     \dep foo (path = "b")
   |});
   [%expect {| duplicate \dep key: foo |}]
+;;
+
+let%expect_test "parse error: duplicate literate extension" =
+  print_string
+    (parse_err
+       {|
+    \name "p" \version "1"
+    \literate ".md" (open = "<!--vt", close = "vt-->", output = "cat")
+    \literate ".md" (open = "@vt|{", close = "}|", output = "cat")
+  |});
+  [%expect {| duplicate \literate extension: .md |}]
+;;
+
+let%expect_test "parse error: literate missing close" =
+  print_string
+    (parse_err {| \name "p" \version "1" \literate ".md" (open = "x", output = "cat") |});
+  [%expect {| literate: missing close |}]
+;;
+
+let%expect_test "parse error: literate missing output" =
+  print_string
+    (parse_err {| \name "p" \version "1" \literate ".md" (open = "x", close = "y") |});
+  [%expect {| literate: missing output |}]
 ;;
 
 let%expect_test "parse error: dep with both path and git" =

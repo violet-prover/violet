@@ -53,11 +53,14 @@ let recheck (t : t) ~uri : unit =
            ~not_found:Env.Handler.not_found
            ~hook:Env.Handler.hook
          @@ fun () ->
+         let mode = Violet_project.Loader.mode_for_entry module_file in
          let m =
            if is_scrbl filename
            then begin
+             let rules = Violet_literate.Weave.literate_rules_for mode filename in
+             let delim, _output = Violet_literate.Delim.resolve ~path:filename rules in
              let _, buf, blks =
-               Violet_literate.Source.to_buffer ~source:filename d.text
+               Violet_literate.Source.to_buffer ~delim ~source:filename d.text
              in
              buffer := buf;
              blocks := blks;
@@ -67,7 +70,6 @@ let recheck (t : t) ~uri : unit =
          in
          let deps = Hashtbl.create 16 in
          let mods = Hashtbl.create 16 in
-         let mode = Violet_project.Loader.mode_for_entry module_file in
          Violet_project.Loader.prepare_dependencies
            ~text_override
            mode
@@ -157,10 +159,36 @@ let ensure_indexed (t : t) ~file : unit =
     Project_index.update t.project_index ~file ~index:idx
 ;;
 
+(* The literate-card tests below use fixed [.vt.scrbl] URIs that are never
+   actually read from disk (the LSP drives elaboration off the in-memory
+   buffer via [text_override]) — except now [recheck] also needs to resolve a
+   project's [\literate] rule for `.scrbl`, which does require a real
+   [info.vt] on disk somewhere above the URI's directory. That directory must
+   be its own fixed subdirectory, not bare [/tmp]: other tests here construct
+   unrelated fake paths directly under [/tmp] (e.g. [/tmp/Broken.vt]) and
+   must NOT suddenly resolve into a project via ancestor search. *)
+let scrbl_test_root = "/tmp/violet_checker_scrbl_test"
+
+let ensure_scrbl_test_manifest () =
+  if not (Sys.file_exists scrbl_test_root) then Unix.mkdir scrbl_test_root 0o755;
+  let oc = open_out (Filename.concat scrbl_test_root "info.vt") in
+  output_string
+    oc
+    "\\name \"checker-test\"\n\
+     \\version \"0.1.0\"\n\
+     \\literate \".scrbl\" (open = \"@vt|{\", close = \"}|\", output = \"cat\")\n";
+  close_out oc
+;;
+
+let () = ensure_scrbl_test_manifest ()
+
 let%expect_test "recheck of a literate card checks its @vt blocks" =
   let store = Doc_store.create () in
   let project_index = Project_index.create () in
-  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Card.vt.scrbl" in
+  let uri =
+    Linol_lsp.Lsp.Types.DocumentUri.of_path
+      (Filename.concat scrbl_test_root "Card.vt.scrbl")
+  in
   let text =
     {vt|@title{Demo}
 
@@ -180,7 +208,7 @@ let%expect_test "recheck of a literate card checks its @vt blocks" =
   Printf.printf "diags=%d has_entries=%b" (List.length snap.diagnostics) has_entries;
   [%expect
     {|
-    +checking [module] Card (/tmp/Card.vt)
+    +checking [module] Card (/tmp/violet_checker_scrbl_test/Card.vt)
     diags=0 has_entries=true
     |}]
 ;;
@@ -188,7 +216,10 @@ let%expect_test "recheck of a literate card checks its @vt blocks" =
 let%expect_test "literate diagnostics are remapped onto the scrbl, not the buffer" =
   let store = Doc_store.create () in
   let project_index = Project_index.create () in
-  let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path "/tmp/Bad.vt.scrbl" in
+  let uri =
+    Linol_lsp.Lsp.Types.DocumentUri.of_path
+      (Filename.concat scrbl_test_root "Bad.vt.scrbl")
+  in
   let text =
     {vt|@title{Bad}
 
@@ -213,7 +244,7 @@ let%expect_test "literate diagnostics are remapped onto the scrbl, not the buffe
   Printf.printf "diags=%d line0=%d" (List.length snap.diagnostics) line0;
   [%expect
     {|
-    +checking [module] Bad (/tmp/Bad.vt)
+    +checking [module] Bad (/tmp/violet_checker_scrbl_test/Bad.vt)
     diags=1 line0=7
     |}]
 ;;
@@ -221,7 +252,7 @@ let%expect_test "literate diagnostics are remapped onto the scrbl, not the buffe
 let%expect_test "literate index is anchored to scrbl coordinates" =
   let store = Doc_store.create () in
   let project_index = Project_index.create () in
-  let scrbl = "/tmp/Card2.vt.scrbl" in
+  let scrbl = Filename.concat scrbl_test_root "Card2.vt.scrbl" in
   let uri = Linol_lsp.Lsp.Types.DocumentUri.of_path scrbl in
   let text =
     {vt|@title{Demo}
@@ -253,7 +284,7 @@ let%expect_test "literate index is anchored to scrbl coordinates" =
    | None -> Printf.printf "no hit");
   [%expect
     {|
-    +checking [module] Card2 (/tmp/Card2.vt)
+    +checking [module] Card2 (/tmp/violet_checker_scrbl_test/Card2.vt)
     path=f def_line=7
     |}]
 ;;

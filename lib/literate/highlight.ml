@@ -15,15 +15,19 @@ let hl_range (e : Index.entry) : Asai.Range.t =
   | _ -> e.loc
 ;;
 
-(* Anchor for a definition, qualified by its *home card* address so it is unique
-   across the whole site. tr-notes transcludes cards into one another, so several
-   cards (each with e.g. a top-level [id]) can land on a single page; a bare
-   [vt-def-id] would collide and a bare [#vt-def-id] link would resolve against
-   whatever card happens to be first on the current page. Both the definition's
-   [id] and every use's href therefore embed the defining card's address. *)
-let anchor ~(addr : string) (path : string list) : string =
-  "vt-def-" ^ addr ^ "/" ^ String.concat "/" path
-;;
+(* A definition's stable id, so an output hook that wants same-document jump
+   links can build them itself by matching a [Use]'s [data-vt-path] against a
+   [Def]'s [id]. Not addr-qualified: each weave run renders one file's worth
+   of blocks into one output document (or, for a whole-project weave, each
+   card is its own separate output file), so a path is already unique within
+   the scope any single hook invocation's output lands in — no cross-card
+   transclusion concept survives here; that was tr-notes-specific and is now
+   the hook's problem, not Violet's. *)
+let anchor_id (path : string list) : string = "vt-def-" ^ String.concat "/" path
+
+(* A local-variable binder's jump target, keyed by byte offset (names are not
+   unique) within the current file — see [binder_targets]. *)
+let loc_anchor_id (offset : int) : string = Printf.sprintf "vt-loc-%d" offset
 
 let escape (s : string) : string =
   let b = Buffer.create (String.length s) in
@@ -34,7 +38,6 @@ let escape (s : string) : string =
        | '<' -> Buffer.add_string b "&lt;"
        | '>' -> Buffer.add_string b "&gt;"
        | '"' -> Buffer.add_string b "&quot;"
-       | '|' -> Buffer.add_string b "&#124;" (* never let "}|" close the @pre body *)
        | c -> Buffer.add_char b c)
     s;
   Buffer.contents b
@@ -100,78 +103,80 @@ let goal_tip (e : Index.entry) : string =
   tip (String.concat "\n" (ctx @ target))
 ;;
 
-(* Anchor for a *binder occurrence*. A local variable name (e.g. [x]) repeats
-   across definitions, so binders are keyed by byte offset within the home card
-   rather than by path. *)
-let loc_anchor ~(addr : string) ~(offset : int) : string =
-  Printf.sprintf "vt-loc-%s-%d" addr offset
+let data_attr name value = Printf.sprintf " data-vt-%s=\"%s\"" name (escape value)
+
+let data_attr_opt name = function
+  | None -> ""
+  | Some v -> data_attr name v
 ;;
 
-let use_href ~current_addr ~registry ~def_paths (e : Index.entry) : string option =
+(* Raw resolution info for a [Use]: which file its target lives in and where
+   in that file — works identically whether the target is local, elsewhere in
+   the project, or in a dependency. An output hook decides what, if anything,
+   to do with this (build its own cross-file link scheme, show a tooltip,
+   ignore it); Violet no longer assumes any URL scheme. *)
+let target_info (e : Index.entry) : (string * int) option =
   match e.def_target with
   | None -> None
   | Some loc ->
     (match Violet_common.Range.source loc with
      | None -> None
-     | Some path ->
-       let addr = TRCard.addr_of_source registry path in
-       if not (TRCard.mem registry addr)
-       then None
-       else if not (String.equal addr current_addr)
-       then
-         Some (Printf.sprintf "/%s#%s" addr (anchor ~addr e.path))
-         (* cross-card: always a real definition (binders are not importable) *)
-       else if Hashtbl.mem def_paths e.path
-       then
-         Some (Printf.sprintf "/%s#%s" addr (anchor ~addr e.path))
-         (* same card, top-level / constructor definition *)
-       else
-         (* same card, not a top-level def => a local binder; jump to its
-            binding occurrence, addressed by offset *)
-         Some (Printf.sprintf "/%s#%s" addr (loc_anchor ~addr ~offset:(range_start loc))))
+     | Some path -> Some (path, range_start loc))
 ;;
 
-let render_semantic
-      ~current_addr
-      ~registry
-      ~def_paths
-      ?(loc_id = None)
-      (e : Index.entry)
-      (text : string)
-  : string
-  =
+let render_semantic ?(loc_id = None) (e : Index.entry) (text : string) : string =
   let et = escape text in
   let id_attr =
     match loc_id with
     | Some a -> Printf.sprintf " id=\"%s\"" a
     | None -> ""
   in
+  let path_str = if e.path = [] then None else Some (String.concat "/" e.path) in
   match e.kind with
   | Index.Def ->
     Printf.sprintf
-      "<span class=\"vt-def\" id=\"%s\">%s%s</span>"
-      (anchor ~addr:current_addr e.path)
+      "<span class=\"vt-def\" id=\"%s\"%s%s>%s%s</span>"
+      (anchor_id e.path)
+      (data_attr "kind" "def")
+      (data_attr_opt "type" e.pp_ty)
       et
       (type_tip e)
   | Index.Binder ->
-    Printf.sprintf "<span class=\"vt-binder\"%s>%s%s</span>" id_attr et (type_tip e)
+    Printf.sprintf
+      "<span class=\"vt-binder\"%s%s%s>%s%s</span>"
+      id_attr
+      (data_attr "kind" "binder")
+      (data_attr_opt "type" e.pp_ty)
+      et
+      (type_tip e)
   | Index.Use ->
-    (match use_href ~current_addr ~registry ~def_paths e with
-     | Some href ->
-       Printf.sprintf
-         "<a class=\"vt-use\"%s href=\"%s\">%s%s</a>"
-         id_attr
-         href
-         et
-         (type_tip e)
-     | None ->
-       Printf.sprintf "<span class=\"vt-id\"%s>%s%s</span>" id_attr et (type_tip e))
-  | Index.Goal -> Printf.sprintf "<span class=\"vt-goal\">%s%s</span>" et (goal_tip e)
+    let target_attrs =
+      match target_info e with
+      | Some (path, off) ->
+        data_attr "target-file" path ^ data_attr "target-offset" (string_of_int off)
+      | None -> ""
+    in
+    Printf.sprintf
+      "<span class=\"vt-use\"%s%s%s%s%s>%s%s</span>"
+      id_attr
+      (data_attr "kind" "use")
+      (data_attr_opt "path" path_str)
+      (data_attr_opt "type" e.pp_ty)
+      target_attrs
+      et
+      (type_tip e)
+  | Index.Goal ->
+    Printf.sprintf
+      "<span class=\"vt-goal\"%s>%s%s</span>"
+      (data_attr "kind" "goal")
+      et
+      (goal_tip e)
 ;;
 
 (* Buffer offsets that some local-variable use points at (its binding site).
-   The entry rendered at such an offset must carry the matching [id] so the jump
-   resolves, regardless of whether a Binder or a Use is selected there. *)
+   The entry rendered at such an offset must carry the matching [id] so an
+   output hook can build the jump, regardless of whether a Binder or a Use is
+   selected there. *)
 let binder_targets ~buffer_source ~def_paths (entries : Index.entry list)
   : (int, unit) Hashtbl.t
   =
@@ -225,8 +230,6 @@ let render
       ~(buf_offset : int)
       ~(buffer_source : string)
       ~(entries : Index.entry list)
-      ~(current_addr : string)
-      ~(registry : TRCard.t)
       ~(def_paths : (string list, unit) Hashtbl.t)
   : string
   =
@@ -235,9 +238,7 @@ let render
   in
   let targets = binder_targets ~buffer_source ~def_paths entries in
   let loc_id_at buf_off =
-    if Hashtbl.mem targets buf_off
-    then Some (loc_anchor ~addr:current_addr ~offset:buf_off)
-    else None
+    if Hashtbl.mem targets buf_off then Some (loc_anchor_id buf_off) else None
   in
   let toks = Array.of_list (LT.tokens_with_spans src) in
   let n = Array.length toks in
@@ -258,13 +259,7 @@ let render
       in
       Buffer.add_string
         out
-        (render_semantic
-           ~current_addr
-           ~registry
-           ~def_paths
-           ~loc_id:(loc_id_at buf_off)
-           e
-           (slice tk.LT.start_offset seg_end));
+        (render_semantic ~loc_id:(loc_id_at buf_off) e (slice tk.LT.start_offset seg_end));
       cursor := seg_end;
       incr i;
       while !i < n && toks.(!i).LT.end_offset <= seg_end do

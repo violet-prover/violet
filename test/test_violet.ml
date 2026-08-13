@@ -308,7 +308,12 @@ let literate_outcome (scrbl : string) : [ `Ok | `Fail of string ] =
        ~fatal:(fun d ->
          emit d;
          raise Exit)
-       (fun () -> ignore (Violet_literate.Block.scan ~source:scrbl text))
+       (fun () ->
+          ignore
+            (Violet_literate.Block.scan
+               ~delim:Violet_literate.Delim.scrbl
+               ~source:scrbl
+               text))
    with
    | Exit -> ());
   match Violet_common.Diagnostic_collector.latest_error diag with

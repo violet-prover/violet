@@ -7,24 +7,59 @@ type mode =
 
 let module_name filename = Filename.chop_extension @@ Filename.basename filename
 
-let rec walk_vt_files (dir : string) : string list =
+(* [dir]'s files as git already knows them — tracked, or untracked-but-not-
+   ignored — via one [git ls-files] call, so ignore semantics ([.gitignore],
+   [.git/info/exclude], nested per-directory rules, [core.excludesfile]) are
+   git's own, not reimplemented here. [None] when [dir] isn't inside a git
+   work tree (no [git] on PATH counts as "not inside one" too). Paths in the
+   output are relative to [dir] (that's what [-C dir] with no pathspec
+   scopes to) and are joined back onto [dir] before returning. *)
+let git_tracked_files (dir : string) : string list option =
+  let ic =
+    Unix.open_process_in
+      (Printf.sprintf
+         "git -C %s ls-files --cached --others --exclude-standard 2>/dev/null"
+         (Filename.quote dir))
+  in
+  let lines = In_channel.input_lines ic in
+  match Unix.close_process_in ic with
+  | Unix.WEXITED 0 -> Some (List.map (Filename.concat dir) lines)
+  | _ -> None
+;;
+
+(* Recursively walk [dir], yielding every full path an entry-level [keep]
+   accepts. Prefers [git_tracked_files] (correct gitignore semantics, one
+   process for the whole subtree) when [dir] is inside a git work tree;
+   otherwise falls back to a plain [Sys.readdir] walk that skips dotfiles and
+   any [_]-prefixed directory (the convention dune's own [_build] follows:
+   [_fetch]/[_private]/[_release]/[_tmp]/...), on the assumption that a
+   non-git project's scratch/generated directories follow it too. Shared by
+   every project file-discovery pass ([walk_vt_files] below;
+   [Violet_literate.Weave]'s whole-project card discovery) so only the
+   per-entry predicate differs. *)
+let rec walk_files ~(keep : string -> bool) (dir : string) : string list =
   if not (Sys.file_exists dir)
   then []
-  else
-    Sys.readdir dir
-    |> Array.to_list
-    |> List.concat_map (fun entry ->
-      if String.length entry > 0 && entry.[0] = '.'
-      then []
-      else if entry = "_build"
-      then []
-      else (
-        let full = Filename.concat dir entry in
-        if Sys.is_directory full
-        then walk_vt_files full
-        else if Filename.check_suffix entry ".vt"
-        then [ full ]
-        else []))
+  else (
+    match git_tracked_files dir with
+    | Some files -> List.filter (fun f -> keep (Filename.basename f)) files
+    | None ->
+      Sys.readdir dir
+      |> Array.to_list
+      |> List.concat_map (fun entry ->
+        if String.length entry > 0 && (entry.[0] = '.' || entry.[0] = '_')
+        then []
+        else (
+          let full = Filename.concat dir entry in
+          if Sys.is_directory full
+          then walk_files ~keep full
+          else if keep entry
+          then [ full ]
+          else [])))
+;;
+
+let walk_vt_files (dir : string) : string list =
+  walk_files ~keep:(fun entry -> Filename.check_suffix entry ".vt") dir
 ;;
 
 let mode_for_entry ?explicit_root (filename : string) : mode =
