@@ -126,20 +126,32 @@ let rec walk_moves
          | Surface.Split :: _ -> true
          | _ -> false
        in
-       let name =
+       let name, ploc =
          if is_split_target
-         then Printf.sprintf "__x%d" position
-         else pick_binder_name clauses position
+         then Printf.sprintf "__x%d" position, None
+         else pick_binder_pat clauses position
        in
+       (* [ploc] is only [Some] when a real pattern token stands for this
+          binder (not a synthesized `__xN`) — emit a Binder there so
+          hover/goto-def has an actual anchor, and bind the local variable at
+          that token instead of the whole definition's [loc], or a later
+          `Use` of it resolves back to the definition's own header. *)
+       let bind_loc = Option.value ploc ~default:loc in
+       Option.iter
+         (fun bl ->
+            let pp_ty = Notation.pp_term (view_of_ctx ctx) (Evaluation.quote ctx.lvl a) in
+            Observer.emit
+              (Binder { path = [ name ]; loc = bl; ty = Some a; pp_ty = Some pp_ty }))
+         ploc;
        let cod = k (Core.RigidLocal (ctx.lvl, Bwd.Emp)) in
-       let ctx' = bind ctx (sn loc (Syntax.Named name)) a in
+       let ctx' = bind ctx (sn bind_loc (Syntax.Named name)) a in
        let inner =
          walk_moves ~loc ctx' cod signature n_params rest clauses (position + 1)
        in
        at
          inner.Surface.loc
          (Surface.Lambda
-            { name = sn loc (Syntax.Named name); bound = inner; implicit = false })
+            { name = sn bind_loc (Syntax.Named name); bound = inner; implicit = false })
      | other ->
        Reporter.fatalf
          ~loc

@@ -90,15 +90,20 @@ let local_type (ctx : local_ctx) (ix : int) : Core.value =
   nth ctx.types ix
 ;;
 
-(* If the first clause has a PVar at that position, reuse it; otherwise
-   (e.g. PCon at a split site) synthesize a fresh name. *)
-let pick_binder_name (clauses : Surface.clause list) (position : int) : string =
+(* If the first clause has a PVar at that position, reuse it (together with
+   that pattern's own source location, so the caller can bind at the real
+   token instead of falling back to the whole definition's location);
+   otherwise (e.g. PCon at a split site) synthesize a fresh name with no
+   location to point at. *)
+let pick_binder_pat (clauses : Surface.clause list) (position : int)
+  : string * Asai.Range.t option
+  =
   match clauses with
-  | [] -> Printf.sprintf "__x%d" position
+  | [] -> Printf.sprintf "__x%d" position, None
   | { patterns; _ } :: _ ->
     (match List.nth_opt patterns position with
-     | Some { Surface.pnode = Surface.PVar v; _ } -> v
-     | _ -> Printf.sprintf "__x%d" position)
+     | Some { Surface.pnode = Surface.PVar v; ploc } -> v, Some ploc
+     | _ -> Printf.sprintf "__x%d" position, None)
 ;;
 
 type produced =
